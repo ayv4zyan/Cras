@@ -26,7 +26,7 @@ Sources: [ASR catalog](https://deepinfra.com/models/automatic-speech-recognition
 The local shim **defaults to Mini**, not Small:
 
 - `DEEPINFRA_MODEL || "mistralai/Voxtral-Mini-3B-2507"` in `deepinfra-voxtral-shim.js` (local OpenWhispr shim)
-- Same slug in `openwhispr-settings.json` (local OpenWhispr shim), `.env.example` (local OpenWhispr shim), and `README.md` (local OpenWhispr shim)
+- Same slug in local OpenWhispr shim files `openwhispr-settings.json`, `.env.example`, and `README.md`
 
 Older shim logs once printed `Default model: mistralai/Voxtral-Small-24B-2507`; current code and settings are Mini.
 
@@ -58,7 +58,7 @@ Live `GET https://api.deepinfra.com/models/list` (2026-08-17). `google/gemma-4-E
 
 Pages: [E4B](https://deepinfra.com/google/gemma-4-E4B-it), [26B-A4B](https://deepinfra.com/google/gemma-4-26B-A4B-it), [31B](https://deepinfra.com/google/gemma-4-31B-it), [31B-turbo](https://deepinfra.com/google/gemma-4-31B-it-turbo).
 
-The shim default cleanup model is **`google/gemma-4-E4B-it`**. (`README.md` (local OpenWhispr shim), settings JSON, `.env.example`)
+The shim default cleanup model is **`google/gemma-4-E4B-it`** (local OpenWhispr shim: `README.md`, settings JSON, `.env.example`).
 
 ### Structured output / JSON mode
 
@@ -86,7 +86,7 @@ Mini native `in_schema` (`GET https://api.deepinfra.com/models/mistralai/Voxtral
 
 > OpenWhispr records **WebM**; DeepInfra Voxtral returns HTTP 500 on WebM. The shim converts to WAV, trims **leading/trailing silence** (not mid-phrase pauses), and holds your API token.
 
-(`README.md` (local OpenWhispr shim))
+Source: local OpenWhispr shim `README.md`.
 
 Pipeline in `deepinfra-voxtral-shim.js` (local OpenWhispr shim):
 
@@ -116,7 +116,7 @@ Platform encode support includes **PCM/WAVE** (encoder Android 4.1+), AAC in MPE
 
 **Auth.** All DeepInfra endpoints need `Authorization: Bearer $DEEPINFRA_TOKEN` (dashboard keys). Scoped JWTs can lock models, expiry (≤ 1 year), and USD spend without sharing the root key. ([Authentication](https://docs.deepinfra.com/account/authentication), [API intro](https://docs.deepinfra.com/api-reference/introduction), [Quickstart](https://docs.deepinfra.com/quickstart))
 
-Shim token order: `DEEPINFRA_TOKEN` env → project `.env` → `~/.openwhispr/deepinfra.env`. Process exits if missing. Binds **`127.0.0.1` only**. (`README.md` (local OpenWhispr shim), shim source)
+Shim token order: `DEEPINFRA_TOKEN` env → project `.env` → `~/.openwhispr/deepinfra.env`. Process exits if missing. Binds **`127.0.0.1` only** (local OpenWhispr shim: `README.md` and source).
 
 **Pricing (DeepInfra, first-party):**
 
@@ -154,8 +154,8 @@ Endpoints the shim already uses:
 
 What the shim **reliably** does today is **dictation cleanup**:
 
-- Default short prompt: output **only** cleaned text; remove fillers/false starts; do **not** answer questions or add content. (`cleanup-prompt-short.txt` (local OpenWhispr shim))
-- Stock OpenWhispr prompt (passthrough mode): same contract, plus spoken punctuation, **written forms** of numbers/dates/times (“January 15, 2026 / 5:30 PM”), self-corrections. Still “exactly the cleaned transcript and nothing else.” (`scripts/_stock-cleanup-prompt.txt` (local OpenWhispr shim))
+- Default short prompt: output **only** cleaned text; remove fillers/false starts; do **not** answer questions or add content (local OpenWhispr shim: `cleanup-prompt-short.txt`).
+- Stock OpenWhispr prompt (passthrough mode): same contract, plus spoken punctuation, **written forms** of numbers/dates/times (“January 15, 2026 / 5:30 PM”), self-corrections. Still “exactly the cleaned transcript and nothing else” (local OpenWhispr shim: `scripts/_stock-cleanup-prompt.txt`).
 
 That is **not** `{ title, date, time }` extraction. Asking the current cleanup prompt for JSON would fight its “output only the cleaned text” rule.
 

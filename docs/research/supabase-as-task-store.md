@@ -1,6 +1,6 @@
 # Can Supabase be the task store?
 
-**Status (2026-08-18):** research for [Can Supabase be the task store?](https://github.com/ayv4zyan/Cras/issues/23). Product lock is **three-tier** — hosted Postgres behind Hono; clients do not call Supabase — [Where do tasks live if the store is Supabase?](https://github.com/ayv4zyan/Cras/issues/24), `docs/adr/0004-supabase-postgres-hono.md`. This note is what two-tier PostgREST / Auth / Realtime can and cannot do; it is not the client architecture. Clients are TypeScript web + Kotlin Android ([Which client stack do we lock for web and Android?](https://github.com/ayv4zyan/Cras/issues/12)).
+**Status (2026-08-18):** research for [Can Supabase be the task store?](https://github.com/ayv4zyan/Cras/issues/23). Current product lock: **Supabase is the sole backend platform** — Postgres, Auth/RLS, Data API, Realtime, Storage, and Edge Functions as needed — [Does Cras need a separate Cloudflare/Hono backend?](https://github.com/ayv4zyan/Cras/issues/25), `docs/adr/0005-supabase-platform.md`. The exact Data API / RPC / Edge Function split remains on [Which operations use Supabase Data API vs Edge Functions?](https://github.com/ayv4zyan/Cras/issues/26). Clients are TypeScript web + Kotlin Android ([Which client stack do we lock for web and Android?](https://github.com/ayv4zyan/Cras/issues/12)).
 
 Question from that ticket: the Operator has withdrawn GitHub as the task store. What do primary sources say about using Supabase as the system of record for a personal task app with a TypeScript web client and a Kotlin Android client?
 
@@ -317,14 +317,14 @@ Source: [SAML 2.0](https://supabase.com/docs/guides/auth/enterprise-sso/auth-sso
 
 ## 10. What this means for the (then) leaning
 
-The research leaning was two-tier Supabase (clients + publishable key; no Cras-owned server). Primary sources **support that shape**. The map later locked a **different** shape: Hono on Cloudflare is the only client door; Hyperdrive talks to Postgres; no publishable key on a device — [Where do tasks live if the store is Supabase?](https://github.com/ayv4zyan/Cras/issues/24).
+The research leaning was two-tier Supabase (clients + publishable key; no separate backend platform). Primary sources **support that shape**. The map now locks Supabase as the sole backend platform and rejects Cloudflare/Hono; ordinary client access may use the Data API, while secret-bearing work may use Supabase Edge Functions — [Does Cras need a separate Cloudflare/Hono backend?](https://github.com/ayv4zyan/Cras/issues/25).
 
 Bounds that still apply to Postgres itself:
 
 - **Yes:** hosted (or self-hosted) Postgres is a real multi-device store. Check-off is one row `UPDATE`. Different tasks do not race. Labels are a join table. Same-row overlapping writes last-writer-win unless the schema adds `version`/`updated_at` CAS.
-- **Not provided by Supabase:** offline Outbox, field-level merge, or an official Kotlin guarantee. A client that *did* use PostgREST would need RLS; `service_role` in a binary is a total data leak. Cras clients do not use that path.
+- **Not provided by Supabase:** offline Outbox, field-level merge, or an official Kotlin guarantee. A client that uses the Data API needs RLS; `service_role` in a binary is a total data leak.
 
-Tenancy, Auth UX, and Outbox were grilling; they are now locked on that ticket (one Operator; token to Hono; Android Outbox).
+Tenancy remains one Operator per copy and Android retains its Outbox. Supabase Auth UX and the Data API / Edge Function boundary remain open Wayfinder decisions.
 
 ---
 

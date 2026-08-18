@@ -25,7 +25,7 @@ The Deployment-maintained defaults shared by all clients and Operators. Operator
 _Avoid_: server settings, app settings, environment config
 
 **Settings**:
-An Operator's shared optional overrides of Deployment defaults. Settings follow the Operator across devices.
+An Operator's shared optional overrides of Deployment defaults. Settings follow the Operator across devices. Missed Notification delivery is shared Settings: skip by default; when enabled, deliver only within one hour after the plan time.
 _Avoid_: preferences, device settings, config
 
 **Voice model catalog**:
@@ -81,8 +81,16 @@ A timed plan that is a clock time on a calendar day, the same face in every city
 _Avoid_: local time, wall clock, unzoned
 
 **Date-only**:
-A plan that is a calendar day and nothing else. Not an Instant. Has no Instant/Floating mode.
+A plan that is a calendar day and nothing else. Not an Instant. Has no Instant/Floating mode and does not request a Notification.
 _Avoid_: all-day, midnight, date with type
+
+**Notification**:
+A best-effort alert automatically requested by every open Task with a Floating or Instant plan. Every eligible installation may deliver it. Changing the timed plan reschedules it; removing the clock time, completing, or deleting the Task cancels it.
+_Avoid_: reminder, alarm, exact alert
+
+**Eligible installation**:
+An Android installation or browser profile where Cras Notifications are enabled locally and platform permission is available. It is a delivery target, not a primary device.
+_Avoid_: notification device, primary device
 
 **Subtask**:
 A Task that has a parent Task. A Subtask cannot itself have children.

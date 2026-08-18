@@ -7,7 +7,6 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Test
 import java.io.File
 
@@ -29,6 +28,17 @@ class TaskContractTest {
 
     private val invalidExamplesDir: File = File(examplesDir, "invalid")
 
+    private fun isCommentFixture(file: File): Boolean = file.name.contains("comment")
+
+    private fun decodeFixture(file: File): Any {
+        val content = file.readText()
+        return if (isCommentFixture(file)) {
+            json.decodeFromString<Comment>(content)
+        } else {
+            json.decodeFromString<Task>(content)
+        }
+    }
+
     @Test
     fun `golden fixtures exist and at least seven valid fixtures are present`() {
         assertTrue("Examples dir should exist at ${examplesDir.absolutePath}", examplesDir.exists())
@@ -49,18 +59,18 @@ class TaskContractTest {
     fun `deserializes all valid golden fixtures into Kotlin models`() {
         val files = examplesDir.listFiles { _, name -> name.endsWith(".json") } ?: emptyArray()
         for (file in files) {
-            val content = file.readText()
-            if (file.name.startsWith("comment")) {
-                val comment = json.decodeFromString<Comment>(content)
-                assertNotNull("Comment ID should not be null", comment.id)
-                assertNotNull("Comment taskId should not be null", comment.taskId)
-                assertTrue("Comment content should not be empty", comment.content.isNotEmpty())
-            } else {
-                val task = json.decodeFromString<Task>(content)
-                assertNotNull("Task ID should not be null", task.id)
-                assertTrue("Task title should not be empty", task.title.isNotEmpty())
-                assertTrue("Task priority should be between 1 and 4", task.priority in 1..4)
-                assertTrue("Task version should be at least 1", task.version >= 1)
+            when (val model = decodeFixture(file)) {
+                is Comment -> {
+                    assertNotNull("Comment ID should not be null", model.id)
+                    assertNotNull("Comment taskId should not be null", model.taskId)
+                    assertTrue("Comment content should not be empty", model.content.isNotEmpty())
+                }
+                is Task -> {
+                    assertNotNull("Task ID should not be null", model.id)
+                    assertTrue("Task title should not be empty", model.title.isNotEmpty())
+                    assertTrue("Task priority should be between 1 and 4", model.priority in 1..4)
+                    assertTrue("Task version should be at least 1", model.version >= 1)
+                }
             }
         }
     }
@@ -69,22 +79,11 @@ class TaskContractTest {
     fun `rejects all invalid golden boundary fixtures`() {
         val files = invalidExamplesDir.listFiles { _, name -> name.endsWith(".json") } ?: emptyArray()
         for (file in files) {
-            val content = file.readText()
-            var failedAsExpected = false
-            if (file.name.contains("comment")) {
-                try {
-                    json.decodeFromString<Comment>(content)
-                } catch (_: Throwable) {
-                    failedAsExpected = true
-                }
-            } else {
-                try {
-                    json.decodeFromString<Task>(content)
-                } catch (_: Throwable) {
-                    failedAsExpected = true
-                }
-            }
-            assertTrue("Expected invalid fixture ${file.name} to be rejected by Kotlin contract", failedAsExpected)
+            val result = runCatching { decodeFixture(file) }
+            assertTrue(
+                "Expected invalid fixture ${file.name} to be rejected by Kotlin contract",
+                result.isFailure
+            )
         }
     }
 

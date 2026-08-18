@@ -72,7 +72,7 @@ The official way to *not* create a new task every time for something that **repe
 
 > “Instead of creating a new task every single time, add a recurring date!”
 
-That is one task whose date shifts on complete — not two dated rows that the app collapses. Recurrence is **out of scope** for Cras MVP (map fog / not a Task field). It does not answer the forgotten second *one-off* create.
+That is one task whose date shifts on complete — not two dated rows that the app collapses. Recurrence is **not yet specified** for Cras MVP and is not currently a Task field. It does not answer the forgotten second *one-off* create.
 
 If a recurring pattern cannot be expressed as one rule, help says create **separate** tasks (e.g. “every mon at 8pm” and “every tue 9pm”).
 
@@ -113,11 +113,11 @@ Source: [Todoist API](https://developer.todoist.com/api/v1/)
 
 ---
 
-## 7. What this means for Cras Q12
+## 7. What this means for Cras
 
 Todoist’s documented product is: **two creates → two tasks**. Title match is not identity. They *add* copies on purpose. Cleanup is delete/complete (or search to find the extra one). They do not ship “merge these two tasks” or a create-time matcher.
 
-Cras already locked same-**file** races (Q11). The forgotten second create is the Todoist-shaped case: leave both, unless we invent something Todoist does not document.
+Cras identifies Tasks by id, so the forgotten second create is the Todoist-shaped case: leave both. An overlapping write to the **same id** is a separate Supabase row/version conflict handled by compare-and-swap; it does not merge two independently created Tasks.
 
 ---
 

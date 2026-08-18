@@ -21,7 +21,7 @@ Source: [Architecture](https://supabase.com/docs/guides/getting-started/architec
 | **Auth (GoTrue)** | JWT API; stores users in the project's Postgres; SDKs attach the user token to data requests; RLS uses it. | **Yes.** Password, magic link/OTP, social (including native Google on Android). |
 | **Realtime** | WebSocket: Broadcast, Presence, Postgres Changes. | **Yes.** Clients subscribe with the same URL + key + user JWT. |
 | **Storage** | S3-compatible objects; metadata in Postgres; RLS on `storage.objects`. For **files**, not rows. | **Yes** for attachments. Wrong primitive for Task/Label rows. |
-| **Edge Functions** | Hosted Deno TypeScript. “Server-side” code **on Supabase's edge**, not on a machine you operate. Clients invoke with `functions.invoke`. | **Optional.** Not required for a personal list. Needed if you want a secret-holding step (service role, Stripe, custom SMTP logic). |
+| **Edge Functions** | Hosted Deno TypeScript. “Server-side” code **on Supabase's edge**, not on a machine you operate. Clients invoke with `functions.invoke`. | Optional for ordinary Task CRUD. **Required by Cras Voice capture** to hold the Deployment-wide DeepInfra credential and orchestrate both provider calls. |
 
 Sources: [Architecture](https://supabase.com/docs/guides/getting-started/architecture); [Data REST API](https://supabase.com/docs/guides/api); [Auth](https://supabase.com/docs/guides/auth); [Realtime](https://supabase.com/docs/guides/realtime); [Storage](https://supabase.com/docs/guides/storage); [Edge Functions](https://supabase.com/docs/guides/functions); [Securing your data](https://supabase.com/docs/guides/database/secure-data).
 
@@ -29,7 +29,7 @@ Sources: [Architecture](https://supabase.com/docs/guides/getting-started/archite
 
 Source: [Securing your data](https://supabase.com/docs/guides/database/secure-data).
 
-You **can** disable the Data API if the app only uses Edge Functions or a direct Postgres connection — that would *create* a need for something server-side. The leaning (no Cras-owned server) is the opposite: leave the Data API on.
+You **can** disable the Data API if the app only uses Edge Functions or a direct Postgres connection. Cras leaves it enabled for ordinary RLS-protected CRUD; the Voice-capture Edge Function is a narrow secret-bearing boundary, not a replacement for the Data API.
 
 Source: [Securing your API](https://supabase.com/docs/guides/api/securing-your-api#disable-the-data-api).
 
@@ -64,7 +64,7 @@ Sources: [Understanding API keys](https://supabase.com/docs/guides/getting-start
 
 **Why not `service_role` / secret in either client:** “By design, this role has full access to your project's data. It also uses the `BYPASSRLS` attribute, skipping any and all Row Level Security policies.” “These should **never** be used in the browser or exposed to customers.” Same rule for mobile packages: publishable keys are listed for “mobile or desktop app”; secret keys must not be “bundle[d] in executables or packages for mobile.”
 
-A note that matters if someone later adds Edge Functions: a Service Key “bypasses RLS **only when the request carries no user access token**. If the request carries one, it runs under the RLS policies of that signed-in user.”
+For the current Voice-capture Edge Function, a Service Key “bypasses RLS **only when the request carries no user access token**. If the request carries one, it runs under the RLS policies of that signed-in user.”
 
 Source: [Row Level Security — Bypassing](https://supabase.com/docs/guides/database/postgres/row-level-security#bypassing-row-level-security).
 
@@ -180,12 +180,12 @@ Sources: [Initializing](https://supabase.com/docs/reference/javascript/initializ
 
 **Postgres Changes** is the first-party live path: add the table to publication `supabase_realtime`, subscribe with the user JWT. Events are authorized with the same RLS. Payload includes `new` (and `old` only if `REPLICA IDENTITY FULL`). Official example table is literally `todos`. Kotlin: `postgresChangeFlow<PostgresAction>`. Filters (`id=eq.…`) are evaluated **on the server**. `select: ['id', 'title']` can shrink payloads.
 
-Documented limits that matter at two devices, not 10k users:
+Documented Realtime limits that matter across the public Deployment:
 
 - Postgres Changes payload **1,024 KB**. Over that, `new`/`old` keep only fields ≤ **64 bytes**.
 - Free plan: **200** concurrent connections, **100** messages/s, **100** channel joins/s. One Operator's web-and-phone pair is small, but the limits apply across the public Deployment: 100 Operators with both clients simultaneously connected would consume all 200 connection slots before allowing operational headroom.
 - Billing: Free **2 million** Realtime messages / **200** peak connections; Pro **5 million** / **500**.
-- “When you make a single change to a table with 100 subscribed users, Realtime performs **100 authorization checks**.” Two subscribers ⇒ two checks. Throughput “scales with the number of subscribers, not the write rate,” and “larger compute add-ons don't meaningfully increase Postgres Changes throughput.” Irrelevant at n=2; relevant if the leaning later becomes many operators on one project, all listening to one table.
+- “When you make a single change to a table with 100 subscribed users, Realtime performs **100 authorization checks**.” Two subscribers ⇒ two checks. Throughput “scales with the number of subscribers, not the write rate,” and “larger compute add-ons don't meaningfully increase Postgres Changes throughput.” Each Operator’s device pair is small, but authorization work and connections accumulate across all Operators in the public Deployment.
 - `DELETE` events: filterable only with `REPLICA IDENTITY FULL`. “RLS policies are **not** applied to `DELETE` statements” for the deleted row (Postgres cannot re-check a gone row).
 
 Broadcast / Presence are optional (typing, “other device online”). They are not the store.

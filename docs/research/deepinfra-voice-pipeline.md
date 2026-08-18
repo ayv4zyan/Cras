@@ -8,7 +8,7 @@ Checked 2026-08-17. Prices and catalog tags can change; slugs below are from Dee
 
 ## Verdict
 
-Voxtral **Small exists on DeepInfra** as `mistralai/Voxtral-Small-24B-2507`. The working OpenWhispr stack uses **Mini**, not Small: `mistralai/Voxtral-Mini-3B-2507` + `google/gemma-4-E4B-it`. DeepInfra’s speech docs only promise **mp3/wav**; the shim exists because **WebM 500s**. An in-app client can reach the API (CORS is `*`), but Cras uses an authenticated **Supabase Edge Function** to hold the Deployment-wide secret and orchestrate both provider calls. Clients normalize recorder output to mono 16 kHz PCM WAV before upload; the function does not transcode. Current Gemma cleanup is **dictation cleanup**, not reliable title/date/time JSON — that is a separate structured-output job, and E4B is **not** tagged for JSON mode.
+Voxtral **Small exists on DeepInfra** as `mistralai/Voxtral-Small-24B-2507`. The working OpenWhispr stack uses **Mini**, not Small: `mistralai/Voxtral-Mini-3B-2507` + `google/gemma-4-E4B-it`. DeepInfra’s speech docs only promise **mp3/wav**; the shim exists because **WebM 500s**. An in-app client can reach the API (CORS is `*`), but Cras uses an authenticated **Supabase Edge Function** to hold the Deployment-wide secret and orchestrate both provider calls. Clients normalize recorder output to mono 16 kHz PCM WAV before upload; the function does not transcode. The OpenWhispr shim’s Gemma stage is **dictation cleanup**, not reliable title/date/time JSON. Cras does not use that cleanup stage: its second provider call is structured Task extraction, and E4B is **not** tagged for JSON mode.
 
 ---
 
@@ -40,7 +40,7 @@ Mistral still documents both 2507 weights, with different product status **on Mi
 
 HF / DeepInfra model copy (owner weights): dedicated transcription mode, 32k context, **up to 30 minutes transcription / 40 minutes understanding**, auto language detect (EN, ES, FR, PT, HI, DE, NL, IT). Mini has **no system prompts**; Small adds experimental function calling. ([Mini](https://huggingface.co/mistralai/Voxtral-Mini-3B-2507), mirrored on the DeepInfra demo pages.)
 
-DeepInfra hosts both only as **speech-recognition** (`type` / `reported_type` = `automatic-speech-recognition`). There is no separate DeepInfra chat/instruct Voxtral slug. Use them as transcribers, then run cleanup on a text model.
+DeepInfra hosts both only as **speech-recognition** (`type` / `reported_type` = `automatic-speech-recognition`). There is no separate DeepInfra chat/instruct Voxtral slug. Cras uses Voxtral Small only for transcription, then sends the transcript directly to the structured Task extractor; it does not run a cleanup-model stage.
 
 ---
 
@@ -68,7 +68,7 @@ Catalog **tags** are the per-model signal: `26B-A4B-it` and `31B-it` (and Ultra)
 
 Owner card: all Gemma 4 sizes have native **function calling** and a **system** role. Thinking is `<|think|>` in the system prompt; OpenWhispr settings set `cleanupDisableThinking: true`. E2B/E4B/12B have native **audio** (max **30 s**); 26B/31B do not (owner). Context: 128K small, 256K medium. ([Gemma 4 model card](https://ai.google.dev/gemma/docs/core/model_card_4), [overview](https://ai.google.dev/gemma/docs/core), [function calling](https://ai.google.dev/gemma/docs/capabilities/text/function-calling-gemma4))
 
-DeepInfra’s `31B-it` tag `input-audio` conflicts with Google’s “31B has no audio encoder.” Treat 31B-on-DeepInfra audio input as **unverified**; cleanup in this pipeline is **text-only** chat.
+DeepInfra’s `31B-it` tag `input-audio` conflicts with Google’s “31B has no audio encoder.” Treat 31B-on-DeepInfra audio input as **unverified**. Cras does not use Gemma audio input: structured extraction is a text-only chat call over the Voxtral transcript.
 
 ---
 
@@ -150,7 +150,7 @@ Endpoints the shim already uses:
 
 ---
 
-## 6. Cleanup vs smart metadata (title + date + time JSON)
+## 6. Historical shim cleanup vs Cras smart metadata
 
 What the shim **reliably** does today is **dictation cleanup**:
 
@@ -159,13 +159,14 @@ What the shim **reliably** does today is **dictation cleanup**:
 
 That is **not** `{ title, date, time }` extraction. Asking the current cleanup prompt for JSON would fight its “output only the cleaned text” rule.
 
-What **can** be done with published APIs:
+The locked Cras pipeline uses the published APIs this way:
 
-1. Keep Mini/Small for **verbatim-ish transcript**.
-2. Second chat call with a **different** system prompt + `response_format: json_schema` (or tools) for title/date/time.
-3. Prefer a model DeepInfra tags for JSON: **`google/gemma-4-26B-A4B-it` or `google/gemma-4-31B-it`**. E4B has **tools** but not a JSON tag — usable for function-call extraction, not documented as constrained JSON mode.
-4. Pass **client clock + timezone** in the prompt. The model has no “now.” Relative speech (“tomorrow 3”) cannot be grounded otherwise.
-5. Treat extracted dates as **untrusted**: DeepInfra explicitly says JSON mode fabricates real-world values. Validate, and leave fields null when the transcript has no date/time.
+1. Use **Voxtral Small** for the verbatim-ish transcript.
+2. Send that transcript directly to **Gemma 4 26B-A4B-it** with the dedicated extractor prompt and `response_format: json_schema`. There is no intervening cleanup call.
+3. Pass the **device clock + timezone**. The model has no “now,” so relative speech such as “tomorrow at 3” cannot be grounded otherwise.
+4. Treat extracted dates as **untrusted**: validate the schema and leave fields null when the transcript does not state them.
+
+Other DeepInfra models may technically support tools or structured output, but Operators may select only models on the Deployment-maintained allow-list.
 
 Owner Voxtral Small can do structured summaries / voice function-calling **on Mistral or self-hosted vLLM**, not as DeepInfra’s ASR wrapper.
 

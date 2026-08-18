@@ -1,8 +1,8 @@
-# JSON Schema contract, tagged plan, hex paths
+# JSON Schema contract, tagged plan, Label ids
 
 Web and Android share a **contract**, not compiled types: JSON Schema in `contracts/` is canonical, golden examples live in `contracts/examples/`, and each client hand-writes its models (Effect Schema, kotlinx.serialization). CI validates the goldens; we do not generate types and we do not introduce Kotlin/JS to share them.
 
-A Task file is `tasks/{aa}/{bb}/{id}.json` in the data repo (`aa`/`bb` are the first four hex characters of the Task id). Labels are `labels.json` at that repo’s root; a Task stores Label **ids**. Paths are stable — we do not shard by plan date or week, because clients already load the whole tree and a date edit must not move the file.
+Hono request/response bodies use this JSON. Postgres stores rows (one Task row, Labels + join, Comment children); clients do not see columns or file paths. Hex paths (`tasks/{aa}/{bb}/{id}.json`) were the withdrawn GitHub store layout — they are not part of the contract. A Task stores Label **ids**.
 
 `plan` is a tagged union: omitted (Inbox), `{ date }` (Date-only, no mode), `{ type: "floating", date, time }`, or `{ type: "instant", at }` (UTC). New timed Tasks default to Instant; that default is Settings, not this file. Date-only is never an Instant (no fake midnight). Instants (`completedAt`, comment `createdAt`, `plan.at`) are RFC 3339 UTC.
 

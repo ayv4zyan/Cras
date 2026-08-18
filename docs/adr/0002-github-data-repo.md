@@ -1,6 +1,6 @@
 # GitHub data repo is the store; no merge UI
 
-**Superseded by [ADR 0004](0004-supabase-postgres-hono.md).** GitHub as the Task store was withdrawn. The lock below is historical.
+**Superseded.** GitHub as the Task store was withdrawn. [ADR 0004](0004-supabase-postgres-hono.md) first replaced this decision, and [ADR 0005](0005-supabase-platform.md) then replaced ADR 0004. The lock below is historical; ADR 0005 is current.
 
 Cras MVP keeps Tasks in the Operator’s private GitHub **data** repo (not the Cras source repo). Each client pushes on save. There is no Cras backend and no local replica as the system of record. Android may hold an **Outbox** while offline. Two creates are two Task ids (Todoist). A same-id write that loses the Git compare-and-swap fails and the client reloads; we do not ship a merge editor or merge-two-tasks.
 

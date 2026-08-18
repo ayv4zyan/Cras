@@ -174,7 +174,7 @@ Sources: [Initializing](https://supabase.com/docs/reference/javascript/initializ
 
 ---
 
-## 5. Realtime vs request/response for a two-device personal list
+## 5. Realtime vs request/response per Operator and across the Deployment
 
 **Request/response** is enough to be correct: each device `select`s (optionally with `.eq('user_id', …)` — official RLS performance advice) and `update`s on check-off. The other device sees changes on next fetch.
 
@@ -183,7 +183,7 @@ Sources: [Initializing](https://supabase.com/docs/reference/javascript/initializ
 Documented limits that matter at two devices, not 10k users:
 
 - Postgres Changes payload **1,024 KB**. Over that, `new`/`old` keep only fields ≤ **64 bytes**.
-- Free plan: **200** concurrent connections, **100** messages/s, **100** channel joins/s. A personal pair of sockets is nowhere near this.
+- Free plan: **200** concurrent connections, **100** messages/s, **100** channel joins/s. One Operator's web-and-phone pair is small, but the limits apply across the public Deployment: 100 Operators with both clients simultaneously connected would consume all 200 connection slots before allowing operational headroom.
 - Billing: Free **2 million** Realtime messages / **200** peak connections; Pro **5 million** / **500**.
 - “When you make a single change to a table with 100 subscribed users, Realtime performs **100 authorization checks**.” Two subscribers ⇒ two checks. Throughput “scales with the number of subscribers, not the write rate,” and “larger compute add-ons don't meaningfully increase Postgres Changes throughput.” Irrelevant at n=2; relevant if the leaning later becomes many operators on one project, all listening to one table.
 - `DELETE` events: filterable only with `REPLICA IDENTITY FULL`. “RLS policies are **not** applied to `DELETE` statements” for the deleted row (Postgres cannot re-check a gone row).
@@ -194,7 +194,7 @@ Public Realtime connections without a user JWT are limited to **24 hours** unles
 
 Sources: [Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes); [Realtime Limits](https://supabase.com/docs/guides/realtime/limits); [API keys — known limitations](https://supabase.com/docs/guides/getting-started/api-keys); [Billing](https://supabase.com/docs/guides/platform/billing-on-supabase).
 
-**For two personal devices:** either poll/refetch or subscribe to `todos`/`tasks`. Realtime is convenience, not durability. The write is still a PostgREST `PATCH`.
+**For one Operator's two devices:** either poll/refetch or subscribe to `todos`/`tasks`. Realtime is convenience, not durability; the write is still a PostgREST `PATCH`. Deployment capacity must be assessed against the aggregate connections, joins, and messages of all Operators.
 
 ---
 
@@ -220,7 +220,7 @@ Source: [C# Fetch data](https://supabase.com/docs/reference/csharp/select) (same
 
 **One check-off:** one `PATCH` (optionally `.select()` to confirm). That is one HTTP RTT + one row lock. Ten rapid check-offs are ten `PATCH`es; nothing in PostgREST docs asks you to serialize them or wait 1 s (contrast GitHub Contents). Two devices checking **different** tasks do not contend.
 
-Egress (all services): Free **5 GB** uncached / **5 GB** cached per org; Pro **250 GB**. A personal task list will not see this first.
+Egress (all services): Free **5 GB** uncached / **5 GB** cached per org; Pro **250 GB**. One Operator's task list is tiny, but usage accumulates across every Operator in the public Deployment.
 
 Source: [Billing](https://supabase.com/docs/guides/platform/billing-on-supabase).
 
@@ -296,7 +296,7 @@ Primary sources do **not** pick this. They only constrain it:
 | Realtime | Two sockets, one publication. | Postgres Changes authorizes **per subscriber**; cost scales with listener count. |
 | Self-host | One Compose stack **is** one project. | Same stack; tenancy is RLS. |
 
-SAML docs explicitly describe “multi-tenant SSO for multiple clients or organizations **within a single application**” via `sso_provider_id` in the JWT + RLS. That is a capability, not a requirement for a personal app.
+SAML docs explicitly describe “multi-tenant SSO for multiple clients or organizations **within a single application**” via `sso_provider_id` in the JWT + RLS. Cras is multi-user, but does not currently require organization-level SAML tenancy: Operators authenticate individually with Google and data isolation is decided separately through RLS.
 
 Source: [SAML 2.0](https://supabase.com/docs/guides/auth/enterprise-sso/auth-sso-saml).
 

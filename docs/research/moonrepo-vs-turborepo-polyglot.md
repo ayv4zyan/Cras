@@ -143,7 +143,7 @@ Official framing:
 - Turbo’s own cache guide: if the underlying tool already caches, combining caches “can quickly become complicated”; skip turbo cache when the task is faster than a round-trip or artifacts are huge ([Caching](https://turborepo.dev/docs/crafting-your-repository/caching#caching-a-task-is-slower-than-executing-the-task)).
 - moon system tasks explicitly **do not** install or version the foreign language ([FAQ](https://moonrepo.dev/docs/faq#can-we-run-other-languages)).
 
-For a **personal two-app MVP** (one Gradle Android app, one pnpm TypeScript webapp, one operator):
+For a **two-client MVP** (one Gradle Android app and one pnpm TypeScript webapp):
 
 **Skip moon and turbo when:**
 

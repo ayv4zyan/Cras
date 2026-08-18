@@ -72,7 +72,7 @@ The official way to *not* create a new task every time for something that **repe
 
 > “Instead of creating a new task every single time, add a recurring date!”
 
-That is one task whose date shifts on complete — not two dated rows that the app collapses. Recurrence is **not yet specified** for Cras MVP and is not currently a Task field. It does not answer the forgotten second *one-off* create.
+That is one task whose date shifts on complete — not two dated rows that the app collapses. Recurrence and reminders are explicitly excluded from the current MVP Task model by [What is a Task, and what are Inbox, Today, and Upcoming?](https://github.com/ayv4zyan/Cras/issues/6). That decision does not answer the forgotten second *one-off* create.
 
 If a recurring pattern cannot be expressed as one rule, help says create **separate** tasks (e.g. “every mon at 8pm” and “every tue 9pm”).
 

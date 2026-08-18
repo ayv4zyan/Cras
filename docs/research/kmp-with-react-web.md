@@ -275,11 +275,11 @@ No Kotlin/JS target, no `@JsExport`, no Gradle-to-npm workspace. Android Kotlin 
 
 **When this is cheaper:** a two-client MVP where TanStack web and Compose/widgets Android are already chosen and both clients integrate with the same Supabase-backed JSON contract. The number of Operators does not create a compile-time Kotlin-sharing benefit.
 
-### Recommendation for this map
+### Resolution for this map
 
-Call it **KMP** only if you add a `js` target and React **imports the compiled library** (sample-shaped). Kotlin on Android + React on web **without** that library is two clients.
+Cras chose **two clients plus a JSON Schema contract**: Kotlin + Compose on Android and React + TanStack on web. JSON Schema plus golden examples is canonical; each client implements its own models. There is no Kotlin/JS target, compiled Kotlin library in React, Compose Multiplatform web, or Kotlin/Wasm domain runtime.
 
-For Cras MVP: **B is the cheaper lock** unless issue 12 chooses Kotlin Android *and* you have a concrete list of rules you will not duplicate (task field validation, Today/Inbox predicates). If you do share, share **pure functions + types** via Kotlin/JS; keep SQLDelight/HTTP/UI on each side (or Ktor with two engines). Do **not** plan Compose Multiplatform web while React remains the web UI. Do **not** plan Kotlin/Wasm as the React domain runtime.
+Call the architecture **KMP** only if a future decision adds a Kotlin web target that React actually imports. The present architecture is explicitly not KMP.
 
 ---
 

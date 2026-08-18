@@ -12,6 +12,10 @@ _Avoid_: User, customer, tenant, owner
 One configured release of the Cras web and Android clients connected to a shared backend. A Deployment serves many Operators.
 _Avoid_: copy, instance, workspace
 
+**Web client**:
+The Cras experience accessed through an ordinary browser tab. It is one of Cras's two client surfaces and is not a separately installed desktop client.
+_Avoid_: desktop client, desktop app, PWA
+
 **Pending deletion**:
 The frozen state of an Operator after confirmed account deletion and before permanent purge. Ordinary use and Notification delivery are unavailable; every installation is disabled, but recovery remains possible during the Recovery window.
 _Avoid_: soft-deleted account, deactivated account

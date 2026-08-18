@@ -32,15 +32,41 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-enum class AppView(val title: String) {
-    INBOX("Inbox"),
-    TODAY("Today"),
-    UPCOMING("Upcoming"),
-    COMPLETED("Completed")
+enum class AppView(
+    val title: String,
+    val emptyMessage: String,
+    val icon: ImageVector,
+    val emptyIcon: ImageVector
+) {
+    INBOX(
+        title = "Inbox",
+        emptyMessage = "No tasks in Inbox",
+        icon = Icons.Default.Inbox,
+        emptyIcon = Icons.AutoMirrored.Filled.List
+    ),
+    TODAY(
+        title = "Today",
+        emptyMessage = "No tasks scheduled for Today",
+        icon = Icons.Default.CalendarToday,
+        emptyIcon = Icons.Default.CalendarToday
+    ),
+    UPCOMING(
+        title = "Upcoming",
+        emptyMessage = "No upcoming tasks",
+        icon = Icons.Default.CalendarMonth,
+        emptyIcon = Icons.Default.CalendarMonth
+    ),
+    COMPLETED(
+        title = "Completed",
+        emptyMessage = "No completed tasks yet",
+        icon = Icons.Default.CheckCircle,
+        emptyIcon = Icons.Default.CheckCircle
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,30 +100,14 @@ fun CrasApp() {
             NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surface
             ) {
-                NavigationBarItem(
-                    selected = currentView == AppView.INBOX,
-                    onClick = { currentView = AppView.INBOX },
-                    icon = { Icon(Icons.Default.Inbox, contentDescription = "Inbox") },
-                    label = { Text("Inbox") }
-                )
-                NavigationBarItem(
-                    selected = currentView == AppView.TODAY,
-                    onClick = { currentView = AppView.TODAY },
-                    icon = { Icon(Icons.Default.CalendarToday, contentDescription = "Today") },
-                    label = { Text("Today") }
-                )
-                NavigationBarItem(
-                    selected = currentView == AppView.UPCOMING,
-                    onClick = { currentView = AppView.UPCOMING },
-                    icon = { Icon(Icons.Default.CalendarMonth, contentDescription = "Upcoming") },
-                    label = { Text("Upcoming") }
-                )
-                NavigationBarItem(
-                    selected = currentView == AppView.COMPLETED,
-                    onClick = { currentView = AppView.COMPLETED },
-                    icon = { Icon(Icons.Default.CheckCircle, contentDescription = "Completed") },
-                    label = { Text("Completed") }
-                )
+                AppView.entries.forEach { view ->
+                    NavigationBarItem(
+                        selected = currentView == view,
+                        onClick = { currentView = view },
+                        icon = { Icon(view.icon, contentDescription = view.title) },
+                        label = { Text(view.title) }
+                    )
+                }
             }
         },
         floatingActionButton = {
@@ -122,12 +132,7 @@ fun CrasApp() {
                 verticalArrangement = Arrangement.Center
             ) {
                 Icon(
-                    imageVector = when (currentView) {
-                        AppView.INBOX -> Icons.AutoMirrored.Filled.List
-                        AppView.TODAY -> Icons.Default.CalendarToday
-                        AppView.UPCOMING -> Icons.Default.CalendarMonth
-                        AppView.COMPLETED -> Icons.Default.CheckCircle
-                    },
+                    imageVector = currentView.emptyIcon,
                     contentDescription = null,
                     modifier = Modifier.size(64.dp),
                     tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
@@ -136,12 +141,7 @@ fun CrasApp() {
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = when (currentView) {
-                        AppView.INBOX -> "No tasks in Inbox"
-                        AppView.TODAY -> "No tasks scheduled for Today"
-                        AppView.UPCOMING -> "No upcoming tasks"
-                        AppView.COMPLETED -> "No completed tasks"
-                    },
+                    text = currentView.emptyMessage,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )

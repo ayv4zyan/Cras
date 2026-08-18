@@ -8,10 +8,12 @@
     "web:dev": "bun --filter @cras/web dev",
     "web:build": "bun --filter @cras/web build",
     "web:lint": "bun --filter @cras/web lint",
+    "web:format:check": "bun --filter @cras/web format:check",
     "web:typecheck": "bun --filter @cras/web typecheck",
     "web:test": "bun --filter @cras/web test",
     "test": "bun --filter @cras/web test",
     "lint": "bun --filter @cras/web lint",
+    "format:check": "bun --filter @cras/web format:check",
     "typecheck": "bun --filter @cras/web typecheck"
   }
 }

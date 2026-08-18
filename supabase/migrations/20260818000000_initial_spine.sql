@@ -3,8 +3,8 @@
 CREATE SCHEMA IF NOT EXISTS api;
 
 -- Grant usage to authenticated and anon roles
-GRANT USAGE ON SCHEMA api TO anon, authenticated;
-GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT USAGE ON SCHEMA api TO authenticated;
+GRANT USAGE ON SCHEMA public TO authenticated;
 
 --------------------------------------------------
 -- 1. Deployment Configuration & Voice Catalog
@@ -19,10 +19,10 @@ CREATE TABLE IF NOT EXISTS public.deployment_config (
 
 ALTER TABLE public.deployment_config ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow read deployment configuration"
+CREATE POLICY "Allow authenticated read deployment configuration"
     ON public.deployment_config
     FOR SELECT
-    TO authenticated, anon
+    TO authenticated
     USING (true);
 
 CREATE TABLE IF NOT EXISTS public.voice_model_catalog (
@@ -36,10 +36,10 @@ CREATE TABLE IF NOT EXISTS public.voice_model_catalog (
 
 ALTER TABLE public.voice_model_catalog ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow read enabled voice models"
+CREATE POLICY "Allow authenticated read enabled voice models"
     ON public.voice_model_catalog
     FOR SELECT
-    TO authenticated, anon
+    TO authenticated
     USING (is_enabled = true);
 
 --------------------------------------------------
@@ -104,6 +104,28 @@ CREATE TABLE IF NOT EXISTS public.tasks (
     CONSTRAINT fk_tasks_parent FOREIGN KEY (parent_id, operator_id)
         REFERENCES public.tasks(id, operator_id) ON DELETE CASCADE
 );
+
+-- Constraint: A subtask cannot itself have children (one-level nesting)
+CREATE OR REPLACE FUNCTION public.check_subtask_nesting()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.parent_id IS NOT NULL THEN
+        -- Check if parent is itself a subtask
+        IF EXISTS (
+            SELECT 1 FROM public.tasks
+            WHERE id = NEW.parent_id AND operator_id = NEW.operator_id AND parent_id IS NOT NULL
+        ) THEN
+            RAISE EXCEPTION 'Subtasks cannot have children (one-level nesting only)';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_tasks_subtask_nesting
+    BEFORE INSERT OR UPDATE OF parent_id ON public.tasks
+    FOR EACH ROW
+    EXECUTE FUNCTION public.check_subtask_nesting();
 
 ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 

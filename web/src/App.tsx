@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import {
   Inbox,
   Calendar,
@@ -7,12 +7,12 @@ import {
   Plus,
   Layers,
   Sparkles,
-} from 'lucide-react';
+} from "lucide-react";
 
-type ViewMode = 'inbox' | 'today' | 'upcoming' | 'completed';
+type ViewMode = "inbox" | "today" | "upcoming" | "completed";
 
 export default function App(): React.JSX.Element {
-  const [activeView, setActiveView] = useState<ViewMode>('inbox');
+  const [activeView, setActiveView] = useState<ViewMode>("inbox");
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
@@ -26,18 +26,20 @@ export default function App(): React.JSX.Element {
             </div>
             <div>
               <h1 className="text-base font-semibold tracking-tight">Cras</h1>
-              <p className="text-xs text-muted-foreground">Operator task space</p>
+              <p className="text-xs text-muted-foreground">
+                Operator task space
+              </p>
             </div>
           </div>
 
           {/* Nav Items */}
           <nav className="space-y-1">
             <button
-              onClick={() => setActiveView('inbox')}
+              onClick={() => setActiveView("inbox")}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeView === 'inbox'
-                  ? 'bg-secondary text-foreground font-semibold shadow-xs'
-                  : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                activeView === "inbox"
+                  ? "bg-secondary text-foreground font-semibold shadow-xs"
+                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
               }`}
             >
               <div className="flex items-center space-x-2.5">
@@ -48,11 +50,11 @@ export default function App(): React.JSX.Element {
             </button>
 
             <button
-              onClick={() => setActiveView('today')}
+              onClick={() => setActiveView("today")}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeView === 'today'
-                  ? 'bg-secondary text-foreground font-semibold shadow-xs'
-                  : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                activeView === "today"
+                  ? "bg-secondary text-foreground font-semibold shadow-xs"
+                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
               }`}
             >
               <div className="flex items-center space-x-2.5">
@@ -63,11 +65,11 @@ export default function App(): React.JSX.Element {
             </button>
 
             <button
-              onClick={() => setActiveView('upcoming')}
+              onClick={() => setActiveView("upcoming")}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeView === 'upcoming'
-                  ? 'bg-secondary text-foreground font-semibold shadow-xs'
-                  : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                activeView === "upcoming"
+                  ? "bg-secondary text-foreground font-semibold shadow-xs"
+                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
               }`}
             >
               <div className="flex items-center space-x-2.5">
@@ -77,11 +79,11 @@ export default function App(): React.JSX.Element {
             </button>
 
             <button
-              onClick={() => setActiveView('completed')}
+              onClick={() => setActiveView("completed")}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeView === 'completed'
-                  ? 'bg-secondary text-foreground font-semibold shadow-xs'
-                  : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                activeView === "completed"
+                  ? "bg-secondary text-foreground font-semibold shadow-xs"
+                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
               }`}
             >
               <div className="flex items-center space-x-2.5">
@@ -126,21 +128,26 @@ export default function App(): React.JSX.Element {
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="max-w-md w-full text-center space-y-4">
             <div className="mx-auto w-12 h-12 rounded-full bg-secondary/80 flex items-center justify-center text-muted-foreground">
-              {activeView === 'inbox' && <Layers className="h-6 w-6" />}
-              {activeView === 'today' && <Calendar className="h-6 w-6" />}
-              {activeView === 'upcoming' && <CalendarDays className="h-6 w-6" />}
-              {activeView === 'completed' && <CheckCircle2 className="h-6 w-6" />}
+              {activeView === "inbox" && <Layers className="h-6 w-6" />}
+              {activeView === "today" && <Calendar className="h-6 w-6" />}
+              {activeView === "upcoming" && (
+                <CalendarDays className="h-6 w-6" />
+              )}
+              {activeView === "completed" && (
+                <CheckCircle2 className="h-6 w-6" />
+              )}
             </div>
 
             <div className="space-y-1.5">
               <h3 className="text-base font-medium tracking-tight">
-                {activeView === 'inbox' && 'No tasks in Inbox'}
-                {activeView === 'today' && 'No tasks scheduled for Today'}
-                {activeView === 'upcoming' && 'No upcoming tasks'}
-                {activeView === 'completed' && 'No completed tasks yet'}
+                {activeView === "inbox" && "No tasks in Inbox"}
+                {activeView === "today" && "No tasks scheduled for Today"}
+                {activeView === "upcoming" && "No upcoming tasks"}
+                {activeView === "completed" && "No completed tasks yet"}
               </h3>
               <p className="text-sm text-muted-foreground">
-                Your task space is clear. Capture a new task or use Voice capture to propose drafts.
+                Your task space is clear. Capture a new task or use Voice
+                capture to propose drafts.
               </p>
             </div>
 

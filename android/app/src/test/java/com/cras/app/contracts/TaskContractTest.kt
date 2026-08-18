@@ -16,19 +16,14 @@ class TaskContractTest {
         isLenient = false
     }
 
-    private val examplesDir: File = run {
-        var dir = File("../../../contracts/examples").canonicalFile
-        if (!dir.exists()) {
-            dir = File("../../contracts/examples").canonicalFile
-        }
-        if (!dir.exists()) {
-            dir = File("../contracts/examples").canonicalFile
-        }
-        if (!dir.exists()) {
-            dir = File("contracts/examples").canonicalFile
-        }
-        dir
-    }
+    private val examplesDir: File = listOf(
+        "../../../contracts/examples",
+        "../../contracts/examples",
+        "../contracts/examples",
+        "contracts/examples"
+    ).map { File(it).canonicalFile }
+        .firstOrNull { it.exists() }
+        ?: File("../../../contracts/examples").canonicalFile
 
     @Test
     fun `golden fixtures exist and at least four are present`() {

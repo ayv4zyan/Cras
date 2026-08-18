@@ -13,7 +13,7 @@ One configured release of the Cras web and Android clients connected to a shared
 _Avoid_: copy, instance, workspace
 
 **Pending deletion**:
-The frozen state of an Operator after confirmed account deletion and before permanent purge. Ordinary use is unavailable, but recovery remains possible during the Recovery window.
+The frozen state of an Operator after confirmed account deletion and before permanent purge. Ordinary use and Notification delivery are unavailable; every installation is disabled, but recovery remains possible during the Recovery window.
 _Avoid_: soft-deleted account, deactivated account
 
 **Recovery window**:
@@ -89,7 +89,7 @@ A best-effort alert automatically requested by every open Task with a Floating o
 _Avoid_: reminder, alarm, exact alert
 
 **Eligible installation**:
-An Android installation or browser profile where Cras Notifications are enabled locally and platform permission is available. It is a delivery target, not a primary device.
+An Android installation or browser profile where Cras Notifications are enabled locally, platform permission is available, and the installation is active for the Operator. Pending deletion disables every installation; after recovery, each installation becomes eligible again only when it authenticates again. It is a delivery target, not a primary device.
 _Avoid_: notification device, primary device
 
 **Subtask**:

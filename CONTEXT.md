@@ -12,6 +12,14 @@ _Avoid_: User, customer, tenant, owner
 One configured release of the Cras web and Android clients connected to a shared backend. A Deployment serves many Operators.
 _Avoid_: copy, instance, workspace
 
+**Settings**:
+An Operator's shared optional overrides of Deployment defaults. Settings follow the Operator across devices.
+_Avoid_: preferences, device settings, config
+
+**Voice model catalog**:
+The Deployment-maintained set of enabled Voice capture models and defaults.
+_Avoid_: model allow-list, model list, Operator models
+
 **Voice capture**:
 An in-app recording the Operator makes so Cras can propose or change Task fields.
 _Avoid_: dictation, Dictate, Ramble, OpenWhispr (OS-level paste, not this product)

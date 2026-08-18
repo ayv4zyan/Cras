@@ -1,6 +1,6 @@
 # What does an Android home-screen widget take from React Native?
 
-**Status (2026-08-18):** the RN question is closed; the **Glance facts still apply**. Android is Kotlin + Glance — [Which client stack do we lock for web and Android?](https://github.com/ayv4zyan/Cras/issues/12), `docs/adr/0001-polyglot-clients.md`. There is no JS snapshot layer. Product shape is still [What should the Android widget do?](https://github.com/ayv4zyan/Cras/issues/11).
+**Status (2026-08-18):** the RN question is closed; the **Glance facts still apply**. Android is Kotlin + Glance — [Which client stack do we lock for web and Android?](https://github.com/ayv4zyan/Cras/issues/12), `docs/adr/0001-polyglot-clients.md`. There is no JS snapshot layer. Product shape is locked on [What should the Android widget do?](https://github.com/ayv4zyan/Cras/issues/11): Launchpad, Shortcuts, and a Today glance with complete-on-tile. The “tap-to-open is the honest MVP” line below was the RN-era recommendation and is **superseded**.
 
 Ticket: [What does an Android home-screen widget take from React Native?](https://github.com/ayv4zyan/Cras/issues/10)
 

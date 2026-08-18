@@ -10,7 +10,7 @@ _Avoid_: User, customer, tenant, owner
 
 **Voice capture**:
 An in-app recording the Operator makes so Cras can propose or change Task fields.
-_Avoid_: dictation, OpenWhispr (OS-level paste, not this product)
+_Avoid_: dictation, Dictate, Ramble, OpenWhispr (OS-level paste, not this product)
 
 **Draft**:
 A proposed Task, or a proposed change to a Task, shown after Voice capture. Not saved until the Operator accepts.
@@ -59,3 +59,15 @@ _Avoid_: archive, history, reporting, activity log
 **Outbox**:
 Creates and completes the Operator accepted on a device that are not yet in the store.
 _Avoid_: local replica, working copy, cache, pending task
+
+**Launchpad**:
+A home-screen widget of four action buttons: Today, Upcoming, Voice capture, and Create task.
+_Avoid_: dock, control center
+
+**Shortcut**:
+A single-action home-screen button. One of the Launchpad actions, placed alone.
+_Avoid_: action button, humble button
+
+**Today glance**:
+A home-screen widget that lists Today's Task titles.
+_Avoid_: task list widget, agenda widget

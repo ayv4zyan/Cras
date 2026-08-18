@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0005
+---
+
 # Hosted Postgres behind Hono; clients never touch Supabase
 
 Cras MVP keeps Tasks in **hosted Supabase Postgres**. Web and Android talk only to a **Hono** API on **Cloudflare Workers**. The Worker reaches Postgres through **Hyperdrive + SQL** (Supabase’s direct connection string, not the pooler). Clients send an **Operator API token**; they do not ship a publishable key, do not use Supabase Auth, and do not use PostgREST or Realtime.

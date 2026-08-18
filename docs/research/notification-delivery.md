@@ -2,11 +2,12 @@
 
 Verified against first-party documentation and standards on **2026-08-18**. This note distinguishes what the platforms guarantee from architectural recommendations.
 
-## Decision summary
+## Platform implications and accepted decision
 
 - **Web:** schedule on the server, then send Web Push when due. A push can activate the site's service worker when no page is open. This is not a promise that a notification will appear after the user explicitly quits/force-stops the browser, disables background activity, revokes permission, or remains offline beyond the push TTL.
-- **Android:** local `AlarmManager` is the only path here that can fire from already-synced device data with no network. FCM is a server-to-device delivery channel, not a future-time scheduler and not an exact alarm. The robust product design can use local alarms for the current Android device plus a server outbox for Web and other devices, with stable notification IDs to deduplicate.
+- **Android:** local `AlarmManager` is the only path here that can fire from already-synced device data with no network. FCM is a server-to-device delivery channel, not a future-time scheduler and not an exact alarm. These are researched alternatives, not the Cras decision.
 - **Supabase:** the simplest supported server orchestration is one recurring Supabase Cron job that claims due outbox rows and invokes an Edge Function to send Web Push/FCM. Supabase Queues can add delayed visibility and retry-friendly pull processing, but still needs a consumer (commonly an Edge Function invoked by Cron).
+- **Accepted Cras decision:** ADR 0007 chooses server-authoritative Web Push and FCM with no Android local alarms. This accepts offline-at-plan-time loss in exchange for one cross-platform scheduling, cancellation, and deduplication authority.
 
 ## Web Push when the web app is closed
 
@@ -78,7 +79,7 @@ Use a durable `notification_delivery`/outbox row per reminder × destination, wi
 
 Queues are optional for the MVP. They become useful for isolating delivery attempts and retries, but a due-row outbox remains valuable because task edits/cancellations and timezone recomputation are easier to audit and invalidate there. Do not create one cron job per reminder.
 
-For Android, local alarms and server delivery must share a stable notification identity so the same reminder is updated/deduplicated rather than displayed twice.
+Cras ultimately chose the server delivery path for Android as well as web: FCM is Android's sole display authority and Android schedules no local alarms. Stable occurrence identities still bound worker retries and replace duplicate Android displays. See [ADR 0007](../adr/0007-server-authoritative-notification-delivery.md).
 
 ## Explicitly stale-prone / transition-sensitive items
 

@@ -6,6 +6,8 @@ Supabase table, RPC, and Edge Function payloads preserve this domain shape even 
 
 `plan` is a tagged union: omitted (Inbox), `{ date }` (Date-only, no mode), `{ type: "floating", date, time }`, or `{ type: "instant", at }` (UTC). New timed Tasks default to Instant; that default is Settings, not this file. Date-only is never an Instant (no fake midnight). Instants (`completedAt`, comment `createdAt`, `plan.at`) are RFC 3339 UTC.
 
+Each client derives **Today** from the viewing device’s local calendar date; MVP has no home timezone. Selecting a relative date resolves it immediately using that device’s clock. Voice resolves relative dates from the recording-start time and the recording device’s timezone. The Draft stores the resulting exact Date-only, Floating, or Instant plan—not a relative token—so midnight never silently changes it; the Operator can edit the visible exact date before acceptance. An Instant remains one UTC moment, although its displayed day and Today membership may differ by device.
+
 Rejected: Effect Schema as the source of truth, OpenAPI, a single global clock mode, week-of-plan-date folders, `type` on a Date-only plan.
 
 Details: [What is the shared task contract between web and Android?](https://github.com/ayv4zyan/Cras/issues/16).

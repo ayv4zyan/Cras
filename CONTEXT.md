@@ -69,7 +69,7 @@ The view of open top-level Tasks that have no date. Subtasks are not in Inbox.
 _Avoid_: unprocessed, all tasks, default project
 
 **Today**:
-The view of open Tasks whose plan day is today or earlier, using the Operator's local calendar date. For an Instant that day is the device-local date of the moment. Completed Tasks are not shown.
+The view of open Tasks whose plan day is today or earlier, using the viewing device's local calendar date. Devices in different calendar dates may disagree temporarily. For an Instant, the plan day is the device-local date of the moment. Completed Tasks are not shown.
 _Avoid_: scheduled, due
 
 **Upcoming**:

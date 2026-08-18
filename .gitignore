@@ -1,0 +1,22 @@
+# Node / Bun
+node_modules/
+bun.lockb
+dist/
+.vite/
+*.local
+
+# Android / Gradle
+.gradle/
+build/
+*/build/
+app/build/
+*.apk
+*.aab
+.idea/
+*.iml
+local.properties
+.DS_Store
+
+# Supabase
+supabase/.temp/
+*.tsbuildinfo

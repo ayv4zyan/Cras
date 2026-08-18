@@ -1,0 +1,16 @@
+{
+  "id": "55555555-5555-5555-5555-555555555555",
+  "title": "Global team broadcast",
+  "description": "UTC moment alignment across all regions",
+  "priority": 3,
+  "plan": {
+    "type": "instant",
+    "at": "2026-08-19T14:00:00Z"
+  },
+  "labels": [],
+  "parentId": null,
+  "completedAt": null,
+  "createdAt": "2026-08-18T12:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
+  "version": 1
+}

@@ -1,0 +1,17 @@
+{
+  "id": "44444444-4444-4444-4444-444444444444",
+  "title": "Morning standup sync",
+  "description": "Daily sync on project spine progress",
+  "priority": 1,
+  "plan": {
+    "type": "floating",
+    "date": "2026-08-19",
+    "time": "09:30:00"
+  },
+  "labels": ["22222222-2222-2222-2222-222222222222"],
+  "parentId": null,
+  "completedAt": null,
+  "createdAt": "2026-08-18T12:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
+  "version": 1
+}

@@ -1,0 +1,87 @@
+name: Change Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  web-and-contracts:
+    name: Web & Shared Contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify code formatting
+        run: bun run --cwd web format:check
+
+      - name: Lint web client
+        run: bun run --cwd web lint
+
+      - name: Typecheck web client & contracts
+        run: bun run --cwd web typecheck
+
+      - name: Run web & contract tests
+        run: bun run --cwd web test
+
+      - name: Build web production bundle
+        run: bun run --cwd web build
+
+  android:
+    name: Android Native Client
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Android Lint
+        working-directory: android
+        run: ./gradlew lint
+
+      - name: Run Android JVM Unit & Contract Tests
+        working-directory: android
+        run: ./gradlew test
+
+      - name: Assemble Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+  supabase-migrations:
+    name: Supabase Local Stack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.15.5
+
+      - name: Start Supabase stack and test migrations
+        run: |
+          supabase start -x studio,logflare,vector
+          supabase db reset
+          supabase stop

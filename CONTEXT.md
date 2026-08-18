@@ -12,6 +12,10 @@ _Avoid_: User, customer, tenant, owner
 One configured release of the Cras web and Android clients connected to a shared backend. A Deployment serves many Operators.
 _Avoid_: copy, instance, workspace
 
+**Deployment configuration**:
+The Deployment-maintained defaults shared by all clients and Operators. Operators may inherit these values but cannot change them.
+_Avoid_: server settings, app settings, environment config
+
 **Settings**:
 An Operator's shared optional overrides of Deployment defaults. Settings follow the Operator across devices.
 _Avoid_: preferences, device settings, config

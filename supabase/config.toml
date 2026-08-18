@@ -18,7 +18,6 @@ enabled = false
 
 [realtime]
 enabled = true
-port = 54323
 
 [studio]
 enabled = true
@@ -32,7 +31,6 @@ jwt_expiry = 3600
 
 [edge_runtime]
 enabled = true
-port = 54326
 
 [storage]
 enabled = true

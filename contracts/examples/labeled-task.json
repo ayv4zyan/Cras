@@ -1,0 +1,19 @@
+{
+  "id": "88888888-8888-8888-8888-888888888888",
+  "title": "Triage urgent regression",
+  "description": "Investigate isolation test failure across operators",
+  "priority": 1,
+  "plan": {
+    "type": "instant",
+    "at": "2026-08-19T09:00:00Z"
+  },
+  "labels": [
+    "22222222-2222-2222-2222-222222222222",
+    "99999999-9999-9999-9999-999999999999"
+  ],
+  "parentId": null,
+  "completedAt": null,
+  "createdAt": "2026-08-18T10:00:00Z",
+  "updatedAt": "2026-08-18T10:00:00Z",
+  "version": 1
+}

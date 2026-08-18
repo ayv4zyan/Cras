@@ -1,0 +1,16 @@
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "title": "Invalid date-only task with type",
+  "description": null,
+  "priority": 3,
+  "plan": {
+    "type": "date_only",
+    "date": "2026-08-20"
+  },
+  "labels": [],
+  "parentId": null,
+  "completedAt": null,
+  "createdAt": "2026-08-18T12:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
+  "version": 1
+}

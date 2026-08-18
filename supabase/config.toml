@@ -20,8 +20,7 @@ enabled = false
 enabled = true
 
 [studio]
-enabled = true
-port = 54324
+enabled = false
 
 [auth]
 enabled = true

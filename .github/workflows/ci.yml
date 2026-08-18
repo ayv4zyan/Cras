@@ -82,6 +82,6 @@ jobs:
 
       - name: Start Supabase stack and test migrations
         run: |
-          supabase start
+          supabase start -x studio,logflare,vector
           supabase db reset
           supabase stop

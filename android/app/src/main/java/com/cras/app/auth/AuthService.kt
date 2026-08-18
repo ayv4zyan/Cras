@@ -32,6 +32,34 @@ interface SessionStore {
     fun clearSession()
 }
 
+class SharedPreferencesSessionStore(
+    private val preferences: android.content.SharedPreferences,
+    private val json: Json = Json { ignoreUnknownKeys = true }
+) : SessionStore {
+
+    companion object {
+        private const val KEY_SESSION = "cras_operator_session"
+    }
+
+    override fun loadSession(): OperatorSession? {
+        val serialized = preferences.getString(KEY_SESSION, null) ?: return null
+        return try {
+            json.decodeFromString<OperatorSession>(serialized)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    override fun saveSession(session: OperatorSession) {
+        val serialized = json.encodeToString(OperatorSession.serializer(), session)
+        preferences.edit().putString(KEY_SESSION, serialized).apply()
+    }
+
+    override fun clearSession() {
+        preferences.edit().remove(KEY_SESSION).apply()
+    }
+}
+
 class InMemorySessionStore : SessionStore {
     private var session: OperatorSession? = null
 

@@ -15,7 +15,7 @@ import kotlinx.coroutines.launch
 
 sealed interface AuthUiState {
     object Loading : AuthUiState
-    object Unauthenticated : AuthUiState
+    data class Unauthenticated(val errorMessage: String? = null) : AuthUiState
     data class Authenticated(val session: OperatorSession) : AuthUiState
 }
 
@@ -50,7 +50,7 @@ class InboxViewModel(
                     _authState.value = AuthUiState.Authenticated(session)
                     loadTasksInternal(session)
                 } else {
-                    _authState.value = AuthUiState.Unauthenticated
+                    _authState.value = AuthUiState.Unauthenticated()
                     _inboxState.value = InboxUiState.Empty
                 }
             }
@@ -67,7 +67,7 @@ class InboxViewModel(
             try {
                 authService.signInWithGoogleIdToken(idToken, nonce)
             } catch (e: Exception) {
-                _authState.value = AuthUiState.Unauthenticated
+                _authState.value = AuthUiState.Unauthenticated(e.message ?: "Sign in failed")
             }
         }
     }
@@ -117,7 +117,6 @@ class InboxViewModel(
                     session = currentAuth.session,
                     params = CreateTaskParams(title = trimmed)
                 )
-                // Reload tasks to reflect persisted state
                 loadTasksInternal(currentAuth.session)
             } catch (e: Exception) {
                 _createTaskError.value = e.message ?: "Failed to create task"

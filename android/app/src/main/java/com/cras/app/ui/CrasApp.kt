@@ -29,10 +29,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.cras.app.auth.SharedPreferencesSessionStore
 import com.cras.app.auth.SupabaseAuthService
 import com.cras.app.config.getPublicSupabaseConfig
 import com.cras.app.data.SupabaseTaskService
@@ -55,7 +57,7 @@ enum class AppView(
     ),
     TODAY(
         title = "Today",
-        emptyMessage = "No tasks scheduled for Today",
+        emptyMessage = "No tasks for Today",
         icon = Icons.Default.CalendarToday,
         emptyIcon = Icons.Default.CalendarToday
     ),
@@ -75,11 +77,16 @@ enum class AppView(
 
 @Composable
 fun CrasApp(
-    viewModel: InboxViewModel = viewModel {
-        val config = getPublicSupabaseConfig()
-        val authService = SupabaseAuthService(config)
-        val taskService = SupabaseTaskService(config)
-        InboxViewModel(authService, taskService)
+    viewModel: InboxViewModel = run {
+        val context = LocalContext.current
+        viewModel {
+            val config = getPublicSupabaseConfig()
+            val prefs = context.getSharedPreferences("cras_session_prefs", android.content.Context.MODE_PRIVATE)
+            val sessionStore = SharedPreferencesSessionStore(prefs)
+            val authService = SupabaseAuthService(config, sessionStore)
+            val taskService = SupabaseTaskService(config)
+            InboxViewModel(authService, taskService)
+        }
     },
     onGoogleSignInRequested: (() -> Unit)? = null
 ) {
@@ -106,10 +113,10 @@ fun CrasApp(
                     if (onGoogleSignInRequested != null) {
                         onGoogleSignInRequested()
                     } else {
-                        // Demo / test fallback token
                         viewModel.signInWithGoogleIdToken("demo-google-id-token")
                     }
-                }
+                },
+                errorMessage = state.errorMessage
             )
         }
 
@@ -172,7 +179,7 @@ fun CrasApp(
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        text = "Your task space is clear. Native Kotlin & Jetpack Compose spine.",
+                                        text = "Your task space is clear.",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         textAlign = TextAlign.Center

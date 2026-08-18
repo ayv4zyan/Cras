@@ -4,9 +4,7 @@ import com.cras.app.auth.OperatorSession
 import com.cras.app.config.PublicSupabaseConfig
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -38,6 +36,16 @@ class SupabaseTaskService(
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) : TaskService {
 
+    private fun executeRequest(request: Request, operationName: String): String {
+        val response = httpClient.newCall(request).execute()
+        val responseBody = response.body?.string() ?: ""
+
+        if (!response.isSuccessful) {
+            throw IOException("Failed to $operationName: ${response.code} $responseBody")
+        }
+        return responseBody
+    }
+
     override suspend fun fetchTasks(session: OperatorSession): List<Task> {
         val endpoint = "${config.url}/rest/v1/tasks?select=*"
 
@@ -49,13 +57,7 @@ class SupabaseTaskService(
             .get()
             .build()
 
-        val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
-
-        if (!response.isSuccessful) {
-            throw IOException("Failed to fetch tasks: ${response.code} $responseBody")
-        }
-
+        val responseBody = executeRequest(request, "fetch tasks")
         return json.decodeFromString<List<Task>>(responseBody)
     }
 
@@ -92,13 +94,7 @@ class SupabaseTaskService(
             .post(bodyObject.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
-        val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
-
-        if (!response.isSuccessful) {
-            throw IOException("Failed to create task: ${response.code} $responseBody")
-        }
-
+        val responseBody = executeRequest(request, "create task")
         return json.decodeFromString<Task>(responseBody)
     }
 }

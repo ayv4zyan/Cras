@@ -162,7 +162,7 @@ fun InboxScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Your task space is clear. Capture a new task or use Voice capture to propose drafts.",
+                                text = "Your task space is clear. Capture a new task.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center

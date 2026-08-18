@@ -1,12 +1,16 @@
 # Cras
 
-Personal task management for one operator and their devices. Todoist-inspired; no Projects in this effort.
+Personal task management for independent operators and their devices. Each Operator has an isolated task space. Todoist-inspired; no Projects in this effort.
 
 ## Language
 
 **Operator**:
-The person whose task list a copy of Cras is for. One operator per copy.
+A person authenticated to Cras with their own isolated task space. Many Operators may use one Deployment.
 _Avoid_: User, customer, tenant, owner
+
+**Deployment**:
+One configured release of the Cras web and Android clients connected to a shared backend. A Deployment serves many Operators.
+_Avoid_: copy, instance, workspace
 
 **Voice capture**:
 An in-app recording the Operator makes so Cras can propose or change Task fields.

@@ -100,7 +100,7 @@ class SupabaseAuthService(
 
         val userObj = jsonElement["user"]?.jsonObject
         val operatorId = userObj?.get("id")?.jsonPrimitive?.content
-            ?: throw IOException("Missing user id in auth response")
+            ?: throw IOException("Missing operator id in auth response")
         val email = userObj["email"]?.jsonPrimitive?.content
 
         val session = OperatorSession(

@@ -1,6 +1,5 @@
 package com.cras.app.ui
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -10,22 +9,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Inbox
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +32,14 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.cras.app.auth.SupabaseAuthService
+import com.cras.app.config.getPublicSupabaseConfig
+import com.cras.app.data.SupabaseTaskService
+import com.cras.app.ui.auth.SignInScreen
+import com.cras.app.ui.inbox.AuthUiState
+import com.cras.app.ui.inbox.InboxScreen
+import com.cras.app.ui.inbox.InboxViewModel
 
 enum class AppView(
     val title: String,
@@ -69,91 +73,115 @@ enum class AppView(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CrasApp() {
+fun CrasApp(
+    viewModel: InboxViewModel = viewModel {
+        val config = getPublicSupabaseConfig()
+        val authService = SupabaseAuthService(config)
+        val taskService = SupabaseTaskService(config)
+        InboxViewModel(authService, taskService)
+    },
+    onGoogleSignInRequested: (() -> Unit)? = null
+) {
+    val authState by viewModel.authState.collectAsState()
+    val inboxState by viewModel.inboxState.collectAsState()
+    val isCreatingTask by viewModel.isCreatingTask.collectAsState()
+    val createTaskError by viewModel.createTaskError.collectAsState()
+
     var currentView by remember { mutableStateOf(AppView.INBOX) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = "Cras",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Operator task space",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            )
-        },
-        bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface
+    when (val state = authState) {
+        is AuthUiState.Loading -> {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
             ) {
-                AppView.entries.forEach { view ->
-                    NavigationBarItem(
-                        selected = currentView == view,
-                        onClick = { currentView = view },
-                        icon = { Icon(view.icon, contentDescription = view.title) },
-                        label = { Text(view.title) }
-                    )
-                }
-            }
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { /* Open task create sheet */ },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "New Task")
+                CircularProgressIndicator()
             }
         }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(24.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = currentView.emptyIcon,
-                    contentDescription = null,
-                    modifier = Modifier.size(64.dp),
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                )
 
-                Spacer(modifier = Modifier.height(16.dp))
+        is AuthUiState.Unauthenticated -> {
+            SignInScreen(
+                onSignInClick = {
+                    if (onGoogleSignInRequested != null) {
+                        onGoogleSignInRequested()
+                    } else {
+                        // Demo / test fallback token
+                        viewModel.signInWithGoogleIdToken("demo-google-id-token")
+                    }
+                }
+            )
+        }
 
-                Text(
-                    text = currentView.emptyMessage,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+        is AuthUiState.Authenticated -> {
+            Scaffold(
+                bottomBar = {
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ) {
+                        AppView.entries.forEach { view ->
+                            NavigationBarItem(
+                                selected = currentView == view,
+                                onClick = { currentView = view },
+                                icon = { Icon(view.icon, contentDescription = view.title) },
+                                label = { Text(view.title) }
+                            )
+                        }
+                    }
+                }
+            ) { innerPadding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                ) {
+                    when (currentView) {
+                        AppView.INBOX -> {
+                            InboxScreen(
+                                session = state.session,
+                                inboxState = inboxState,
+                                isCreatingTask = isCreatingTask,
+                                createTaskError = createTaskError,
+                                onCreateTask = { viewModel.createTask(it) },
+                                onRefresh = { viewModel.loadTasks() },
+                                onSignOut = { viewModel.signOut() }
+                            )
+                        }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "Your task space is clear. Native Kotlin & Jetpack Compose spine.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    textAlign = TextAlign.Center
-                )
+                        else -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(
+                                        imageVector = currentView.emptyIcon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(56.dp),
+                                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = currentView.emptyMessage,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "Your task space is clear. Native Kotlin & Jetpack Compose spine.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

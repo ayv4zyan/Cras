@@ -15,7 +15,7 @@ A React Native (or Expo) app can **ship** an Android home-screen widget **withou
 - Kotlin (or Java) owns: provider, metadata, widget layout, data load when the process is not in the foreground, and the tap `PendingIntent`.
 - On the rejected RN path, JS would own writing a snapshot into shared native storage when the app is awake, and routing after the widget launches `MainActivity`. On the locked Kotlin path, the app and the widget both read the same native store — no JS snapshot.
 - A widget **can** deep-link into compose-task or Today (Android intents; Expo Router was the RN equivalent).
-- A **live Today list that stays current while the UI process is dead** is native work (read persisted data in `provideGlance` / a `RemoteViewsFactory`, then refresh on a 15–30 minute cadence). **"Tap to open" is the honest MVP.**
+- A **live Today list that stays current while the UI process is dead** is native work (read persisted data in `provideGlance` / a `RemoteViewsFactory`, then refresh on a 15–30 minute cadence). The locked Kotlin MVP accepts that native work: the Today glance lists Tasks and supports complete-on-tile.
 
 ## Can an RN / Expo app ship Glance / AppWidget without a full native rewrite?
 
@@ -191,21 +191,22 @@ Not a running RN root on the home screen. It means:
 
 Worst case if you only tap-to-open: the tile is a branded control. It never needs the bundle. That matches Android's control-widget type and Expo Router's "intercept the launch" story.
 
-## Recommended split for Cras MVP
+## Current consequence for Cras
+
+The research-time RN split is superseded. Android is Kotlin throughout, so the app and its Glance surfaces share native models and persistence rather than a JS-generated snapshot.
 
 ```
 Home screen (launcher process)
-  GlanceAppWidget + Receiver          Kotlin
-  Buttons: Compose | Today            actionStartActivity(cras://…)
-  Optional: last snapshot (count/title) from DataStore
+  Launchpad                          Today / Upcoming / Voice capture / Create task
+  Shortcuts                          one per Launchpad action
+  Today glance                      titles + complete-on-tile + open Task + create
 
-MainActivity (RN)
-  Expo Router                         JS
-  cras://today, cras://compose        JS
-  After task writes: persist snapshot + Widgets.refresh()   JS → tiny Kotlin
+Android app
+  Kotlin + Compose + Material 3
+  Glance actions deep-link into the same Kotlin app
 ```
 
-Out of MVP unless you explicitly want the native list work: Glance `LazyColumn` / `RemoteViewsFactory` of Today, check-off on the tile, 15-minute WorkManager sync, lock-screen `widgetCategory`.
+Periodic background refresh details remain implementation work. The product shape itself is locked on [What should the Android widget do?](https://github.com/ayv4zyan/Cras/issues/11).
 
 ## Sources
 

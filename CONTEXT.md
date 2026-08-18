@@ -45,7 +45,7 @@ A dated remark the Operator attaches to a Task. A Task may have many.
 _Avoid_: notes, note
 
 **Label**:
-A named, colored tag the Operator applies to many Tasks. Its identity is a unique id, not the name. Names are unique; rename keeps the id.
+A named, colored tag the Operator applies to many Tasks. Its identity is a unique id, not the name. Names are unique within the Operator’s task space; rename keeps the id.
 _Avoid_: tag, category, project
 
 **Priority**:

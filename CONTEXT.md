@@ -17,7 +17,7 @@ A proposed Task, or a proposed change to a Task, shown after Voice capture. Not 
 _Avoid_: pending task, suggestion
 
 **Task**:
-A single thing the Operator intends to do.
+A single thing the Operator intends to do. Its identity is a unique id, not the title. Two Tasks may share a title.
 _Avoid_: todo, item, notes
 
 **Description**:
@@ -55,3 +55,7 @@ _Avoid_: next 7 days, calendar, agenda
 **Completed**:
 The view of Tasks that have a completed-at, newest first. Completing does not delete the Task. Field edits require uncompleting first.
 _Avoid_: archive, history, reporting, activity log
+
+**Outbox**:
+Creates and completes the Operator accepted on a device that are not yet in the store.
+_Avoid_: local replica, working copy, cache, pending task

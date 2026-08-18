@@ -1,6 +1,6 @@
 # Can a GitHub repo be the task store?
 
-**Status (2026-08-18):** still open — [Where do tasks live?](https://github.com/ayv4zyan/Cras/issues/13). Clients are a TypeScript web app and a **Kotlin** Android app, not React Native ([Which client stack do we lock for web and Android?](https://github.com/ayv4zyan/Cras/issues/12)). GitHub’s auth and Git-API constraints do not change with that.
+**Status (2026-08-18):** locked on [Where do tasks live?](https://github.com/ayv4zyan/Cras/issues/13). Clients are a TypeScript web app and a **Kotlin** Android app, not React Native ([Which client stack do we lock for web and Android?](https://github.com/ayv4zyan/Cras/issues/12)). GitHub’s auth and Git-API constraints do not change with that.
 
 Question from [Can a GitHub repo be the task store?](https://github.com/ayv4zyan/Cras/issues/4): the leaning is no app backend; a separate GitHub repo holds all task data; web and Android talk to it; that is the multi-device sync story for MVP.
 
@@ -246,7 +246,7 @@ The leaning (no backend; data repo; web + Android; that is sync) is **partially 
 - **Yes:** a private repo can hold JSON/Markdown the two clients commit. CORS allows the SPA to call `api.github.com` with a token. Fine-grained PAT or device-flow GitHub App can authorize Android without embedding a client secret. `createCommitOnBranch` + `expectedHeadOid` is a clean compare-and-swap. For one operator who is rarely on two devices at once, last-writer-retry is enough.
 - **No, not as stated:** GitHub is not the multi-device **sync story**. It is a remote Git database with optimistic locking. The app must implement serial writes, conflict retry, local cache, and offline queue. A static webapp cannot do the documented OAuth web flow without a secret-holding backend or a pasted PAT. Cross-device live update without a backend is **polling + ETag**, not webhooks. Check-off-per-commit sits under **content-creation** secondary limits and GitHub’s “commit frequency” health metric.
 
-If the map locks “GitHub repo as system of record,” lock these with it: PAT or device flow (not secret-in-SPA); GraphQL `createCommitOnBranch` (or Git Database + non-force ref update), not fire-and-forget Contents PUTs; sharded files; client-owned merge and offline.
+The map **did** lock GitHub as system of record — [Where do tasks live?](https://github.com/ayv4zyan/Cras/issues/13). What shipped with that lock: fine-grained PAT (not secret-in-SPA); sharded one-file-per-Task; Android Outbox; **no** merge UI (first push wins, second save fails and reloads). GraphQL `createCommitOnBranch` / non-force ref update remains the honest write path; fire-and-forget Contents PUTs do not.
 
 ---
 

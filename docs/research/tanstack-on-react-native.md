@@ -80,7 +80,7 @@ What *is* official:
 - Query’s RN page and official Expo example use **`@react-navigation/native`** (stack) for screens and focus. ([Query RN](https://tanstack.com/query/latest/docs/framework/react/react-native), [example package.json](https://github.com/TanStack/query/blob/main/examples/react/react-native/package.json))
 - Expo Router is **not** mentioned in those Query/Router pages.
 
-So the honest split for Cras: **TanStack Router on web; React Navigation or Expo Router on Android.** That is not “works but you still need React Navigation for chrome.” It is “Router is not a native navigator.” Native chrome (tabs, stacks, gestures, Android back) comes from the RN ecosystem.
+For the rejected RN alternative, the honest split would have been **TanStack Router on web; React Navigation or Expo Router on Android**. Router is not a native navigator; RN chrome would have come from the RN ecosystem. Current Cras Android is Kotlin + Compose and uses neither React Navigation nor Expo Router.
 
 ---
 
@@ -188,15 +188,11 @@ Core shell mounts into a **DOM** element, persists to `localStorage`, uses `wind
 
 ---
 
-## Implication for the Cras leaning
+## Current consequence for Cras
 
-Use **TanStack Query + Form on web and Android** without waiting for a new adapter. Persist Query with the official async-storage persister if needed.
+TanStack stays on the **web** client. Android is Kotlin + Compose + Material 3, so TanStack Query, Form, Router, Start, Table, DB, React Navigation, and Expo Router are not part of the Android stack.
 
-Do **not** plan on **TanStack Router (or Start) as the Android navigator**. Pick React Navigation or Expo Router for native stacks/tabs; keep Router/Start on the web app.
-
-Treat **Table** as optional shared *logic* (or web-only UI). A Todoist-like Inbox is a list, not a datagrid; official Table examples are HTML tables.
-
-**DB** is the official TanStack piece that *does* advertise RN/Expo persistence, still beta/alpha on that layer.
+The RN findings above remain only the paper trail for rejecting a shared React-native client stack.
 
 ---
 

@@ -92,6 +92,10 @@ _Avoid_: reminder, alarm, exact alert
 An Android installation or browser profile where Cras Notifications are enabled locally, platform permission is available, and the installation is active for the Operator. Pending deletion disables every installation; after recovery, each installation becomes eligible again only when it authenticates again. It is a delivery target, not a primary device.
 _Avoid_: notification device, primary device
 
+**Installation timezone**:
+The most recently observed IANA timezone of an eligible installation. It interprets Floating Notification times for that installation and may be stale while the installation is offline. It is not an Operator home timezone or location history.
+_Avoid_: home timezone, Operator timezone, location
+
 **Subtask**:
 A Task that has a parent Task. A Subtask cannot itself have children.
 _Avoid_: checklist item

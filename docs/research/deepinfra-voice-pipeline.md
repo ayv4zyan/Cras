@@ -1,6 +1,6 @@
 # DeepInfra Voxtral + Gemma 4 for in-app STT
 
-**Status (2026-08-18):** research for [What do DeepInfra Voxtral Small and Gemma 4 support for in-app STT?](https://github.com/ayv4zyan/Cras/issues/9). Product lock on [How should voice create, edit, and extract task metadata?](https://github.com/ayv4zyan/Cras/issues/8) is **closed** (in-app Voice capture + Drafts). Token placement is still open on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18) — after [Does Cras need a separate Cloudflare/Hono backend?](https://github.com/ayv4zyan/Cras/issues/25), a Supabase Edge Function is the available secret-holding server boundary. Android capture is Kotlin (not RN); DeepInfra formats, slugs, and “server boundary for secret + transcode” facts do not change.
+**Status (2026-08-18):** research for [What do DeepInfra Voxtral Small and Gemma 4 support for in-app STT?](https://github.com/ayv4zyan/Cras/issues/9). Product behavior is locked on [How should voice create, edit, and extract task metadata?](https://github.com/ayv4zyan/Cras/issues/8); credential and pipeline placement is locked on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18). One authenticated Supabase Edge Function holds the Deployment-wide DeepInfra secret and orchestrates both provider calls. Web and Kotlin Android clients produce mono 16 kHz PCM WAV; the function validates and forwards it without transcoding.
 
 Primary sources only: DeepInfra catalog/docs/API, Mistral and Google model-owner docs, and the local OpenWhispr shim at `/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim`.
 
@@ -8,7 +8,7 @@ Checked 2026-08-17. Prices and catalog tags can change; slugs below are from Dee
 
 ## Verdict
 
-Voxtral **Small exists on DeepInfra** as `mistralai/Voxtral-Small-24B-2507`. The working OpenWhispr stack uses **Mini**, not Small: `mistralai/Voxtral-Mini-3B-2507` + `google/gemma-4-E4B-it`. DeepInfra’s speech docs only promise **mp3/wav**; the shim exists because **WebM 500s**. An in-app client can reach the API (CORS is `*`), but a **proxy is still required** to hold the secret and transcode recorder output. Current Gemma cleanup is **dictation cleanup**, not reliable title/date/time JSON — that is a separate structured-output job, and E4B is **not** tagged for JSON mode.
+Voxtral **Small exists on DeepInfra** as `mistralai/Voxtral-Small-24B-2507`. The working OpenWhispr stack uses **Mini**, not Small: `mistralai/Voxtral-Mini-3B-2507` + `google/gemma-4-E4B-it`. DeepInfra’s speech docs only promise **mp3/wav**; the shim exists because **WebM 500s**. An in-app client can reach the API (CORS is `*`), but Cras uses an authenticated **Supabase Edge Function** to hold the Deployment-wide secret and orchestrate both provider calls. Clients normalize recorder output to mono 16 kHz PCM WAV before upload; the function does not transcode. Current Gemma cleanup is **dictation cleanup**, not reliable title/date/time JSON — that is a separate structured-output job, and E4B is **not** tagged for JSON mode.
 
 ---
 
@@ -108,7 +108,7 @@ Platform encode support includes **PCM/WAVE** (encoder Android 4.1+), AAC in MPE
 
 **Web `MediaRecorder`**: constructor takes a MIME type such as `"video/webm"` or `"video/mp4"`; `isTypeSupported()` is per-UA; MDN’s audio example builds `audio/ogg; codecs=opus`. ([MediaRecorder](https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder)) OpenWhispr’s observed output is **WebM** (shim README).
 
-**Safe default for this pipeline:** record or transcode to **16 kHz mono WAV** (what the shim already sends) or **mp3**. Do not send WebM/3GP/AMR to DeepInfra Voxtral.
+**Locked Cras MVP format:** both clients produce **16 kHz mono PCM WAV** before upload. The Edge Function validates and forwards it; it does not transcode. Do not send WebM/3GP/AMR to DeepInfra Voxtral.
 
 ---
 
@@ -140,7 +140,7 @@ Shim token order: `DEEPINFRA_TOKEN` env → project `.env` → `~/.openwhispr/de
 | Transcode | DeepInfra docs: mp3/wav; shim: WebM → HTTP 500; Android sample: 3GP/AMR | Unless the recorder emits wav/mp3, **something** must transcode (device ffmpeg/AudioRecord WAV, or a proxy). |
 | Token + prompt policy | Shim injects `cleanup-prompt-short.txt`, rewrites `max_completion_tokens` → `max_tokens`, trims silence | Those are product choices, not DeepInfra requirements. |
 
-**Conclusion:** a web or Android client *can* POST to DeepInfra directly. Direct access does not make a spendable provider credential safe in Cras's public multi-user Deployment, and it does not solve recorder-format transcoding. The secret-holding and orchestration boundary remains to be locked on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18); scoped DeepInfra JWTs may reduce blast radius but do not remove either concern.
+**Conclusion:** a web or Android client *can* POST to DeepInfra directly, but Cras clients do not. [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18) locks one authenticated Supabase Edge Function as the secret-holding and orchestration boundary. It performs both speech-to-text and structured extraction. Both clients upload mono 16 kHz PCM WAV, so the function validates rather than transcodes. Scoped DeepInfra JWTs may reduce blast radius but do not replace this boundary.
 
 Endpoints the shim already uses:
 
@@ -175,7 +175,7 @@ Owner Voxtral Small can do structured summaries / voice function-calling **on Mi
 
 1. Say **Mini** (`mistralai/Voxtral-Mini-3B-2507`) if matching the working shim; **Small** (`mistralai/Voxtral-Small-24B-2507`) if matching the ticket name — both are public on DeepInfra. Mini Transcribe 2 is **not** on DeepInfra today.
 2. Record **WAV or MP3** (or transcode). Do not send WebM/3GP/AMR to DeepInfra Voxtral.
-3. Keep a **server or local proxy** for the API key and/or transcode. CORS is not the blocker.
+3. Use the authenticated **Supabase Edge Function** for the Deployment-wide API key and both provider calls. Clients produce mono 16 kHz PCM WAV; the function does not transcode. CORS is not the blocker.
 4. Keep E4B for **cleanup prose**. Use **26B-A4B or 31B + `json_schema`** (and an injected “now”) for smart metadata — a second prompt, not the OpenWhispr cleanup prompt.
 
 ## Sources

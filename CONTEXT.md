@@ -12,6 +12,14 @@ _Avoid_: User, customer, tenant, owner
 One configured release of the Cras web and Android clients connected to a shared backend. A Deployment serves many Operators.
 _Avoid_: copy, instance, workspace
 
+**Pending deletion**:
+The frozen state of an Operator after confirmed account deletion and before permanent purge. Ordinary use is unavailable, but recovery remains possible during the Recovery window.
+_Avoid_: soft-deleted account, deactivated account
+
+**Recovery window**:
+The exact seven-day period in which the same Google identity may restore an Operator in Pending deletion.
+_Avoid_: grace period, undo window
+
 **Deployment configuration**:
 The Deployment-maintained defaults shared by all clients and Operators. Operators may inherit these values but cannot change them.
 _Avoid_: server settings, app settings, environment config

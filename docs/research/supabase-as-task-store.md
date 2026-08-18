@@ -1,6 +1,6 @@
 # Can Supabase be the task store?
 
-**Status (2026-08-18):** research for [Can Supabase be the task store?](https://github.com/ayv4zyan/Cras/issues/23). Clients are a TypeScript web app and a **Kotlin** Android app, not React Native ([Which client stack do we lock for web and Android?](https://github.com/ayv4zyan/Cras/issues/12)). [Where do tasks live?](https://github.com/ayv4zyan/Cras/issues/13) is being superseded; the new leaning is Supabase.
+**Status (2026-08-18):** research for [Can Supabase be the task store?](https://github.com/ayv4zyan/Cras/issues/23). Product lock is **three-tier** — hosted Postgres behind Hono; clients do not call Supabase — [Where do tasks live if the store is Supabase?](https://github.com/ayv4zyan/Cras/issues/24), `docs/adr/0004-supabase-postgres-hono.md`. This note is what two-tier PostgREST / Auth / Realtime can and cannot do; it is not the client architecture. Clients are TypeScript web + Kotlin Android ([Which client stack do we lock for web and Android?](https://github.com/ayv4zyan/Cras/issues/12)).
 
 Question from that ticket: the Operator has withdrawn GitHub as the task store. What do primary sources say about using Supabase as the system of record for a personal task app with a TypeScript web client and a Kotlin Android client?
 
@@ -315,14 +315,16 @@ Source: [SAML 2.0](https://supabase.com/docs/guides/auth/enterprise-sso/auth-sso
 
 ---
 
-## 10. What this means for the new leaning
+## 10. What this means for the (then) leaning
 
-The leaning (Supabase as system of record; TypeScript web + Kotlin Android; no Cras-owned server) is **supported by primary sources**, with the following bounds a grilling ticket should not paper over:
+The research leaning was two-tier Supabase (clients + publishable key; no Cras-owned server). Primary sources **support that shape**. The map later locked a **different** shape: Hono on Cloudflare is the only client door; Hyperdrive talks to Postgres; no publishable key on a device — [Where do tasks live if the store is Supabase?](https://github.com/ayv4zyan/Cras/issues/24).
 
-- **Yes:** hosted (or self-hosted) Postgres via the Data API is a real multi-device store. Check-off is one `PATCH`. Different tasks do not race. Labels are a join table. Auth for a static SPA does **not** need a `client_secret` (implicit or in-browser PKCE). Android has a documented publishable-key + PKCE/deep-link + native Google ID-token path. Live two-device update is optional Postgres Changes.
-- **Not provided by Supabase:** offline Outbox, field-level merge, or an official Kotlin guarantee. Same-row overlapping writes last-writer-win unless Cras adds `version`/`updated_at` CAS. RLS is mandatory; a missing policy on `public` is a public table. `service_role` in either binary is a total data leak. Edge Functions are optional hosted compute, not a substitute for deciding tenancy or Outbox.
+Bounds that still apply to Postgres itself:
 
-This note does **not** choose tenancy, Auth UX, or Outbox. Those remain grilling.
+- **Yes:** hosted (or self-hosted) Postgres is a real multi-device store. Check-off is one row `UPDATE`. Different tasks do not race. Labels are a join table. Same-row overlapping writes last-writer-win unless the schema adds `version`/`updated_at` CAS.
+- **Not provided by Supabase:** offline Outbox, field-level merge, or an official Kotlin guarantee. A client that *did* use PostgREST would need RLS; `service_role` in a binary is a total data leak. Cras clients do not use that path.
+
+Tenancy, Auth UX, and Outbox were grilling; they are now locked on that ticket (one Operator; token to Hono; Android Outbox).
 
 ---
 

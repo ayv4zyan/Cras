@@ -1,8 +1,8 @@
 # DeepInfra Voxtral + Gemma 4 for in-app STT
 
-**Status (2026-08-18):** still open — [How should voice create, edit, and extract task metadata?](https://github.com/ayv4zyan/Cras/issues/8). Android capture would be Kotlin (not RN); the DeepInfra formats, slugs, and “proxy for secret + transcode” facts do not change.
+**Status (2026-08-18):** research for [What do DeepInfra Voxtral Small and Gemma 4 support for in-app STT?](https://github.com/ayv4zyan/Cras/issues/9). Product lock on [How should voice create, edit, and extract task metadata?](https://github.com/ayv4zyan/Cras/issues/8) is **closed** (in-app Voice capture + Drafts). Token placement is still open on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18) — Hono may now hold the secret. Android capture is Kotlin (not RN); DeepInfra formats, slugs, and “proxy for secret + transcode” facts do not change.
 
-Research for [What do DeepInfra Voxtral Small and Gemma 4 support for in-app STT?](https://github.com/ayv4zyan/Cras/issues/9). Primary sources only: DeepInfra catalog/docs/API, Mistral and Google model-owner docs, and the local OpenWhispr shim at `/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim`.
+Primary sources only: DeepInfra catalog/docs/API, Mistral and Google model-owner docs, and the local OpenWhispr shim at `/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim`.
 
 Checked 2026-08-17. Prices and catalog tags can change; slugs below are from DeepInfra’s live `/models/list`.
 

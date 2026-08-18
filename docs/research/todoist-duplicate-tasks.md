@@ -1,6 +1,6 @@
 # How does Todoist treat two similar tasks?
 
-**Status (2026-08-18):** informs Q12 on [Where do tasks live?](https://github.com/ayv4zyan/Cras/issues/13).
+**Status (2026-08-18):** informs “two creates stay two Tasks.” That rule survived the store change — [Where do tasks live if the store is Supabase?](https://github.com/ayv4zyan/Cras/issues/24), `docs/adr/0004-supabase-postgres-hono.md`. Originally written for Q12 on the superseded [Where do tasks live?](https://github.com/ayv4zyan/Cras/issues/13).
 
 Question: if the Operator creates “Go to the pool” for Monday and later “Go to the pool” for Friday — or forgets and creates “the same” task again on the phone — what does Todoist officially do? Warn, merge, block, or keep both?
 

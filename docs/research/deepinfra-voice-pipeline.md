@@ -140,7 +140,7 @@ Shim token order: `DEEPINFRA_TOKEN` env → project `.env` → `~/.openwhispr/de
 | Transcode | DeepInfra docs: mp3/wav; shim: WebM → HTTP 500; Android sample: 3GP/AMR | Unless the recorder emits wav/mp3, **something** must transcode (device ffmpeg/AudioRecord WAV, or a proxy). |
 | Token + prompt policy | Shim injects `cleanup-prompt-short.txt`, rewrites `max_completion_tokens` → `max_tokens`, trims silence | Those are product choices, not DeepInfra requirements. |
 
-**Conclusion:** a browser or RN app *can* POST to DeepInfra directly. A **proxy is still required** if you (a) must not expose a spendable key, or (b) cannot guarantee wav/mp3. Scoped JWTs can shrink (a) for a trusted single-operator app. They do not fix (b).
+**Conclusion:** a web or Android client *can* POST to DeepInfra directly. Direct access does not make a spendable provider credential safe in Cras's public multi-user Deployment, and it does not solve recorder-format transcoding. The secret-holding and orchestration boundary remains to be locked on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18); scoped DeepInfra JWTs may reduce blast radius but do not remove either concern.
 
 Endpoints the shim already uses:
 

@@ -8,10 +8,10 @@ describe("CreateTaskInput Component", () => {
     render(<CreateTaskInput onCreateTask={handleCreate} />);
 
     expect(
-      screen.getByPlaceholderText(/add a task to inbox/i),
+      screen.getByPlaceholderText(/create a task in inbox/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /add task/i }),
+      screen.getByRole("button", { name: /create task/i }),
     ).toBeInTheDocument();
   });
 
@@ -19,8 +19,8 @@ describe("CreateTaskInput Component", () => {
     const handleCreate = vi.fn().mockResolvedValue(undefined);
     render(<CreateTaskInput onCreateTask={handleCreate} />);
 
-    const input = screen.getByPlaceholderText(/add a task to inbox/i);
-    const submitBtn = screen.getByRole("button", { name: /add task/i });
+    const input = screen.getByPlaceholderText(/create a task in inbox/i);
+    const submitBtn = screen.getByRole("button", { name: /create task/i });
 
     fireEvent.change(input, { target: { value: "  Ship MVP features  " } });
     fireEvent.click(submitBtn);
@@ -36,7 +36,7 @@ describe("CreateTaskInput Component", () => {
     const handleCreate = vi.fn().mockResolvedValue(undefined);
     render(<CreateTaskInput onCreateTask={handleCreate} />);
 
-    const input = screen.getByPlaceholderText(/add a task to inbox/i);
+    const input = screen.getByPlaceholderText(/create a task in inbox/i);
 
     fireEvent.change(input, { target: { value: "Review PR" } });
     fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
@@ -52,8 +52,8 @@ describe("CreateTaskInput Component", () => {
     const handleCreate = vi.fn().mockResolvedValue(undefined);
     render(<CreateTaskInput onCreateTask={handleCreate} />);
 
-    const input = screen.getByPlaceholderText(/add a task to inbox/i);
-    const submitBtn = screen.getByRole("button", { name: /add task/i });
+    const input = screen.getByPlaceholderText(/create a task in inbox/i);
+    const submitBtn = screen.getByRole("button", { name: /create task/i });
 
     fireEvent.change(input, { target: { value: "   " } });
     fireEvent.click(submitBtn);

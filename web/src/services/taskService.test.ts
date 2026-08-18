@@ -144,7 +144,7 @@ describe("Task Domain Service Seam", () => {
         description: null,
         priority: 4,
         plan: null,
-        parentId: null,
+        parent_id: null,
         labels: [],
       });
       expect(task.id).toBe("550e8400-e29b-41d4-a716-446655440010");

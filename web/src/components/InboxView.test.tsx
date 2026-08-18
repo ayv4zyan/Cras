@@ -67,10 +67,10 @@ describe("InboxView Component", () => {
       <InboxView tasks={[]} onCreateTask={handleCreate} isLoading={false} />,
     );
 
-    const input = screen.getByPlaceholderText(/add a task to inbox/i);
+    const input = screen.getByPlaceholderText(/create a task in inbox/i);
     fireEvent.change(input, { target: { value: "New task item" } });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /add task/i }));
+      fireEvent.click(screen.getByRole("button", { name: /create task/i }));
     });
 
     expect(handleCreate).toHaveBeenCalledWith("New task item");

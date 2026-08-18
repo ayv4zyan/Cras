@@ -9,7 +9,7 @@ export interface CreateTaskInputProps {
 
 export function CreateTaskInput({
   onCreateTask,
-  placeholder = "Add a task to Inbox...",
+  placeholder = "Create a task in Inbox...",
   className = "",
 }: CreateTaskInputProps): React.JSX.Element {
   const [title, setTitle] = useState("");
@@ -68,7 +68,7 @@ export function CreateTaskInput({
         <button
           type="submit"
           disabled={!title.trim() || isSubmitting}
-          aria-label="Add task"
+          aria-label="Create task"
           className="inline-flex items-center space-x-1 rounded-md bg-primary px-2.5 py-1 font-medium text-xs text-primary-foreground shadow-xs transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
         >
           {isSubmitting ? (
@@ -76,7 +76,7 @@ export function CreateTaskInput({
           ) : (
             <Plus className="h-3.5 w-3.5" />
           )}
-          <span>Add task</span>
+          <span>Create task</span>
         </button>
       </div>
       {error && <p className="px-1 text-xs text-destructive">{error}</p>}

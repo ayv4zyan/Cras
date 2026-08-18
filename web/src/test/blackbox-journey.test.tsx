@@ -220,8 +220,8 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issue #39)", () =
     });
 
     // Create first task with title "Buy groceries"
-    const input = screen.getByPlaceholderText(/add a task to inbox/i);
-    const addButton = screen.getByRole("button", { name: /add task/i });
+    const input = screen.getByPlaceholderText(/create a task in inbox/i);
+    const addButton = screen.getByRole("button", { name: /create task/i });
 
     fireEvent.change(input, { target: { value: "Buy groceries" } });
     fireEvent.click(addButton);
@@ -341,8 +341,8 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issue #39)", () =
     expect(screen.getByText(/no tasks in inbox/i)).toBeInTheDocument();
 
     // Operator 2 creates a task
-    const input = screen.getByPlaceholderText(/add a task to inbox/i);
-    const addButton = screen.getByRole("button", { name: /add task/i });
+    const input = screen.getByPlaceholderText(/create a task in inbox/i);
+    const addButton = screen.getByRole("button", { name: /create task/i });
     fireEvent.change(input, { target: { value: "Bob Task" } });
     fireEvent.click(addButton);
 

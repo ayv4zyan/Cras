@@ -8,6 +8,10 @@ export interface AuthProviderProps {
   readonly client?: SupabaseClient;
 }
 
+function normalizeError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 export function AuthProvider({
   children,
   client = defaultSupabase,
@@ -30,7 +34,7 @@ export function AuthProvider({
         }
       } catch (err) {
         if (isMounted) {
-          setError(err instanceof Error ? err : new Error(String(err)));
+          setError(normalizeError(err));
         }
       } finally {
         if (isMounted) {
@@ -70,7 +74,7 @@ export function AuthProvider({
         throw signInError;
       }
     } catch (err) {
-      const errorObj = err instanceof Error ? err : new Error(String(err));
+      const errorObj = normalizeError(err);
       setError(errorObj);
       throw errorObj;
     }
@@ -84,7 +88,7 @@ export function AuthProvider({
         throw signOutError;
       }
     } catch (err) {
-      const errorObj = err instanceof Error ? err : new Error(String(err));
+      const errorObj = normalizeError(err);
       setError(errorObj);
       throw errorObj;
     }

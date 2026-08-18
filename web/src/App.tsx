@@ -4,7 +4,6 @@ import {
   Calendar,
   CalendarDays,
   CheckCircle2,
-  Plus,
   LogOut,
   User as UserIcon,
   Loader2,
@@ -26,6 +25,14 @@ type ViewMode = "inbox" | "today" | "upcoming" | "completed";
 
 export interface CrasAppProps {
   readonly client?: SupabaseClient;
+}
+
+interface NavItem {
+  readonly id: ViewMode;
+  readonly label: string;
+  readonly icon: React.ComponentType<{ className?: string }>;
+  readonly iconClassName?: string;
+  readonly badge?: number;
 }
 
 export function CrasApp({
@@ -98,6 +105,34 @@ export function CrasApp({
 
   const inboxTasks = filterInboxTasks(tasks);
 
+  const navItems: readonly NavItem[] = [
+    {
+      id: "inbox",
+      label: "Inbox",
+      icon: Inbox,
+      badge: inboxTasks.length,
+    },
+    {
+      id: "today",
+      label: "Today",
+      icon: Calendar,
+      iconClassName: "text-emerald-600 dark:text-emerald-400",
+      badge: 0,
+    },
+    {
+      id: "upcoming",
+      label: "Upcoming",
+      icon: CalendarDays,
+      iconClassName: "text-blue-600 dark:text-blue-400",
+    },
+    {
+      id: "completed",
+      label: "Completed",
+      icon: CheckCircle2,
+      iconClassName: "text-muted-foreground",
+    },
+  ];
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {/* Sidebar Navigation */}
@@ -118,65 +153,31 @@ export function CrasApp({
 
           {/* Nav Items */}
           <nav className="space-y-1">
-            <button
-              onClick={() => setActiveView("inbox")}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
-                activeView === "inbox"
-                  ? "bg-secondary text-foreground font-semibold shadow-xs"
-                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-              }`}
-            >
-              <div className="flex items-center space-x-2.5">
-                <Inbox className="h-4 w-4" />
-                <span>Inbox</span>
-              </div>
-              <span className="text-xs text-muted-foreground font-semibold">
-                {inboxTasks.length}
-              </span>
-            </button>
-
-            <button
-              onClick={() => setActiveView("today")}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
-                activeView === "today"
-                  ? "bg-secondary text-foreground font-semibold shadow-xs"
-                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-              }`}
-            >
-              <div className="flex items-center space-x-2.5">
-                <Calendar className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                <span>Today</span>
-              </div>
-              <span className="text-xs text-muted-foreground">0</span>
-            </button>
-
-            <button
-              onClick={() => setActiveView("upcoming")}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
-                activeView === "upcoming"
-                  ? "bg-secondary text-foreground font-semibold shadow-xs"
-                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-              }`}
-            >
-              <div className="flex items-center space-x-2.5">
-                <CalendarDays className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                <span>Upcoming</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => setActiveView("completed")}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
-                activeView === "completed"
-                  ? "bg-secondary text-foreground font-semibold shadow-xs"
-                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-              }`}
-            >
-              <div className="flex items-center space-x-2.5">
-                <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
-                <span>Completed</span>
-              </div>
-            </button>
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeView === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveView(item.id)}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                    isActive
+                      ? "bg-secondary text-foreground font-semibold shadow-xs"
+                      : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                  }`}
+                >
+                  <div className="flex items-center space-x-2.5">
+                    <Icon className={`h-4 w-4 ${item.iconClassName || ""}`} />
+                    <span>{item.label}</span>
+                  </div>
+                  {item.badge !== undefined && (
+                    <span className="text-xs text-muted-foreground font-semibold">
+                      {item.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </nav>
         </div>
 
@@ -234,13 +235,6 @@ export function CrasApp({
                   {activeView}
                 </h2>
               </div>
-              <button
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-xs cursor-pointer"
-                title="Create Task"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>New Task</span>
-              </button>
             </header>
 
             <div className="flex-1 flex items-center justify-center p-8">

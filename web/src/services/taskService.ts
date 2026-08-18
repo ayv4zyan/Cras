@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { type Task, parseTask, type Plan } from "../contracts/task";
 
-export interface CreateTaskInput {
+export interface CreateTaskParams {
   readonly id?: string;
   readonly title: string;
   readonly description?: string | null;
@@ -46,7 +46,7 @@ export async function fetchTasks(client: SupabaseClient): Promise<Task[]> {
  */
 export async function createTask(
   client: SupabaseClient,
-  input: CreateTaskInput,
+  input: CreateTaskParams,
 ): Promise<Task> {
   const trimmedTitle = input.title.trim();
   if (trimmedTitle.length === 0) {
@@ -58,7 +58,7 @@ export async function createTask(
     description: input.description ?? null,
     priority: input.priority ?? 4,
     plan: input.plan ?? null,
-    parentId: input.parentId ?? null,
+    parent_id: input.parentId ?? null,
     labels: input.labels ?? [],
   });
 

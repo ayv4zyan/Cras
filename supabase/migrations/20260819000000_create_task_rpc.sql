@@ -20,7 +20,7 @@ CREATE OR REPLACE FUNCTION api.create_task(
     description TEXT DEFAULT NULL,
     priority INTEGER DEFAULT 4,
     plan JSONB DEFAULT NULL,
-    "parentId" UUID DEFAULT NULL,
+    parent_id UUID DEFAULT NULL,
     labels UUID[] DEFAULT '{}'::UUID[]
 )
 RETURNS api.tasks
@@ -51,7 +51,7 @@ BEGIN
         description,
         COALESCE(priority, 4),
         plan,
-        "parentId"
+        parent_id
     )
     RETURNING public.tasks.id INTO v_task_id;
 

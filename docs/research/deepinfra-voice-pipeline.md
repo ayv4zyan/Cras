@@ -1,6 +1,6 @@
 # DeepInfra Voxtral + Gemma 4 for in-app STT
 
-**Status (2026-08-18):** research for [What do DeepInfra Voxtral Small and Gemma 4 support for in-app STT?](https://github.com/ayv4zyan/Cras/issues/9). Product behavior is locked on [How should voice create, edit, and extract task metadata?](https://github.com/ayv4zyan/Cras/issues/8); credential and pipeline placement is locked on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18). One authenticated Supabase Edge Function holds the Deployment-wide DeepInfra secret and orchestrates both provider calls. Web and Kotlin Android clients produce mono 16 kHz PCM WAV; the function validates and forwards it without transcoding.
+**Status (2026-08-18):** research for [What do DeepInfra Voxtral Small and Gemma 4 support for in-app STT?](https://github.com/ayv4zyan/Cras/issues/9). Product behavior is locked on [How should voice create, edit, and extract task metadata?](https://github.com/ayv4zyan/Cras/issues/8); credential and pipeline placement is locked on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18). One authenticated Supabase Edge Function holds the Deployment-wide DeepInfra secret and orchestrates both provider calls. Web and Kotlin Android clients produce mono 16 kHz PCM WAV; the function validates and forwards it without transcoding. Operators select models only from a Deployment-maintained allow-list, and Cras does not retain recordings server-side.
 
 Primary sources only: DeepInfra catalog/docs/API, Mistral and Google model-owner docs, and the local OpenWhispr shim at `/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim`.
 
@@ -131,7 +131,7 @@ Shim token order: `DEEPINFRA_TOKEN` env → project `.env` → `~/.openwhispr/de
 
 ---
 
-## 5. Direct in-app client vs still needing a shim
+## 5. Direct provider access vs the Cras Edge Function boundary
 
 | Concern | First-party fact | Implication |
 | --- | --- | --- |
@@ -173,10 +173,10 @@ Owner Voxtral Small can do structured summaries / voice function-calling **on Mi
 
 ## Implications for Cras (decisions, not implementation)
 
-1. Say **Mini** (`mistralai/Voxtral-Mini-3B-2507`) if matching the working shim; **Small** (`mistralai/Voxtral-Small-24B-2507`) if matching the ticket name — both are public on DeepInfra. Mini Transcribe 2 is **not** on DeepInfra today.
-2. Record **WAV or MP3** (or transcode). Do not send WebM/3GP/AMR to DeepInfra Voxtral.
-3. Use the authenticated **Supabase Edge Function** for the Deployment-wide API key and both provider calls. Clients produce mono 16 kHz PCM WAV; the function does not transcode. CORS is not the blocker.
-4. Keep E4B for **cleanup prose**. Use **26B-A4B or 31B + `json_schema`** (and an injected “now”) for smart metadata — a second prompt, not the OpenWhispr cleanup prompt.
+1. The MVP default STT model is **Voxtral Small** (`mistralai/Voxtral-Small-24B-2507`). Operators may select only models on the Deployment-maintained allow-list; Mini is research context, not the default.
+2. Both clients produce **mono 16 kHz PCM WAV** before upload. The Edge Function validates and forwards it without transcoding; WebM/3GP/AMR are not accepted.
+3. The authenticated **Supabase Edge Function** holds the Deployment-wide DeepInfra credential and performs both provider calls. Cras clients never call DeepInfra directly, and server-side audio is not retained.
+4. MVP has **no cleanup-model stage**. Structured Task metadata uses **Gemma 4 26B-A4B-it + `json_schema`** with the device clock/timezone and the dedicated extractor prompt. E4B remains only historical shim context.
 
 ## Sources
 

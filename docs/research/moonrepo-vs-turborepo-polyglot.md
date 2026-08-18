@@ -126,7 +126,7 @@ Both say turbo “can discover packages across languages and toolchains” **for
 | Remote cache | Documented moon remote cache (gRPC/HTTP RE API) | Vercel Remote Cache (zero-config default) |
 | Install Android/JDK | Not moon’s job (system / proto-as-VM only) | Not turbo’s job |
 
-**Together in one graph:** both can sequence “build Android then do something on web” only if *you* declare that edge. There is no official “Gradle workspace” mode in either product. For Cras MVP, web and Android likely share a **data contract**, not a compiled artifact — so the cross-graph edge may be empty.
+**Together in one graph:** both can sequence “build Android then do something on web” only if *you* declare that edge. There is no official “Gradle workspace” mode in either product. Cras web and Android share a **JSON Schema contract**, not a compiled artifact, so there is no inherent Android-to-web build edge.
 
 **Moon is “better” for this mix only in the narrow sense that** it does not force a fake `package.json` onto the Android tree, and it can query `language=kotlin` if you set the custom `language` field. It is **not** better at *understanding* Gradle.
 

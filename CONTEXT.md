@@ -40,6 +40,18 @@ _Avoid_: dictation, Dictate, Ramble, OpenWhispr (OS-level paste, not this produc
 A proposed Task, or a proposed change to a Task, shown after Voice capture. Not saved until the Operator accepts.
 _Avoid_: pending task, suggestion
 
+**Voice allowance**:
+The bounded shared Voice capture usage available to an Operator across configured rolling windows.
+_Avoid_: quota, credits, balance
+
+**Deployment circuit breaker**:
+The shared spending boundary that temporarily disables Voice capture for every Operator when Deployment-wide usage reaches a configured limit. Ordinary Task features remain available.
+_Avoid_: global quota, kill switch, outage
+
+**Usage-security record**:
+A content-free aggregate retained separately from Operator data only to enforce Voice allowance and the Deployment circuit breaker, including across account deletion and re-registration. It contains no Tasks, recordings, transcripts, prompts, or provider responses.
+_Avoid_: usage log, analytics, history
+
 **Task**:
 A single thing the Operator intends to do. Its identity is a unique id, not the title. Two Tasks may share a title.
 _Avoid_: todo, item, notes

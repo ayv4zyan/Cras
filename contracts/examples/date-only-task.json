@@ -1,0 +1,15 @@
+{
+  "id": "33333333-3333-3333-3333-333333333333",
+  "title": "Prepare sprint roadmap",
+  "description": null,
+  "priority": 2,
+  "plan": {
+    "date": "2026-08-20"
+  },
+  "labels": [],
+  "parentId": null,
+  "completedAt": null,
+  "createdAt": "2026-08-18T12:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
+  "version": 1
+}

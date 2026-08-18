@@ -1,0 +1,38 @@
+# A string used to distinguish different Supabase projects on the same host.
+project_id = "cras"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "api", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+
+[realtime]
+enabled = true
+port = 54323
+
+[studio]
+enabled = true
+port = 54324
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:5173"
+additional_redirect_urls = ["http://localhost:5173"]
+jwt_expiry = 3600
+
+[edge_runtime]
+enabled = true
+port = 54326
+
+[storage]
+enabled = true

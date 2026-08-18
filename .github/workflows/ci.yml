@@ -1,0 +1,84 @@
+name: Change Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  web-and-contracts:
+    name: Web & Shared Contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint web client
+        run: bun run web:lint
+
+      - name: Typecheck web client & contracts
+        run: bun run web:typecheck
+
+      - name: Run web & contract tests
+        run: bun run web:test
+
+      - name: Build web production bundle
+        run: bun run web:build
+
+  android:
+    name: Android Native Client
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@94b5068f5730464275d85c742bb47d96e55b3ce4 # v4.1.1
+
+      - name: Run Android Lint
+        working-directory: android
+        run: ./gradlew lint
+
+      - name: Run Android JVM Unit & Contract Tests
+        working-directory: android
+        run: ./gradlew test
+
+      - name: Assemble Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+  supabase-migrations:
+    name: Supabase Local Stack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@4d0f6a27e7f78c80ad2e08cf4fb1c53e839e9ce6 # v1.6.0
+        with:
+          version: latest
+
+      - name: Start Supabase stack and test migrations
+        run: |
+          supabase start
+          supabase db reset
+          supabase stop

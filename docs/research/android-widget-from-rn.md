@@ -75,7 +75,7 @@ Glance constraints you inherit:
 - Receivers still have a **~10 second** "don't block the main thread" rule. Long work belongs in WorkManager. Glance warns: if you override `onUpdate` / `onReceive`, call `super`; never call `goAsync` yourself.
 - Gestures on the home screen: **touch** and **vertical swipe** only.
 
-### Can stay JS (TypeScript / React Native)
+### Historical: what could stay JS on the rejected RN path
 
 | Piece | Why JS is enough |
 | --- | --- |
@@ -84,11 +84,11 @@ Glance constraints you inherit:
 | Incoming deep link | Expo Router enables a deep link per screen. `expo-linking` (`useLinkingURL` / `getInitialURL`) or RN `Linking.getInitialURL` / `'url'` events. |
 | "Fast run" destination UX | Compose-task and Today are JS screens once `MainActivity` is up. |
 
-### Optional native bridge (small)
+### Historical: optional RN native bridge
 
 A local Expo module method such as `Widgets.refresh()` that calls `MyAppWidget().updateAll(context)` is the documented "update immediately when the app is awake" path. The JS bundle does not talk to `AppWidgetManager` by itself.
 
-## Can a widget deep-link into a specific RN screen?
+## Historical RN deep-link integration (superseded)
 
 **Yes.** This is the well-supported join between a native widget and RN.
 
@@ -118,7 +118,7 @@ Collection items cannot each have their own `setOnClickPendingIntent`. The colle
 
 So "Open compose task" and "Open Today" are native buttons whose `PendingIntent` launches `MainActivity` with a path or extra. JS routing does the rest. The widget does not mount those RN screens on the home screen.
 
-## Live Today list, or tap-to-open?
+## Historical RN cost comparison: live Today list vs tap-to-open
 
 Both are legal Android widgets. They are not equally cheap from RN.
 
@@ -142,9 +142,9 @@ Quality bar (if you *do* show content): stale/untimely content is **low quality*
 3. Freshness is a native schedule (see next section), plus an immediate `updateAll` whenever JS (or a widget action) mutates tasks.
 4. Completing a task *from the widget* is native: Glance `CheckBox` / `ActionCallback` or Android 12 compound buttons, then write the store and `update`. That duplicates domain writes you would rather keep in JS — or you accept "tap row → open Today" and complete there.
 
-### Honest MVP
+### Historical RN-era MVP estimate (superseded)
 
-**Tap-to-open (control widget), optionally with a last-written snapshot.**
+For the rejected RN path, the minimum was **tap-to-open (control widget), optionally with a last-written snapshot**.
 
 Minimum useful widget:
 
@@ -162,7 +162,7 @@ A scrolling live Today list, check-off-in-place, and sub-30-minute freshness are
 - Glance: "Each application is responsible for managing the data layer." When state changes, **the app** must notify and `update` the widget.
 - `provideGlance` / `onUpdate` / `RemoteViewsFactory.onDataSetChanged` run in native workers/receivers. They can read files, DataStore, SQLite, a `ContentProvider`, or the network. They cannot assume a Metro bundle is loaded.
 
-Implication for Cras: whatever Today the widget shows must be a **native-readable projection**. If data lives only in JS memory, or only behind an API the widget does not call, the tile is empty or stale until the user opens the app.
+General widget implication: whatever Today the widget shows must be a **native-readable projection**. On the rejected RN path, JS-only memory would have made the tile empty or stale. Current Cras Android is Kotlin throughout, so the app and Glance widget can share native persistence.
 
 ### How often it can refresh
 
@@ -189,7 +189,7 @@ Not a running RN root on the home screen. It means:
 2. Native `provideGlance` reads that storage and emits new `RemoteViews`.
 3. The launcher displays those views until the next update.
 
-Worst case if you only tap-to-open: the tile is a branded control. It never needs the bundle. That matches Android's control-widget type and Expo Router's "intercept the launch" story.
+On the rejected RN path, a tap-to-open-only tile could remain a branded control without loading the JS bundle. That historical fallback is not the locked Cras widget shape.
 
 ## Current consequence for Cras
 

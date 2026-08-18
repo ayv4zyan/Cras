@@ -63,17 +63,10 @@ export const CommentSchema = Schema.Struct({
 
 export type Comment = Schema.Schema.Type<typeof CommentSchema>;
 
-const decodeTask = Schema.decodeUnknownSync(TaskSchema, {
-  onExcessProperty: "error",
-});
-const decodeComment = Schema.decodeUnknownSync(CommentSchema, {
+export const parseTask = Schema.decodeUnknownSync(TaskSchema, {
   onExcessProperty: "error",
 });
 
-export function parseTask(raw: unknown): Task {
-  return decodeTask(raw);
-}
-
-export function parseComment(raw: unknown): Comment {
-  return decodeComment(raw);
-}
+export const parseComment = Schema.decodeUnknownSync(CommentSchema, {
+  onExcessProperty: "error",
+});

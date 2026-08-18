@@ -1,8 +1,8 @@
 # DeepInfra Voxtral + Gemma 4 for in-app STT
 
-**Status (2026-08-18):** research for [What do DeepInfra Voxtral Small and Gemma 4 support for in-app STT?](https://github.com/ayv4zyan/Cras/issues/9). Product behavior is locked on [How should voice create, edit, and extract task metadata?](https://github.com/ayv4zyan/Cras/issues/8); credential and pipeline placement is locked on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18). One authenticated Supabase Edge Function holds the Deployment-wide DeepInfra secret and orchestrates both provider calls. Web and Kotlin Android clients produce mono 16 kHz PCM WAV; the function validates and forwards it without transcoding. Operators select models only from a Deployment-maintained allow-list, and Cras does not retain recordings server-side.
+**Status (2026-08-18):** research for [What do DeepInfra Voxtral Small and Gemma 4 support for in-app STT?](https://github.com/ayv4zyan/Cras/issues/9). Product behavior is locked on [How should voice create, edit, and extract task metadata?](https://github.com/ayv4zyan/Cras/issues/8); credential and pipeline placement is locked on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18); shared configuration is locked on [Where does Operator voice config live?](https://github.com/ayv4zyan/Cras/issues/19). One authenticated Supabase Edge Function holds the Deployment-wide DeepInfra secret and orchestrates both provider calls. Web and Kotlin Android clients produce mono 16 kHz PCM WAV; the function validates and forwards it without transcoding. Operators store nullable stable model keys and an optional custom extractor prompt in shared Settings; the Edge Function resolves them against the Deployment's Voice model catalog. Cras does not retain recordings server-side.
 
-Primary sources only: DeepInfra catalog/docs/API, Mistral and Google model-owner docs, and the local OpenWhispr shim at `/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim`.
+Primary sources only: DeepInfra catalog/docs/API, Mistral and Google model-owner docs, and the local OpenWhispr shim at `~/Sync/Projects/openwhispr-deepinfra-shim`.
 
 Checked 2026-08-17. Prices and catalog tags can change; slugs below are from DeepInfra’s live `/models/list`.
 
@@ -25,8 +25,8 @@ Sources: [ASR catalog](https://deepinfra.com/models/automatic-speech-recognition
 
 The local shim **defaults to Mini**, not Small:
 
-- `DEEPINFRA_MODEL || "mistralai/Voxtral-Mini-3B-2507"` in [`deepinfra-voxtral-shim.js`](/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim/deepinfra-voxtral-shim.js)
-- Same slug in [`openwhispr-settings.json`](/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim/openwhispr-settings.json), [`.env.example`](/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim/.env.example), and [README](/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim/README.md)
+- `DEEPINFRA_MODEL || "mistralai/Voxtral-Mini-3B-2507"` in `deepinfra-voxtral-shim.js` (local OpenWhispr shim)
+- Same slug in `openwhispr-settings.json` (local OpenWhispr shim), `.env.example` (local OpenWhispr shim), and `README.md` (local OpenWhispr shim)
 
 Older shim logs once printed `Default model: mistralai/Voxtral-Small-24B-2507`; current code and settings are Mini.
 
@@ -58,7 +58,7 @@ Live `GET https://api.deepinfra.com/models/list` (2026-08-17). `google/gemma-4-E
 
 Pages: [E4B](https://deepinfra.com/google/gemma-4-E4B-it), [26B-A4B](https://deepinfra.com/google/gemma-4-26B-A4B-it), [31B](https://deepinfra.com/google/gemma-4-31B-it), [31B-turbo](https://deepinfra.com/google/gemma-4-31B-it-turbo).
 
-The shim default cleanup model is **`google/gemma-4-E4B-it`**. ([README](/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim/README.md), settings JSON, `.env.example`)
+The shim default cleanup model is **`google/gemma-4-E4B-it`**. (`README.md` (local OpenWhispr shim), settings JSON, `.env.example`)
 
 ### Structured output / JSON mode
 
@@ -86,9 +86,9 @@ Mini native `in_schema` (`GET https://api.deepinfra.com/models/mistralai/Voxtral
 
 > OpenWhispr records **WebM**; DeepInfra Voxtral returns HTTP 500 on WebM. The shim converts to WAV, trims **leading/trailing silence** (not mid-phrase pauses), and holds your API token.
 
-([README](/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim/README.md))
+(`README.md` (local OpenWhispr shim))
 
-Pipeline in [`deepinfra-voxtral-shim.js`](/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim/deepinfra-voxtral-shim.js):
+Pipeline in `deepinfra-voxtral-shim.js` (local OpenWhispr shim):
 
 1. Accept multipart `file` (filename suffix default `.webm`).
 2. `ffmpeg -ar 16000 -ac 1 -f wav`.
@@ -116,7 +116,7 @@ Platform encode support includes **PCM/WAVE** (encoder Android 4.1+), AAC in MPE
 
 **Auth.** All DeepInfra endpoints need `Authorization: Bearer $DEEPINFRA_TOKEN` (dashboard keys). Scoped JWTs can lock models, expiry (≤ 1 year), and USD spend without sharing the root key. ([Authentication](https://docs.deepinfra.com/account/authentication), [API intro](https://docs.deepinfra.com/api-reference/introduction), [Quickstart](https://docs.deepinfra.com/quickstart))
 
-Shim token order: `DEEPINFRA_TOKEN` env → project `.env` → `~/.openwhispr/deepinfra.env`. Process exits if missing. Binds **`127.0.0.1` only**. ([README](/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim/README.md), shim source)
+Shim token order: `DEEPINFRA_TOKEN` env → project `.env` → `~/.openwhispr/deepinfra.env`. Process exits if missing. Binds **`127.0.0.1` only**. (`README.md` (local OpenWhispr shim), shim source)
 
 **Pricing (DeepInfra, first-party):**
 
@@ -140,7 +140,7 @@ Shim token order: `DEEPINFRA_TOKEN` env → project `.env` → `~/.openwhispr/de
 | Transcode | DeepInfra docs: mp3/wav; shim: WebM → HTTP 500; Android sample: 3GP/AMR | Unless the recorder emits wav/mp3, **something** must transcode (device ffmpeg/AudioRecord WAV, or a proxy). |
 | Token + prompt policy | Shim injects `cleanup-prompt-short.txt`, rewrites `max_completion_tokens` → `max_tokens`, trims silence | Those are product choices, not DeepInfra requirements. |
 
-**Conclusion:** a web or Android client *can* POST to DeepInfra directly, but Cras clients do not. [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18) locks one authenticated Supabase Edge Function as the secret-holding and orchestration boundary. It performs both speech-to-text and structured extraction. Both clients upload mono 16 kHz PCM WAV, so the function validates rather than transcodes. Scoped DeepInfra JWTs may reduce blast radius but do not replace this boundary.
+**Conclusion:** a web or Android client *can* POST to DeepInfra directly, but Cras clients do not. [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18) locks one authenticated Supabase Edge Function as the secret-holding and orchestration boundary. It performs both speech-to-text and structured extraction. Both clients upload mono 16 kHz PCM WAV, so the function validates rather than transcodes. Scoped DeepInfra JWTs may reduce blast radius but do not replace this boundary. [Where does Operator voice config live?](https://github.com/ayv4zyan/Cras/issues/19) locks runtime configuration: the function resolves nullable Operator Settings against the current Voice model catalog and rejects provider/model identifiers supplied outside that catalog.
 
 Endpoints the shim already uses:
 
@@ -154,8 +154,8 @@ Endpoints the shim already uses:
 
 What the shim **reliably** does today is **dictation cleanup**:
 
-- Default short prompt: output **only** cleaned text; remove fillers/false starts; do **not** answer questions or add content. ([`cleanup-prompt-short.txt`](/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim/cleanup-prompt-short.txt))
-- Stock OpenWhispr prompt (passthrough mode): same contract, plus spoken punctuation, **written forms** of numbers/dates/times (“January 15, 2026 / 5:30 PM”), self-corrections. Still “exactly the cleaned transcript and nothing else.” ([`scripts/_stock-cleanup-prompt.txt`](/Users/arturayvazyan/Sync/Projects/openwhispr-deepinfra-shim/scripts/_stock-cleanup-prompt.txt))
+- Default short prompt: output **only** cleaned text; remove fillers/false starts; do **not** answer questions or add content. (`cleanup-prompt-short.txt` (local OpenWhispr shim))
+- Stock OpenWhispr prompt (passthrough mode): same contract, plus spoken punctuation, **written forms** of numbers/dates/times (“January 15, 2026 / 5:30 PM”), self-corrections. Still “exactly the cleaned transcript and nothing else.” (`scripts/_stock-cleanup-prompt.txt` (local OpenWhispr shim))
 
 That is **not** `{ title, date, time }` extraction. Asking the current cleanup prompt for JSON would fight its “output only the cleaned text” rule.
 
@@ -166,7 +166,7 @@ The locked Cras pipeline uses the published APIs this way:
 3. Pass the **device clock + timezone**. The model has no “now,” so relative speech such as “tomorrow at 3” cannot be grounded otherwise.
 4. Treat extracted dates as **untrusted**: validate the schema and leave fields null when the transcript does not state them.
 
-Other DeepInfra models may technically support tools or structured output, but Operators may select only models on the Deployment-maintained allow-list.
+Other DeepInfra models may technically support tools or structured output, but Operators may select only enabled models in the Voice model catalog.
 
 Owner Voxtral Small can do structured summaries / voice function-calling **on Mistral or self-hosted vLLM**, not as DeepInfra’s ASR wrapper.
 
@@ -174,7 +174,7 @@ Owner Voxtral Small can do structured summaries / voice function-calling **on Mi
 
 ## Implications for Cras (decisions, not implementation)
 
-1. The MVP default STT model is **Voxtral Small** (`mistralai/Voxtral-Small-24B-2507`). Operators may select only models on the Deployment-maintained allow-list; Mini is research context, not the default.
+1. The MVP default STT model is **Voxtral Small** (`mistralai/Voxtral-Small-24B-2507`). Operators may select only enabled models in the Voice model catalog; Mini is research context, not the default.
 2. Both clients produce **mono 16 kHz PCM WAV** before upload. The Edge Function validates and forwards it without transcoding; WebM/3GP/AMR are not accepted.
 3. The authenticated **Supabase Edge Function** holds the Deployment-wide DeepInfra credential and performs both provider calls. Cras clients never call DeepInfra directly, and server-side audio is not retained.
 4. MVP has **no cleanup-model stage**. Structured Task metadata uses **Gemma 4 26B-A4B-it + `json_schema`** with the device clock/timezone and the dedicated extractor prompt. E4B remains only historical shim context.

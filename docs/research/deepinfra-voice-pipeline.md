@@ -1,6 +1,6 @@
 # DeepInfra Voxtral + Gemma 4 for in-app STT
 
-**Status (2026-08-18):** research for [What do DeepInfra Voxtral Small and Gemma 4 support for in-app STT?](https://github.com/ayv4zyan/Cras/issues/9). Product behavior is locked on [How should voice create, edit, and extract task metadata?](https://github.com/ayv4zyan/Cras/issues/8); credential and pipeline placement is locked on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18); shared configuration is locked on [Where does Operator voice config live?](https://github.com/ayv4zyan/Cras/issues/19). One authenticated Supabase Edge Function holds the Deployment-wide DeepInfra secret and orchestrates both provider calls. Web and Kotlin Android clients produce mono 16 kHz PCM WAV; the function validates and forwards it without transcoding. Operators store nullable stable model keys and an optional custom extractor prompt in shared Settings; the Edge Function resolves them against the Deployment's Voice model catalog. Cras does not retain recordings server-side.
+**Status (2026-08-18):** research for [What do DeepInfra Voxtral Small and Gemma 4 support for in-app STT?](https://github.com/ayv4zyan/Cras/issues/9). Product behavior is locked on [How should voice create, edit, and extract task metadata?](https://github.com/ayv4zyan/Cras/issues/8); credential and pipeline placement is locked on [How do DeepInfra credentials live on web and Android?](https://github.com/ayv4zyan/Cras/issues/18); shared configuration is locked on [Where does Operator voice config live?](https://github.com/ayv4zyan/Cras/issues/19); clock and relative-date semantics are locked on [Which clock defines Today across devices?](https://github.com/ayv4zyan/Cras/issues/20). One authenticated Supabase Edge Function holds the Deployment-wide DeepInfra secret and orchestrates both provider calls. Web and Kotlin Android clients produce mono 16 kHz PCM WAV; the function validates and forwards it without transcoding. Operators store nullable stable model keys and an optional custom extractor prompt in shared Settings; the Edge Function resolves them against the Deployment's Voice model catalog. Cras does not retain recordings server-side.
 
 Primary sources only: DeepInfra catalog/docs/API, Mistral and Google model-owner docs, and the local OpenWhispr shim at `~/Sync/Projects/openwhispr-deepinfra-shim`.
 
@@ -163,7 +163,7 @@ The locked Cras pipeline uses the published APIs this way:
 
 1. Use **Voxtral Small** for the verbatim-ish transcript.
 2. Send that transcript directly to **Gemma 4 26B-A4B-it** with the dedicated extractor prompt and `response_format: json_schema`. There is no intervening cleanup call.
-3. Pass the **device clock + timezone**. The model has no “now,” so relative speech such as “tomorrow at 3” cannot be grounded otherwise.
+3. Pass the **recording-start time and the recording device’s timezone**. The model has no “now,” so relative speech such as “tomorrow at 3” cannot be grounded otherwise. Resolve the expression immediately into the exact Date-only, Floating, or Instant plan shown in the Draft; do not retain a relative token or silently change the result after midnight.
 4. Treat extracted dates as **untrusted**: validate the schema and leave fields null when the transcript does not state them.
 
 Other DeepInfra models may technically support tools or structured output, but Operators may select only enabled models in the Voice model catalog.
@@ -177,7 +177,7 @@ Owner Voxtral Small can do structured summaries / voice function-calling **on Mi
 1. The MVP default STT model is **Voxtral Small** (`mistralai/Voxtral-Small-24B-2507`). Operators may select only enabled models in the Voice model catalog; Mini is research context, not the default.
 2. Both clients produce **mono 16 kHz PCM WAV** before upload. The Edge Function validates and forwards it without transcoding; WebM/3GP/AMR are not accepted.
 3. The authenticated **Supabase Edge Function** holds the Deployment-wide DeepInfra credential and performs both provider calls. Cras clients never call DeepInfra directly, and server-side audio is not retained.
-4. MVP has **no cleanup-model stage**. Structured Task metadata uses **Gemma 4 26B-A4B-it + `json_schema`** with the device clock/timezone and the dedicated extractor prompt. E4B remains only historical shim context.
+4. MVP has **no cleanup-model stage**. Structured Task metadata uses **Gemma 4 26B-A4B-it + `json_schema`** with the recording-start time, recording-device timezone, and dedicated extractor prompt. Relative dates become exact, editable Draft plan values and do not mutate at midnight. E4B remains only historical shim context.
 
 ## Sources
 

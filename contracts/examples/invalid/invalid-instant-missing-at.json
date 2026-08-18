@@ -1,0 +1,15 @@
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "title": "Invalid instant task missing at",
+  "description": null,
+  "priority": 3,
+  "plan": {
+    "type": "instant"
+  },
+  "labels": [],
+  "parentId": null,
+  "completedAt": null,
+  "createdAt": "2026-08-18T12:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
+  "version": 1
+}

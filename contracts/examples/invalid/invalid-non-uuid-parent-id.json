@@ -1,0 +1,13 @@
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "title": "Invalid task non-uuid parentId",
+  "description": null,
+  "priority": 3,
+  "plan": null,
+  "labels": [],
+  "parentId": "parent-not-a-uuid",
+  "completedAt": null,
+  "createdAt": "2026-08-18T12:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
+  "version": 1
+}

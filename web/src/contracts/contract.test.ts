@@ -3,57 +3,98 @@ import Ajv2020 from "ajv/dist/2020";
 import addFormats from "ajv-formats";
 import fs from "node:fs";
 import path from "node:path";
-import { parseTask } from "./task";
+import { parseTask, parseComment } from "./task";
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 addFormats(ajv);
 
-const schemaPath = path.resolve(
+const taskSchemaPath = path.resolve(
   __dirname,
   "../../../contracts/schemas/task.schema.json",
 );
-const schemaContent = JSON.parse(fs.readFileSync(schemaPath, "utf-8"));
-const validate = ajv.compile(schemaContent);
+const taskSchemaContent = JSON.parse(fs.readFileSync(taskSchemaPath, "utf-8"));
+const validateTask = ajv.compile(taskSchemaContent);
+
+const commentSchemaPath = path.resolve(
+  __dirname,
+  "../../../contracts/schemas/comment.schema.json",
+);
+const commentSchemaContent = JSON.parse(
+  fs.readFileSync(commentSchemaPath, "utf-8"),
+);
+const validateComment = ajv.compile(commentSchemaContent);
 
 const examplesDir = path.resolve(__dirname, "../../../contracts/examples");
-const exampleFiles = fs
+const validFiles = fs
   .readdirSync(examplesDir)
   .filter((f) => f.endsWith(".json"));
 
-describe("Shared Task Contract Seam", () => {
-  it("has at least 4 golden example fixtures", () => {
-    expect(exampleFiles.length).toBeGreaterThanOrEqual(4);
+const invalidExamplesDir = path.resolve(
+  __dirname,
+  "../../../contracts/examples/invalid",
+);
+const invalidFiles = fs
+  .readdirSync(invalidExamplesDir)
+  .filter((f) => f.endsWith(".json"));
+
+describe("Shared Contract Suite - Web", () => {
+  describe("Valid Golden Fixtures", () => {
+    it("has comprehensive valid golden fixtures", () => {
+      expect(validFiles.length).toBeGreaterThanOrEqual(7);
+    });
+
+    for (const file of validFiles) {
+      const isComment = file.startsWith("comment");
+      const validate = isComment ? validateComment : validateTask;
+      const parse = isComment ? parseComment : parseTask;
+
+      it(`validates golden fixture ${file} against JSON Schema`, () => {
+        const filePath = path.join(examplesDir, file);
+        const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const valid = validate(data);
+        if (!valid) {
+          console.error(`Validation errors for ${file}:`, validate.errors);
+        }
+        expect(valid).toBe(true);
+      });
+
+      it(`deserializes golden fixture ${file} into Effect Schema model`, () => {
+        const filePath = path.join(examplesDir, file);
+        const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const parsed = parse(raw);
+        expect(parsed.id).toBe(raw.id);
+        if ("title" in parsed && "title" in raw) {
+          expect(parsed.title).toBe(raw.title);
+        }
+        if ("content" in parsed && "content" in raw) {
+          expect(parsed.content).toBe(raw.content);
+        }
+      });
+    }
   });
 
-  for (const file of exampleFiles) {
-    it(`validates golden fixture ${file} against JSON Schema`, () => {
-      const filePath = path.join(examplesDir, file);
-      const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      const valid = validate(data);
-      if (!valid) {
-        console.error(`Validation errors for ${file}:`, validate.errors);
-      }
-      expect(valid).toBe(true);
+  describe("Invalid Boundary Fixtures", () => {
+    it("has comprehensive invalid boundary fixtures", () => {
+      expect(invalidFiles.length).toBeGreaterThanOrEqual(10);
     });
 
-    it(`deserializes golden fixture ${file} into TypeScript Task model`, () => {
-      const filePath = path.join(examplesDir, file);
-      const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      const parsed = parseTask(raw);
-      expect(parsed.id).toBe(raw.id);
-      expect(parsed.title).toBe(raw.title);
-      expect(parsed.version).toBe(raw.version);
-    });
-  }
+    for (const file of invalidFiles) {
+      const isComment = file.includes("comment");
+      const validate = isComment ? validateComment : validateTask;
+      const parse = isComment ? parseComment : parseTask;
 
-  it("rejects an invalid task fixture with missing required fields or bad plan", () => {
-    const invalidTask = {
-      id: "not-a-uuid",
-      title: "",
-      // missing priority, labels, version, createdAt, updatedAt
-    };
-    const valid = validate(invalidTask);
-    expect(valid).toBe(false);
-    expect(() => parseTask(invalidTask)).toThrow();
+      it(`rejects invalid fixture ${file} with JSON Schema`, () => {
+        const filePath = path.join(invalidExamplesDir, file);
+        const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const valid = validate(raw);
+        expect(valid).toBe(false);
+      });
+
+      it(`rejects invalid fixture ${file} with Effect Schema model`, () => {
+        const filePath = path.join(invalidExamplesDir, file);
+        const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        expect(() => parse(raw)).toThrow();
+      });
+    }
   });
 });

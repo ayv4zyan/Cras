@@ -1,0 +1,15 @@
+{
+  "id": "77777777-7777-7777-7777-777777777777",
+  "title": "Ship MVP initial baseline",
+  "description": "Verify change gate green on all tracks",
+  "priority": 1,
+  "plan": {
+    "date": "2026-08-18"
+  },
+  "labels": ["22222222-2222-2222-2222-222222222222"],
+  "parentId": null,
+  "completedAt": "2026-08-18T16:45:00Z",
+  "createdAt": "2026-08-18T08:00:00Z",
+  "updatedAt": "2026-08-18T16:45:00Z",
+  "version": 3
+}

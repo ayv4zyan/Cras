@@ -1,0 +1,17 @@
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "title": "Invalid floating task bad time format",
+  "description": null,
+  "priority": 3,
+  "plan": {
+    "type": "floating",
+    "date": "2026-08-19",
+    "time": "25:00:00"
+  },
+  "labels": [],
+  "parentId": null,
+  "completedAt": null,
+  "createdAt": "2026-08-18T12:00:00Z",
+  "updatedAt": "2026-08-18T12:00:00Z",
+  "version": 1
+}

@@ -2,6 +2,7 @@ package com.cras.app.models
 
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.descriptors.buildClassSerialDescriptor
 import kotlinx.serialization.descriptors.element
@@ -13,17 +14,48 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.UUID
+
+private val DATE_REGEX = Regex("""^\d{4}-\d{2}-\d{2}$""")
+private val TIME_REGEX = Regex("""^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$""")
+private val ISO_DATE_TIME_REGEX = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$""")
+
+private fun isValidUuid(value: String): Boolean {
+    return try {
+        UUID.fromString(value)
+        true
+    } catch (_: IllegalArgumentException) {
+        false
+    }
+}
+
+private fun isValidIsoDateTime(value: String): Boolean {
+    return ISO_DATE_TIME_REGEX.matches(value)
+}
 
 @Serializable(with = PlanSerializer::class)
 sealed interface Plan {
     @Serializable
-    data class DateOnly(val date: String) : Plan
+    data class DateOnly(val date: String) : Plan {
+        init {
+            require(DATE_REGEX.matches(date)) { "Date-only plan date must match YYYY-MM-DD: $date" }
+        }
+    }
 
     @Serializable
-    data class Floating(val date: String, val time: String) : Plan
+    data class Floating(val date: String, val time: String) : Plan {
+        init {
+            require(DATE_REGEX.matches(date)) { "Floating plan date must match YYYY-MM-DD: $date" }
+            require(TIME_REGEX.matches(time)) { "Floating plan time must match HH:mm or HH:mm:ss: $time" }
+        }
+    }
 
     @Serializable
-    data class Instant(val at: String) : Plan
+    data class Instant(val at: String) : Plan {
+        init {
+            require(isValidIsoDateTime(at)) { "Instant plan at must be a valid ISO 8601 / RFC 3339 date-time: $at" }
+        }
+    }
 }
 
 object PlanSerializer : KSerializer<Plan> {
@@ -39,29 +71,47 @@ object PlanSerializer : KSerializer<Plan> {
             ?: throw IllegalStateException("PlanSerializer requires JsonDecoder")
         val element = jsonDecoder.decodeJsonElement()
         if (element !is JsonObject) {
-            throw IllegalArgumentException("Plan must be a JSON object")
+            throw SerializationException("Plan must be a JSON object")
         }
 
+        val allowedFloatingKeys = setOf("type", "date", "time")
+        val allowedInstantKeys = setOf("type", "at")
+        val allowedDateOnlyKeys = setOf("date")
+
+        val hasType = element.containsKey("type")
         val typePrimitive = element["type"]?.jsonPrimitive?.content
-        return when (typePrimitive) {
-            "floating" -> {
+
+        return when {
+            typePrimitive == "floating" -> {
+                val unknownKeys = element.keys - allowedFloatingKeys
+                if (unknownKeys.isNotEmpty()) {
+                    throw SerializationException("Floating plan contains unexpected keys: $unknownKeys")
+                }
                 val date = element["date"]?.jsonPrimitive?.content
-                    ?: throw IllegalArgumentException("Floating plan requires 'date'")
+                    ?: throw SerializationException("Floating plan requires 'date'")
                 val time = element["time"]?.jsonPrimitive?.content
-                    ?: throw IllegalArgumentException("Floating plan requires 'time'")
+                    ?: throw SerializationException("Floating plan requires 'time'")
                 Plan.Floating(date = date, time = time)
             }
-            "instant" -> {
+            typePrimitive == "instant" -> {
+                val unknownKeys = element.keys - allowedInstantKeys
+                if (unknownKeys.isNotEmpty()) {
+                    throw SerializationException("Instant plan contains unexpected keys: $unknownKeys")
+                }
                 val at = element["at"]?.jsonPrimitive?.content
-                    ?: throw IllegalArgumentException("Instant plan requires 'at'")
+                    ?: throw SerializationException("Instant plan requires 'at'")
                 Plan.Instant(at = at)
             }
-            null -> {
+            !hasType -> {
+                val unknownKeys = element.keys - allowedDateOnlyKeys
+                if (unknownKeys.isNotEmpty()) {
+                    throw SerializationException("Date-only plan contains unexpected keys: $unknownKeys")
+                }
                 val date = element["date"]?.jsonPrimitive?.content
-                    ?: throw IllegalArgumentException("Date-only plan requires 'date'")
+                    ?: throw SerializationException("Date-only plan requires 'date'")
                 Plan.DateOnly(date = date)
             }
-            else -> throw IllegalArgumentException("Unknown plan type: $typePrimitive")
+            else -> throw SerializationException("Unknown or invalid plan type: $typePrimitive")
         }
     }
 
@@ -99,4 +149,34 @@ data class Task(
     val createdAt: String,
     val updatedAt: String,
     val version: Int
-)
+) {
+    init {
+        require(isValidUuid(id)) { "Task id must be a valid UUID: $id" }
+        require(title.trim().isNotEmpty()) { "Task title must not be empty" }
+        require(priority in 1..4) { "Task priority must be between 1 and 4: $priority" }
+        require(parentId == null || isValidUuid(parentId)) { "Task parentId must be a valid UUID: $parentId" }
+        require(completedAt == null || isValidIsoDateTime(completedAt)) { "completedAt must be a valid ISO 8601 date-time: $completedAt" }
+        require(isValidIsoDateTime(createdAt)) { "createdAt must be a valid ISO 8601 date-time: $createdAt" }
+        require(isValidIsoDateTime(updatedAt)) { "updatedAt must be a valid ISO 8601 date-time: $updatedAt" }
+        require(labels.distinct().size == labels.size) { "Task labels must be unique" }
+        labels.forEach { labelId ->
+            require(isValidUuid(labelId)) { "Task label must be a valid UUID: $labelId" }
+        }
+        require(version >= 1) { "Task version must be at least 1: $version" }
+    }
+}
+
+@Serializable
+data class Comment(
+    val id: String,
+    val taskId: String,
+    val content: String,
+    val createdAt: String
+) {
+    init {
+        require(isValidUuid(id)) { "Comment id must be a valid UUID: $id" }
+        require(isValidUuid(taskId)) { "Comment taskId must be a valid UUID: $taskId" }
+        require(content.trim().isNotEmpty()) { "Comment content must not be empty" }
+        require(isValidIsoDateTime(createdAt)) { "Comment createdAt must be a valid ISO 8601 date-time: $createdAt" }
+    }
+}

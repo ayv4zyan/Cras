@@ -120,9 +120,9 @@ Implications that follow from those owners’ docs, not from blogs:
 - Expo Universal `@expo/ui` shares a *native-control* API across Android/iOS/web. On web those controls are JS (`react-dom` / `react-native-web`), not shadcn, and on iOS they are SwiftUI. Using it as the “one UI kit” would replace shadcn on web, not reuse it.
 - Expo DOM components run web code in a WebView on native ([`expo-dom`](https://docs.expo.dev/skills/)). That is incremental *web-inside-native*, not MD3, and not a shared design system.
 
-**Shareable:** TypeScript domain models, Effect programs, validation, API clients, TanStack Query keys/fns, any non-view utilities.
+**Shareable on the rejected RN path:** TypeScript domain models, Effect programs, validation, API clients, TanStack Query keys/functions, and other non-view utilities. **Current Cras does not share this TypeScript code with Kotlin Android; it shares the canonical JSON Schema contract and golden examples.**
 
-**Not shareable as components:** shadcn primitives, Tailwind class strings, Paper components, Compose `@expo/ui` trees. Feature-Sliced “ui” slices will fork by platform; “entities” / “shared/lib” can stay common.
+**Not shareable as components on the rejected RN path:** shadcn primitives, Tailwind class strings, Paper components, and Compose `@expo/ui` trees. In current Cras, the entire UI and client implementation fork by platform; only the domain contract is shared.
 
 **You give up:** one visual language, one component library, one theming token file that drives both surfaces, pixel-identical screens, and “write the Inbox row once.” You keep a brand *seed color* only if you generate two palettes (Material Theme Builder / Paper scheme JSON / Compose `seedColor` vs shadcn CSS variables) and maintain them separately.
 
@@ -138,7 +138,7 @@ Implications that follow from those owners’ docs, not from blogs:
 | MD2 by mistake | Paper `{ version: 2 }` or pre-v5 Paper — do not use if the requirement is MD3 |
 | One component tree for web shadcn + Android MD3 | Not offered by any first-party kit above |
 
-Cras standing preference is shadcn + Tailwind on web and Material Design 3 on Android. The docs above support that as **two UI stacks** over a **shared domain**, not a universal component layer.
+Cras uses shadcn + Tailwind on web and Jetpack Compose + Material Design 3 on Android. The docs above support **two client/UI stacks** over a **shared JSON contract**, not shared TypeScript code or a universal component layer.
 
 ## Sources
 

@@ -254,7 +254,7 @@ Sources: [Tables — many-to-many](https://supabase.com/docs/guides/database/tab
 
 Source: [Managing JSON](https://supabase.com/docs/guides/database/json).
 
-**Storage objects.** “Store and serve images, videos, documents, and general-purpose **files**.” Metadata lives in `storage.objects`; there is no query/join/unique-constraint story for Task fields. Fine for voice-capture audio; not the Task table.
+**Storage objects.** “Store and serve images, videos, documents, and general-purpose **files**.” Metadata lives in `storage.objects`; there is no query/join/unique-constraint story for Task fields. Storage can technically hold audio, but Cras MVP does **not** retain Voice capture recordings server-side. Storage is not the Task table.
 
 Source: [Storage](https://supabase.com/docs/guides/storage).
 

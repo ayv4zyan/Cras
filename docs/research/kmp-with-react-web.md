@@ -271,9 +271,9 @@ Official docs do not price the two options. They do state **recommended targets*
 
 No Kotlin/JS target, no `@JsExport`, no Gradle-to-npm workspace. Android Kotlin and web TypeScript each implement the same **document**. Official Kotlin/JS pages even list “DTOs, validation … abstractions for REST API endpoints” as something you **could** share with a Kotlin **backend** — the inverse of this option. ([JS use cases](https://kotlinlang.org/docs/js-overview.html))
 
-**What you pay:** two implementations of models/validation; drift unless the schema is generated/tested (OpenAPI, JSON Schema, kotlinx.serialization on a server, etc.). The map already has “Shared task *contract* shape if web and Android are different languages” as unspecified.
+**What you pay:** two implementations of models/validation; drift unless the schema is generated/tested. The map now locks JSON Schema plus golden examples as the canonical shared contract on [What is the shared task contract between web and Android?](https://github.com/ayv4zyan/Cras/issues/16).
 
-**When this is cheaper:** MVP, one operator, TanStack web already chosen, Android is Compose/widgets, persistence is “GitHub or a small API” rather than one in-process Kotlin database both UIs call.
+**When this is cheaper:** a two-client MVP where TanStack web and Compose/widgets Android are already chosen and both clients integrate with the same Supabase-backed JSON contract. The number of Operators does not create a compile-time Kotlin-sharing benefit.
 
 ### Recommendation for this map
 

@@ -29,12 +29,24 @@ A dated remark the Operator attaches to a Task. A Task may have many.
 _Avoid_: notes, note
 
 **Label**:
-A named, colored tag the Operator applies to many Tasks.
+A named, colored tag the Operator applies to many Tasks. Its identity is a unique id, not the name. Names are unique; rename keeps the id.
 _Avoid_: tag, category, project
 
 **Priority**:
 How urgent a Task is: one of four levels, default none.
 _Avoid_: importance, severity
+
+**Instant**:
+A timed plan that is one moment on Earth. Stored as UTC. The clock face on a device is derived.
+_Avoid_: absolute, zoned, UTC task
+
+**Floating**:
+A timed plan that is a clock time on a calendar day, the same face in every city. No timezone.
+_Avoid_: local time, wall clock, unzoned
+
+**Date-only**:
+A plan that is a calendar day and nothing else. Not an Instant. Has no Instant/Floating mode.
+_Avoid_: all-day, midnight, date with type
 
 **Subtask**:
 A Task that has a parent Task. A Subtask cannot itself have children.
@@ -45,7 +57,7 @@ The view of open top-level Tasks that have no date. Subtasks are not in Inbox.
 _Avoid_: unprocessed, all tasks, default project
 
 **Today**:
-The view of open Tasks whose date is today or earlier, using the Operator's local calendar date. Completed Tasks are not shown.
+The view of open Tasks whose plan day is today or earlier, using the Operator's local calendar date. For an Instant that day is the device-local date of the moment. Completed Tasks are not shown.
 _Avoid_: scheduled, due
 
 **Upcoming**:

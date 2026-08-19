@@ -27,6 +27,7 @@ class SettingsServiceTest {
     @Before
     fun setUp() {
         mockWebServer = MockWebServer()
+        mockWebServer.start()
     }
 
     @After
@@ -109,16 +110,38 @@ class SettingsServiceTest {
 
     @Test
     fun `fetchEffectiveTimedPlanType falls back to cached value on network error`() = runTest {
+        var returnError = false
         mockWebServer.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
-                return MockResponse().setResponseCode(500).setBody("Server error")
+                if (returnError) {
+                    return MockResponse().setResponseCode(500).setBody("Server error")
+                }
+                val path = request.path ?: ""
+                return when {
+                    path.startsWith("/rest/v1/settings") -> {
+                        MockResponse().setResponseCode(200).setBody(
+                            """{"operator_id":"550e8400-e29b-41d4-a716-446655440001","default_timed_plan_type":"floating"}"""
+                        )
+                    }
+                    path.startsWith("/rest/v1/deployment_config") -> {
+                        MockResponse().setResponseCode(200).setBody(
+                            """{"id":1,"default_timed_plan_type":"instant"}"""
+                        )
+                    }
+                    else -> MockResponse().setResponseCode(404)
+                }
             }
         }
 
         val service = createService()
-        val effectiveType = service.fetchEffectiveTimedPlanType(session)
-        // Should fallback to default instant
-        assertEquals(TimedPlanType.INSTANT, effectiveType)
+        // 1. Initial successful fetch populates cache with FLOATING
+        val initialType = service.fetchEffectiveTimedPlanType(session)
+        assertEquals(TimedPlanType.FLOATING, initialType)
+
+        // 2. Subsequent network failure falls back to cached FLOATING
+        returnError = true
+        val fallbackType = service.fetchEffectiveTimedPlanType(session)
+        assertEquals(TimedPlanType.FLOATING, fallbackType)
     }
 
     @Test

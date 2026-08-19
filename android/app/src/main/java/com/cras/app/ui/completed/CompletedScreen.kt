@@ -1,4 +1,4 @@
-package com.cras.app.ui.inbox
+package com.cras.app.ui.completed
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,8 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.filled.Inbox
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -37,19 +36,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.cras.app.auth.OperatorSession
 import com.cras.app.models.Task
+import com.cras.app.ui.inbox.CompletedUiState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InboxScreen(
+fun CompletedScreen(
     session: OperatorSession,
-    inboxState: InboxUiState,
-    isCreatingTask: Boolean,
-    createTaskError: String?,
-    onCreateTask: (title: String, description: String?, priority: Int) -> Unit,
-    onCompleteTask: (String) -> Unit,
+    completedState: CompletedUiState,
+    onUncompleteTask: (String) -> Unit,
     onSelectTask: (Task) -> Unit,
     onRefresh: () -> Unit,
     onSignOut: () -> Unit
@@ -60,18 +58,18 @@ fun InboxScreen(
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "Inbox",
+                            text = "Completed",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
-                        if (inboxState is InboxUiState.Success) {
+                        if (completedState is CompletedUiState.Success) {
                             Spacer(modifier = Modifier.width(8.dp))
                             Surface(
                                 shape = MaterialTheme.shapes.small,
                                 color = MaterialTheme.colorScheme.secondaryContainer
                             ) {
                                 Text(
-                                    text = "${inboxState.tasks.size}",
+                                    text = "${completedState.tasks.size}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -106,18 +104,8 @@ fun InboxScreen(
                 .fillMaxSize()
                 .padding(horizontal = 16.dp)
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
-
-            CreateTaskInput(
-                onCreateTask = onCreateTask,
-                isSubmitting = isCreatingTask,
-                errorMessage = createTaskError
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            when (inboxState) {
-                is InboxUiState.Loading -> {
+            when (completedState) {
+                is CompletedUiState.Loading -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -128,7 +116,7 @@ fun InboxScreen(
                             CircularProgressIndicator(modifier = Modifier.size(36.dp))
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "Loading tasks...",
+                                text = "Loading completed tasks...",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -136,7 +124,7 @@ fun InboxScreen(
                     }
                 }
 
-                is InboxUiState.Empty -> {
+                is CompletedUiState.Empty -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -149,20 +137,20 @@ fun InboxScreen(
                             modifier = Modifier.padding(32.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Inbox,
+                                imageVector = Icons.Default.CheckCircle,
                                 contentDescription = null,
                                 modifier = Modifier.size(56.dp),
                                 tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "No tasks in Inbox",
+                                text = "No completed tasks yet",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Your task space is clear. Capture a new task.",
+                                text = "Completed tasks will be retained here and listed newest-first.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
@@ -171,7 +159,7 @@ fun InboxScreen(
                     }
                 }
 
-                is InboxUiState.Error -> {
+                is CompletedUiState.Error -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -183,14 +171,14 @@ fun InboxScreen(
                             modifier = Modifier.padding(32.dp)
                         ) {
                             Text(
-                                text = "Failed to load tasks",
+                                text = "Failed to load completed tasks",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.error,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = inboxState.message,
+                                text = completedState.message,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
@@ -203,16 +191,16 @@ fun InboxScreen(
                     }
                 }
 
-                is InboxUiState.Success -> {
+                is CompletedUiState.Success -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(bottom = 80.dp)
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 80.dp)
                     ) {
-                        items(inboxState.tasks, key = { it.id }) { task ->
-                            TaskItemRow(
+                        items(completedState.tasks, key = { it.id }) { task ->
+                            CompletedTaskItemRow(
                                 task = task,
-                                onComplete = { onCompleteTask(task.id) },
+                                onUncomplete = { onUncompleteTask(task.id) },
                                 onClick = { onSelectTask(task) }
                             )
                         }
@@ -224,9 +212,9 @@ fun InboxScreen(
 }
 
 @Composable
-fun TaskItemRow(
+fun CompletedTaskItemRow(
     task: Task,
-    onComplete: () -> Unit,
+    onUncomplete: () -> Unit,
     onClick: () -> Unit
 ) {
     Card(
@@ -235,7 +223,7 @@ fun TaskItemRow(
             .clickable { onClick() },
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
         )
     ) {
         Row(
@@ -245,13 +233,13 @@ fun TaskItemRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
-                onClick = onComplete,
+                onClick = onUncomplete,
                 modifier = Modifier.size(24.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.RadioButtonUnchecked,
-                    contentDescription = "Complete task",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = "Uncomplete task",
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -261,15 +249,17 @@ fun TaskItemRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = task.title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        textDecoration = TextDecoration.LineThrough
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 if (!task.description.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = task.description,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         maxLines = 1
                     )
                 }

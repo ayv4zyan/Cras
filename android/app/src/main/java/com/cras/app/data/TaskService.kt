@@ -5,6 +5,7 @@ import com.cras.app.config.PublicSupabaseConfig
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -25,9 +26,22 @@ data class CreateTaskParams(
     val labels: List<String> = emptyList()
 )
 
+data class UpdateTaskParams(
+    val id: String,
+    val title: String? = null,
+    val description: String? = null,
+    val priority: Int? = null,
+    val plan: Plan? = null,
+    val parentId: String? = null,
+    val expectedVersion: Int? = null
+)
+
 interface TaskService {
     suspend fun fetchTasks(session: OperatorSession): List<Task>
     suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task
+    suspend fun updateTask(session: OperatorSession, params: UpdateTaskParams): Task
+    suspend fun completeTask(session: OperatorSession, taskId: String, completedAt: String? = null): Task
+    suspend fun uncompleteTask(session: OperatorSession, taskId: String): Task
 }
 
 class SupabaseTaskService(
@@ -44,6 +58,23 @@ class SupabaseTaskService(
             throw IOException("Failed to $operationName: ${response.code} $responseBody")
         }
         return responseBody
+    }
+
+    private fun executeRpc(session: OperatorSession, rpcName: String, bodyObject: JsonObject): Task {
+        val endpoint = "${config.url}/rest/v1/rpc/$rpcName"
+
+        val request = Request.Builder()
+            .url(endpoint)
+            .addHeader("apikey", config.publishableKey)
+            .addHeader("Authorization", "Bearer ${session.accessToken}")
+            .addHeader("Accept-Profile", "api")
+            .addHeader("Content-Profile", "api")
+            .addHeader("Content-Type", "application/json")
+            .post(bodyObject.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val responseBody = executeRequest(request, rpcName.replace('_', ' '))
+        return json.decodeFromString<Task>(responseBody)
     }
 
     override suspend fun fetchTasks(session: OperatorSession): List<Task> {
@@ -65,8 +96,6 @@ class SupabaseTaskService(
         val trimmedTitle = params.title.trim()
         require(trimmedTitle.isNotEmpty()) { "Task title cannot be empty" }
 
-        val endpoint = "${config.url}/rest/v1/rpc/create_task"
-
         val bodyObject = buildJsonObject {
             put("title", trimmedTitle)
             if (params.description != null) {
@@ -84,17 +113,67 @@ class SupabaseTaskService(
             })
         }
 
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("apikey", config.publishableKey)
-            .addHeader("Authorization", "Bearer ${session.accessToken}")
-            .addHeader("Accept-Profile", "api")
-            .addHeader("Content-Profile", "api")
-            .addHeader("Content-Type", "application/json")
-            .post(bodyObject.toString().toRequestBody("application/json".toMediaType()))
-            .build()
+        return executeRpc(session, "create_task", bodyObject)
+    }
 
-        val responseBody = executeRequest(request, "create task")
-        return json.decodeFromString<Task>(responseBody)
+    override suspend fun updateTask(session: OperatorSession, params: UpdateTaskParams): Task {
+        require(params.id.isNotBlank()) { "Task id cannot be empty" }
+        if (params.title != null) {
+            require(params.title.trim().isNotEmpty()) { "Task title cannot be empty" }
+        }
+        if (params.priority != null) {
+            require(params.priority in 1..4) { "Priority must be between 1 and 4" }
+        }
+
+        val bodyObject = buildJsonObject {
+            put("id", params.id)
+            if (params.title != null) {
+                put("title", params.title.trim())
+            }
+            if (params.description != null) {
+                put("description", params.description)
+            }
+            if (params.priority != null) {
+                put("priority", params.priority)
+            }
+            if (params.plan != null) {
+                put("plan", json.encodeToJsonElement(params.plan))
+            }
+            if (params.parentId != null) {
+                put("parent_id", params.parentId)
+            }
+            if (params.expectedVersion != null) {
+                put("expected_version", params.expectedVersion)
+            }
+        }
+
+        return executeRpc(session, "update_task", bodyObject)
+    }
+
+    override suspend fun completeTask(
+        session: OperatorSession,
+        taskId: String,
+        completedAt: String?
+    ): Task {
+        require(taskId.isNotBlank()) { "Task id cannot be empty" }
+
+        val bodyObject = buildJsonObject {
+            put("id", taskId)
+            if (completedAt != null) {
+                put("completed_at", completedAt)
+            }
+        }
+
+        return executeRpc(session, "complete_task", bodyObject)
+    }
+
+    override suspend fun uncompleteTask(session: OperatorSession, taskId: String): Task {
+        require(taskId.isNotBlank()) { "Task id cannot be empty" }
+
+        val bodyObject = buildJsonObject {
+            put("id", taskId)
+        }
+
+        return executeRpc(session, "uncomplete_task", bodyObject)
     }
 }

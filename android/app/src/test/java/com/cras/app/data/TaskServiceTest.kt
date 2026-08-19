@@ -10,6 +10,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
@@ -127,7 +128,7 @@ class TaskServiceTest {
 
     @Test
     fun `createTask rejects empty title before network call`() = runTest {
-        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(IllegalArgumentException::class.java) {
             kotlinx.coroutines.runBlocking {
                 taskService.createTask(
                     session = testSession,
@@ -136,5 +137,164 @@ class TaskServiceTest {
             }
         }
         assertEquals(0, mockWebServer.requestCount)
+    }
+
+    @Test
+    fun `updateTask sends api update_task RPC payload and validates returned task`() = runTest {
+        val updatedJson = """
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440011",
+                "title": "Updated desk cleaning",
+                "description": "Thoroughly wipe down surface",
+                "priority": 1,
+                "plan": null,
+                "labels": [],
+                "parentId": null,
+                "completedAt": null,
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T00:10:00Z",
+                "version": 2
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(updatedJson)
+        )
+
+        val task = taskService.updateTask(
+            session = testSession,
+            params = UpdateTaskParams(
+                id = "550e8400-e29b-41d4-a716-446655440011",
+                title = "Updated desk cleaning",
+                description = "Thoroughly wipe down surface",
+                priority = 1,
+                expectedVersion = 1
+            )
+        )
+
+        assertNotNull(task)
+        assertEquals("Updated desk cleaning", task.title)
+        assertEquals("Thoroughly wipe down surface", task.description)
+        assertEquals(1, task.priority)
+        assertEquals(2, task.version)
+
+        val request = mockWebServer.takeRequest()
+        assertEquals("/rest/v1/rpc/update_task", request.path)
+        assertEquals("POST", request.method)
+        assertEquals("api", request.getHeader("Content-Profile"))
+        assertEquals("api", request.getHeader("Accept-Profile"))
+    }
+
+    @Test
+    fun `updateTask rejects empty title or invalid priority before network call`() = runTest {
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.updateTask(
+                    session = testSession,
+                    params = UpdateTaskParams(
+                        id = "550e8400-e29b-41d4-a716-446655440011",
+                        title = "  "
+                    )
+                )
+            }
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.updateTask(
+                    session = testSession,
+                    params = UpdateTaskParams(
+                        id = "550e8400-e29b-41d4-a716-446655440011",
+                        priority = 5
+                    )
+                )
+            }
+        }
+
+        assertEquals(0, mockWebServer.requestCount)
+    }
+
+    @Test
+    fun `completeTask sends api complete_task RPC payload with task id and timestamp`() = runTest {
+        val completedJson = """
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440011",
+                "title": "Clean desk",
+                "description": null,
+                "priority": 4,
+                "plan": null,
+                "labels": [],
+                "parentId": null,
+                "completedAt": "2026-08-19T10:00:00Z",
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T10:00:00Z",
+                "version": 2
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(completedJson)
+        )
+
+        val task = taskService.completeTask(
+            session = testSession,
+            taskId = "550e8400-e29b-41d4-a716-446655440011",
+            completedAt = "2026-08-19T10:00:00Z"
+        )
+
+        assertNotNull(task)
+        assertEquals("2026-08-19T10:00:00Z", task.completedAt)
+        assertEquals(2, task.version)
+
+        val request = mockWebServer.takeRequest()
+        assertEquals("/rest/v1/rpc/complete_task", request.path)
+        assertEquals("POST", request.method)
+        assertEquals("api", request.getHeader("Content-Profile"))
+    }
+
+    @Test
+    fun `uncompleteTask sends api uncomplete_task RPC payload with task id`() = runTest {
+        val uncompletedJson = """
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440011",
+                "title": "Clean desk",
+                "description": null,
+                "priority": 4,
+                "plan": null,
+                "labels": [],
+                "parentId": null,
+                "completedAt": null,
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T10:05:00Z",
+                "version": 3
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(uncompletedJson)
+        )
+
+        val task = taskService.uncompleteTask(
+            session = testSession,
+            taskId = "550e8400-e29b-41d4-a716-446655440011"
+        )
+
+        assertNotNull(task)
+        assertNull(task.completedAt)
+        assertEquals(3, task.version)
+
+        val request = mockWebServer.takeRequest()
+        assertEquals("/rest/v1/rpc/uncomplete_task", request.path)
+        assertEquals("POST", request.method)
+        assertEquals("api", request.getHeader("Content-Profile"))
     }
 }

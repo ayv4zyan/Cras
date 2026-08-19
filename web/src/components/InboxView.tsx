@@ -1,14 +1,15 @@
 import React from "react";
 import { Layers, Circle } from "lucide-react";
-import type { Task } from "../contracts/task";
+import { type Priority, type Task } from "../contracts/task";
+import type { CreateTaskParams } from "../services/taskService";
 import { CreateTaskInput } from "./CreateTaskInput";
 
 export interface InboxViewProps {
   readonly tasks: readonly Task[];
   readonly onCreateTask: (
-    title: string,
+    params: CreateTaskParams | string,
     description?: string | null,
-    priority?: 1 | 2 | 3 | 4,
+    priority?: Priority,
   ) => Promise<void> | void;
   readonly onCompleteTask?: (task: Task) => Promise<void> | void;
   readonly onSelectTask?: (task: Task) => void;

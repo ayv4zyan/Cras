@@ -22,9 +22,10 @@ import {
   uncompleteTask,
   filterInboxTasks,
   filterCompletedTasks,
+  type CreateTaskParams,
   type UpdateTaskParams,
 } from "./services/taskService";
-import type { Task } from "./contracts/task";
+import type { Priority, Task } from "./contracts/task";
 import { supabase } from "./config/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -83,18 +84,23 @@ export function CrasApp({
     }
   }, [user, loadTasks]);
 
+  const applyTaskUpdate = useCallback((updated: Task) => {
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    setSelectedTask((prev) => (prev?.id === updated.id ? updated : prev));
+  }, []);
+
   const handleCreateTask = useCallback(
     async (
-      title: string,
+      params: CreateTaskParams | string,
       description?: string | null,
-      priority?: 1 | 2 | 3 | 4,
+      priority?: Priority,
     ) => {
       setErrorMessage(null);
-      const newTask = await createTask(client, {
-        title,
-        description,
-        priority,
-      });
+      const createPayload: CreateTaskParams =
+        typeof params === "string"
+          ? { title: params, description, priority }
+          : params;
+      const newTask = await createTask(client, createPayload);
       setTasks((prev) => [newTask, ...prev]);
     },
     [client],
@@ -104,40 +110,27 @@ export function CrasApp({
     async (params: UpdateTaskParams) => {
       setErrorMessage(null);
       const updated = await updateTask(client, params);
-      setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-      if (selectedTask?.id === updated.id) {
-        setSelectedTask(updated);
-      }
+      applyTaskUpdate(updated);
     },
-    [client, selectedTask],
+    [client, applyTaskUpdate],
   );
 
   const handleCompleteTask = useCallback(
     async (task: Task) => {
       setErrorMessage(null);
       const completed = await completeTask(client, task.id);
-      setTasks((prev) =>
-        prev.map((t) => (t.id === completed.id ? completed : t)),
-      );
-      if (selectedTask?.id === completed.id) {
-        setSelectedTask(completed);
-      }
+      applyTaskUpdate(completed);
     },
-    [client, selectedTask],
+    [client, applyTaskUpdate],
   );
 
   const handleUncompleteTask = useCallback(
     async (task: Task) => {
       setErrorMessage(null);
       const uncompleted = await uncompleteTask(client, task.id);
-      setTasks((prev) =>
-        prev.map((t) => (t.id === uncompleted.id ? uncompleted : t)),
-      );
-      if (selectedTask?.id === uncompleted.id) {
-        setSelectedTask(uncompleted);
-      }
+      applyTaskUpdate(uncompleted);
     },
-    [client, selectedTask],
+    [client, applyTaskUpdate],
   );
 
   const handleSelectTask = useCallback((task: Task) => {
@@ -330,7 +323,7 @@ export function CrasApp({
               <div className="max-w-md w-full text-center space-y-4">
                 <div className="space-y-1.5">
                   <h3 className="text-base font-medium tracking-tight">
-                    {activeView === "today" && "No tasks scheduled for Today"}
+                    {activeView === "today" && "No tasks for Today"}
                     {activeView === "upcoming" && "No upcoming tasks"}
                   </h3>
                   <p className="text-sm text-muted-foreground">

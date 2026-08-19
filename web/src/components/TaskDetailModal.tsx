@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { X, CheckCircle2, Circle, AlertCircle, Loader2 } from "lucide-react";
-import type { Task } from "../contracts/task";
+import { PRIORITY_OPTIONS, type Priority, type Task } from "../contracts/task";
 import type { UpdateTaskParams } from "../services/taskService";
 
 export interface TaskDetailModalProps {
@@ -20,7 +20,7 @@ export function TaskDetailModal({
 }: TaskDetailModalProps): React.JSX.Element | null {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<1 | 2 | 3 | 4>(4);
+  const [priority, setPriority] = useState<Priority>(4);
   const [isSaving, setIsSaving] = useState(false);
   const [isToggling, setIsToggling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -195,16 +195,15 @@ export function TaskDetailModal({
             <select
               id="task-priority"
               value={priority}
-              onChange={(e) =>
-                setPriority(Number(e.target.value) as 1 | 2 | 3 | 4)
-              }
+              onChange={(e) => setPriority(Number(e.target.value) as Priority)}
               disabled={isCompleted || isSaving}
               className="w-full rounded-md border border-border/80 bg-background px-3 py-2 text-sm text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
             >
-              <option value={4}>Priority 4 (None)</option>
-              <option value={3}>Priority 3 (Medium)</option>
-              <option value={2}>Priority 2 (High)</option>
-              <option value={1}>Priority 1 (Urgent)</option>
+              {PRIORITY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
           </div>
 

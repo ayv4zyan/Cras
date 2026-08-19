@@ -1,11 +1,13 @@
 import React, { useState, useCallback } from "react";
 import { Plus, Loader2, SlidersHorizontal, ChevronUp } from "lucide-react";
+import { PRIORITY_OPTIONS, type Priority } from "../contracts/task";
+import type { CreateTaskParams } from "../services/taskService";
 
 export interface CreateTaskInputProps {
   readonly onCreateTask: (
-    title: string,
+    params: CreateTaskParams | string,
     description?: string | null,
-    priority?: 1 | 2 | 3 | 4,
+    priority?: Priority,
   ) => Promise<void> | void;
   readonly placeholder?: string;
   readonly className?: string;
@@ -18,7 +20,7 @@ export function CreateTaskInput({
 }: CreateTaskInputProps): React.JSX.Element {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<1 | 2 | 3 | 4>(4);
+  const [priority, setPriority] = useState<Priority>(4);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,15 +138,16 @@ export function CreateTaskInput({
                 id="create-task-priority"
                 value={priority}
                 onChange={(e) =>
-                  setPriority(Number(e.target.value) as 1 | 2 | 3 | 4)
+                  setPriority(Number(e.target.value) as Priority)
                 }
                 disabled={isSubmitting}
                 className="rounded-md border border-border/70 bg-background/60 px-2 py-1 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring cursor-pointer"
               >
-                <option value={4}>Priority 4 (None)</option>
-                <option value={3}>Priority 3 (Medium)</option>
-                <option value={2}>Priority 2 (High)</option>
-                <option value={1}>Priority 1 (Urgent)</option>
+                {PRIORITY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>

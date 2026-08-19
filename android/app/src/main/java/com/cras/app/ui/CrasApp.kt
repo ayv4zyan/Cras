@@ -39,6 +39,8 @@ import com.cras.app.auth.SupabaseAuthService
 import com.cras.app.config.getPublicSupabaseConfig
 import com.cras.app.data.SupabaseTaskService
 import com.cras.app.ui.auth.SignInScreen
+import com.cras.app.ui.completed.CompletedScreen
+import com.cras.app.ui.detail.TaskDetailDialog
 import com.cras.app.ui.inbox.AuthUiState
 import com.cras.app.ui.inbox.InboxScreen
 import com.cras.app.ui.inbox.InboxViewModel
@@ -92,6 +94,8 @@ fun CrasApp(
 ) {
     val authState by viewModel.authState.collectAsState()
     val inboxState by viewModel.inboxState.collectAsState()
+    val completedState by viewModel.completedState.collectAsState()
+    val selectedTask by viewModel.selectedTask.collectAsState()
     val isCreatingTask by viewModel.isCreatingTask.collectAsState()
     val createTaskError by viewModel.createTaskError.collectAsState()
 
@@ -149,7 +153,30 @@ fun CrasApp(
                                 inboxState = inboxState,
                                 isCreatingTask = isCreatingTask,
                                 createTaskError = createTaskError,
-                                onCreateTask = { viewModel.createTask(it) },
+                                onCreateTask = { title, description, priority ->
+                                    viewModel.createTask(title, description, priority)
+                                },
+                                onCompleteTask = { taskId ->
+                                    viewModel.completeTask(taskId)
+                                },
+                                onSelectTask = { task ->
+                                    viewModel.selectTask(task)
+                                },
+                                onRefresh = { viewModel.loadTasks() },
+                                onSignOut = { viewModel.signOut() }
+                            )
+                        }
+
+                        AppView.COMPLETED -> {
+                            CompletedScreen(
+                                session = state.session,
+                                completedState = completedState,
+                                onUncompleteTask = { taskId ->
+                                    viewModel.uncompleteTask(taskId)
+                                },
+                                onSelectTask = { task ->
+                                    viewModel.selectTask(task)
+                                },
                                 onRefresh = { viewModel.loadTasks() },
                                 onSignOut = { viewModel.signOut() }
                             )
@@ -187,6 +214,22 @@ fun CrasApp(
                                 }
                             }
                         }
+                    }
+
+                    if (selectedTask != null) {
+                        TaskDetailDialog(
+                            task = selectedTask,
+                            onDismiss = { viewModel.selectTask(null) },
+                            onSave = { params, onSuccess, onError ->
+                                viewModel.updateTask(params, onSuccess, onError)
+                            },
+                            onComplete = { taskId, completedAt, onSuccess, onError ->
+                                viewModel.completeTask(taskId, completedAt, onSuccess, onError)
+                            },
+                            onUncomplete = { taskId, onSuccess, onError ->
+                                viewModel.uncompleteTask(taskId, onSuccess, onError)
+                            }
+                        )
                     }
                 }
             }

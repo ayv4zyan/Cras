@@ -39,6 +39,36 @@ export function getDeviceLocalDate(now: Date = new Date()): string {
 }
 
 /**
+ * Formats a calendar date string (YYYY-MM-DD) into a friendly label (e.g. "Today", "Tomorrow", "Wed, Aug 19").
+ */
+export function formatFriendlyDateLabel(
+  dateStr: string,
+  todayStr: string,
+  tomorrowStr: string,
+  yesterdayStr?: string,
+): string {
+  if (dateStr === todayStr) {
+    return "Today";
+  }
+  if (dateStr === tomorrowStr) {
+    return "Tomorrow";
+  }
+  if (yesterdayStr && dateStr === yesterdayStr) {
+    return "Yesterday";
+  }
+
+  const [yearStr, monthStr, dayStr] = dateStr
+    .split("-")
+    .map((num) => Number.parseInt(num, 10));
+  const targetDate = new Date(yearStr, monthStr - 1, dayStr);
+  return targetDate.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/**
  * Extracts the device-local calendar date (YYYY-MM-DD) representing a task plan.
  * For Date-only and Floating, this is the stored calendar date.
  * For Instant, this is the device-local date of the UTC moment.
@@ -106,13 +136,21 @@ export function createPlanFromInputs(params: CreatePlanParams): Plan {
 
   // Instant: resolve local date & time to UTC ISO string
   const [yearStr, monthStr, dayStr] = rawDate.split("-");
-  const year = Number.parseInt(yearStr, 10);
-  const month = Number.parseInt(monthStr, 10) - 1;
-  const day = Number.parseInt(dayStr, 10);
-  const h = Number.parseInt(hours, 10);
-  const m = Number.parseInt(minutes, 10);
+  const parsedYear = Number.parseInt(yearStr, 10);
+  const parsedMonth = Number.parseInt(monthStr, 10) - 1;
+  const parsedDay = Number.parseInt(dayStr, 10);
+  const parsedHour = Number.parseInt(hours, 10);
+  const parsedMinute = Number.parseInt(minutes, 10);
 
-  const localDateTime = new Date(year, month, day, h, m, 0, 0);
+  const localDateTime = new Date(
+    parsedYear,
+    parsedMonth,
+    parsedDay,
+    parsedHour,
+    parsedMinute,
+    0,
+    0,
+  );
   return {
     type: "instant",
     at: localDateTime.toISOString(),
@@ -138,7 +176,7 @@ export function isTaskOverdue(task: Task, now: Date = new Date()): boolean {
  */
 export function formatPlanDisplay(
   plan: Plan | null | undefined,
-  options?: { now?: Date },
+  options?: { now?: Date; timeZone?: string },
 ): PlanDisplayInfo | null {
   if (!plan) return null;
 
@@ -162,23 +200,12 @@ export function formatPlanDisplay(
   const planDateStr = getPlanLocalDate(plan);
   if (!planDateStr) return null;
 
-  let dateLabel: string;
-  if (planDateStr === todayStr) {
-    dateLabel = "Today";
-  } else if (planDateStr === tomorrowStr) {
-    dateLabel = "Tomorrow";
-  } else if (planDateStr === yesterdayStr) {
-    dateLabel = "Yesterday";
-  } else {
-    // Format friendly date, e.g. "Wed, Aug 20" or "Aug 20"
-    const [y, m, d] = planDateStr.split("-").map((n) => Number.parseInt(n, 10));
-    const targetDate = new Date(y, m - 1, d);
-    dateLabel = targetDate.toLocaleDateString(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-    });
-  }
+  const dateLabel = formatFriendlyDateLabel(
+    planDateStr,
+    todayStr,
+    tomorrowStr,
+    yesterdayStr,
+  );
 
   let timeLabel: string | null = null;
   let typeLabel: "Instant" | "Floating" | null = null;
@@ -192,9 +219,9 @@ export function formatPlanDisplay(
     } else if (plan.type === "instant") {
       typeLabel = "Instant";
       const instantDate = new Date(plan.at);
-      const h = String(instantDate.getHours()).padStart(2, "0");
-      const m = String(instantDate.getMinutes()).padStart(2, "0");
-      timeLabel = `${h}:${m}`;
+      const hourStr = String(instantDate.getHours()).padStart(2, "0");
+      const minuteStr = String(instantDate.getMinutes()).padStart(2, "0");
+      timeLabel = `${hourStr}:${minuteStr}`;
     }
   }
 
@@ -284,21 +311,7 @@ export function filterUpcomingTasks(
   // Sort dates ascending
   const sortedDates = Array.from(futureTasksByDate.keys()).sort();
   const groups: UpcomingDayGroup[] = sortedDates.map((date) => {
-    let dateLabel: string;
-    if (date === todayStr) {
-      dateLabel = "Today";
-    } else if (date === tomorrowStr) {
-      dateLabel = "Tomorrow";
-    } else {
-      const [y, m, d] = date.split("-").map((n) => Number.parseInt(n, 10));
-      const targetDate = new Date(y, m - 1, d);
-      dateLabel = targetDate.toLocaleDateString(undefined, {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-      });
-    }
-
+    const dateLabel = formatFriendlyDateLabel(date, todayStr, tomorrowStr);
     const groupTasks = futureTasksByDate.get(date) || [];
     groupTasks.sort((a, b) => a.priority - b.priority);
 

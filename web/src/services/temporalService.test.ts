@@ -287,16 +287,17 @@ describe("Temporal Service Seam", () => {
       });
     });
 
-    it("formats Floating plan preserving wall clock time and labeling type", () => {
+    it("formats Instant plan deriving device local time and labeling type", () => {
+      const instantMoment = new Date(2026, 7, 20, 14, 45, 0); // Local 14:45
       const now = new Date(2026, 7, 19, 12, 0, 0);
       const display = formatPlanDisplay(
-        { type: "floating", date: "2026-08-20", time: "09:30" },
+        { type: "instant", at: instantMoment.toISOString() },
         { now },
       );
 
       expect(display?.dateLabel).toBe("Tomorrow");
-      expect(display?.timeLabel).toBe("09:30");
-      expect(display?.typeLabel).toBe("Floating");
+      expect(display?.timeLabel).toBe("14:45");
+      expect(display?.typeLabel).toBe("Instant");
       expect(display?.isOverdue).toBe(false);
     });
 
@@ -326,6 +327,19 @@ describe("Temporal Service Seam", () => {
       expect(isTaskOverdue(task, beforeMidnight)).toBe(false);
       // After midnight, task becomes overdue
       expect(isTaskOverdue(task, afterMidnight)).toBe(true);
+    });
+
+    it("resolves Instant plan date according to viewing device local date", () => {
+      // 2026-08-19T22:30:00.000Z
+      const utcIso = "2026-08-19T22:30:00.000Z";
+      const instantPlan: Plan = {
+        type: "instant",
+        at: utcIso,
+      };
+
+      const dateObj = new Date(utcIso);
+      const expectedLocalDate = getDeviceLocalDate(dateObj);
+      expect(getPlanLocalDate(instantPlan)).toBe(expectedLocalDate);
     });
 
     it("preserves Floating date and time regardless of timezone or DST", () => {

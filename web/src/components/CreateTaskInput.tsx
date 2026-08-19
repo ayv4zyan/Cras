@@ -297,8 +297,8 @@ export function CreateTaskInput({
                             : "Floating"}
                           )
                         </option>
-                        <option value="instant">Instant (UTC moment)</option>
-                        <option value="floating">Floating (Wall clock)</option>
+                        <option value="instant">Instant</option>
+                        <option value="floating">Floating</option>
                       </select>
                     )}
                   </div>

@@ -439,10 +439,8 @@ export function TaskDetailModal({
                           aria-label="Task Plan Type"
                           className="rounded-md border border-border/80 bg-background px-2.5 py-1.5 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring cursor-pointer"
                         >
-                          <option value="instant">Instant (UTC moment)</option>
-                          <option value="floating">
-                            Floating (Wall clock)
-                          </option>
+                          <option value="instant">Instant</option>
+                          <option value="floating">Floating</option>
                         </select>
                       )}
                     </div>
@@ -452,8 +450,8 @@ export function TaskDetailModal({
                 {planTime && (
                   <p className="text-[11px] text-muted-foreground/80">
                     {planType === "instant"
-                      ? "Instant: exact moment on Earth stored in UTC; adjusts to viewing device timezone."
-                      : "Floating: exact clock time on calendar date, the same face in every city."}
+                      ? "Instant: exact moment on Earth stored in UTC; derived on each device."
+                      : "Floating: exact clock time on calendar day, the same face in every city."}
                   </p>
                 )}
               </div>

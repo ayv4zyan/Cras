@@ -9,18 +9,26 @@ import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
 import com.cras.app.data.LabelService
+import com.cras.app.data.SettingsService
 import com.cras.app.data.TaskService
 import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
+import com.cras.app.domain.TimedPlanType
+import com.cras.app.domain.UpcomingDayGroup
 import com.cras.app.domain.filterCompletedTasks
 import com.cras.app.domain.filterInboxTasks
+import com.cras.app.domain.filterTodayTasks
+import com.cras.app.domain.filterUpcomingTasks
 import com.cras.app.models.Comment
 import com.cras.app.models.Label
+import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.ZoneId
 
 sealed interface AuthUiState {
     object Loading : AuthUiState
@@ -35,6 +43,20 @@ sealed interface InboxUiState {
     data class Error(val message: String) : InboxUiState
 }
 
+sealed interface TodayUiState {
+    object Loading : TodayUiState
+    object Empty : TodayUiState
+    data class Success(val tasks: List<Task>) : TodayUiState
+    data class Error(val message: String) : TodayUiState
+}
+
+sealed interface UpcomingUiState {
+    object Loading : UpcomingUiState
+    object Empty : UpcomingUiState
+    data class Success(val overdue: List<Task>, val groups: List<UpcomingDayGroup>) : UpcomingUiState
+    data class Error(val message: String) : UpcomingUiState
+}
+
 sealed interface CompletedUiState {
     object Loading : CompletedUiState
     object Empty : CompletedUiState
@@ -46,7 +68,10 @@ class InboxViewModel(
     private val authService: AuthService,
     private val taskService: TaskService,
     private val labelService: LabelService,
-    private val commentService: CommentService
+    private val commentService: CommentService,
+    private val settingsService: SettingsService? = null,
+    private val nowProvider: () -> Instant = { Instant.now() },
+    private val zoneIdProvider: () -> ZoneId = { ZoneId.systemDefault() }
 ) : ViewModel() {
 
     private val _authState = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
@@ -58,8 +83,17 @@ class InboxViewModel(
     private val _inboxState = MutableStateFlow<InboxUiState>(InboxUiState.Loading)
     val inboxState: StateFlow<InboxUiState> = _inboxState.asStateFlow()
 
+    private val _todayState = MutableStateFlow<TodayUiState>(TodayUiState.Loading)
+    val todayState: StateFlow<TodayUiState> = _todayState.asStateFlow()
+
+    private val _upcomingState = MutableStateFlow<UpcomingUiState>(UpcomingUiState.Loading)
+    val upcomingState: StateFlow<UpcomingUiState> = _upcomingState.asStateFlow()
+
     private val _completedState = MutableStateFlow<CompletedUiState>(CompletedUiState.Loading)
     val completedState: StateFlow<CompletedUiState> = _completedState.asStateFlow()
+
+    private val _effectiveTimedPlanType = MutableStateFlow<TimedPlanType>(TimedPlanType.INSTANT)
+    val effectiveTimedPlanType: StateFlow<TimedPlanType> = _effectiveTimedPlanType.asStateFlow()
 
     private val _labels = MutableStateFlow<List<Label>>(emptyList())
     val labels: StateFlow<List<Label>> = _labels.asStateFlow()
@@ -88,11 +122,15 @@ class InboxViewModel(
                 if (session != null) {
                     _authState.value = AuthUiState.Authenticated(session)
                     loadTasksInternal(session)
+                    loadSettingsInternal(session)
                 } else {
                     _authState.value = AuthUiState.Unauthenticated()
                     _allTasks.value = emptyList()
                     _inboxState.value = InboxUiState.Empty
+                    _todayState.value = TodayUiState.Empty
+                    _upcomingState.value = UpcomingUiState.Empty
                     _completedState.value = CompletedUiState.Empty
+                    _effectiveTimedPlanType.value = TimedPlanType.INSTANT
                     _labels.value = emptyList()
                     _comments.value = emptyList()
                     _selectedTask.value = null
@@ -131,12 +169,25 @@ class InboxViewModel(
         if (currentAuth is AuthUiState.Authenticated) {
             viewModelScope.launch {
                 loadTasksInternal(currentAuth.session)
+                loadSettingsInternal(currentAuth.session)
             }
+        }
+    }
+
+    private suspend fun loadSettingsInternal(session: OperatorSession) {
+        if (settingsService == null) return
+        try {
+            val effective = settingsService.fetchEffectiveTimedPlanType(session)
+            _effectiveTimedPlanType.value = effective
+        } catch (_: Exception) {
+            // Keep current value on error
         }
     }
 
     private suspend fun loadTasksInternal(session: OperatorSession) {
         _inboxState.value = InboxUiState.Loading
+        _todayState.value = TodayUiState.Loading
+        _upcomingState.value = UpcomingUiState.Loading
         _completedState.value = CompletedUiState.Loading
         try {
             val allTasksList = taskService.fetchTasks(session)
@@ -146,13 +197,30 @@ class InboxViewModel(
             _labels.value = allLabels
             commentsResult.onSuccess { _comments.value = it }
 
+            val now = nowProvider()
+            val zoneId = zoneIdProvider()
+
             val inboxTasks = filterInboxTasks(allTasksList)
+            val todayTasks = filterTodayTasks(allTasksList, now, zoneId)
+            val upcomingResult = filterUpcomingTasks(allTasksList, now, zoneId)
             val completedTasks = filterCompletedTasks(allTasksList)
 
             _inboxState.value = if (inboxTasks.isEmpty()) {
                 InboxUiState.Empty
             } else {
                 InboxUiState.Success(inboxTasks)
+            }
+
+            _todayState.value = if (todayTasks.isEmpty()) {
+                TodayUiState.Empty
+            } else {
+                TodayUiState.Success(todayTasks)
+            }
+
+            _upcomingState.value = if (upcomingResult.overdue.isEmpty() && upcomingResult.groups.isEmpty()) {
+                UpcomingUiState.Empty
+            } else {
+                UpcomingUiState.Success(upcomingResult.overdue, upcomingResult.groups)
             }
 
             _completedState.value = if (completedTasks.isEmpty()) {
@@ -169,6 +237,8 @@ class InboxViewModel(
         } catch (e: Exception) {
             val errorMsg = e.message ?: "Failed to load tasks"
             _inboxState.value = InboxUiState.Error(errorMsg)
+            _todayState.value = TodayUiState.Error(errorMsg)
+            _upcomingState.value = UpcomingUiState.Error(errorMsg)
             _completedState.value = CompletedUiState.Error(errorMsg)
         }
     }
@@ -309,7 +379,6 @@ class InboxViewModel(
             return
         }
 
-        // Prevent deeper nesting at ViewModel layer
         val parentTask = _allTasks.value.find { it.id == parentId }
         if (parentTask != null && parentTask.parentId != null) {
             onError("Subtasks cannot have children (one-level nesting only)")
@@ -338,7 +407,8 @@ class InboxViewModel(
         title: String,
         description: String? = null,
         priority: Int = 4,
-        labels: List<String> = emptyList()
+        labels: List<String> = emptyList(),
+        plan: Plan? = null
     ) {
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
@@ -356,6 +426,7 @@ class InboxViewModel(
                         title = trimmed,
                         description = description?.trim()?.ifEmpty { null },
                         priority = priority,
+                        plan = plan,
                         labels = labels
                     )
                 )
@@ -440,6 +511,29 @@ class InboxViewModel(
                 val errorMsg = e.message ?: "Failed to uncomplete task"
                 loadTasksInternal(currentAuth.session)
                 onError(errorMsg)
+            }
+        }
+    }
+
+    fun updateOperatorTimedPlanType(
+        type: TimedPlanType?,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || settingsService == null) {
+            onError("Not authenticated or settings unavailable")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                settingsService.updateOperatorTimedPlanType(currentAuth.session, type)
+                val effective = settingsService.fetchEffectiveTimedPlanType(currentAuth.session)
+                _effectiveTimedPlanType.value = effective
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to update default timed plan type")
             }
         }
     }

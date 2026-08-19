@@ -6,12 +6,17 @@ import com.cras.app.data.CommentService
 import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
+import com.cras.app.data.DeploymentConfig
 import com.cras.app.data.LabelService
+import com.cras.app.data.OperatorSettings
+import com.cras.app.data.SettingsService
 import com.cras.app.data.TaskService
 import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
+import com.cras.app.domain.TimedPlanType
 import com.cras.app.models.Comment
 import com.cras.app.models.Label
+import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -30,6 +35,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.Instant
+import java.time.ZoneOffset
 import java.util.UUID
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -183,7 +190,7 @@ class InboxViewModelTest {
                 title = params.title ?: existing.title,
                 description = params.description ?: existing.description,
                 priority = params.priority ?: existing.priority,
-                plan = params.plan ?: existing.plan,
+                plan = if (params.clearPlan) null else (params.plan ?: existing.plan),
                 labels = params.labels ?: existing.labels,
                 parentId = params.parentId ?: existing.parentId,
                 updatedAt = "2026-08-19T00:05:00Z",
@@ -223,6 +230,28 @@ class InboxViewModelTest {
             )
             tasksInDb[index] = uncompleted
             return uncompleted
+        }
+    }
+
+    private class FakeSettingsService : SettingsService {
+        var currentEffectiveType = TimedPlanType.INSTANT
+        var shouldFail = false
+
+        override suspend fun fetchOperatorSettings(session: OperatorSession): OperatorSettings? {
+            return OperatorSettings(defaultTimedPlanType = currentEffectiveType)
+        }
+
+        override suspend fun fetchDeploymentConfig(session: OperatorSession): DeploymentConfig? {
+            return DeploymentConfig(defaultTimedPlanType = TimedPlanType.INSTANT)
+        }
+
+        override suspend fun fetchEffectiveTimedPlanType(session: OperatorSession): TimedPlanType {
+            if (shouldFail) return currentEffectiveType
+            return currentEffectiveType
+        }
+
+        override suspend fun updateOperatorTimedPlanType(session: OperatorSession, type: TimedPlanType?) {
+            currentEffectiveType = type ?: TimedPlanType.INSTANT
         }
     }
 
@@ -599,5 +628,117 @@ class InboxViewModelTest {
 
         assertNotNull(nestingError)
         assertTrue(nestingError!!.contains("Subtasks cannot have children (one-level nesting only)"))
+    }
+
+    @Test
+    fun `todayState and upcomingState populate with correct tasks and date groupings`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val settingsService = FakeSettingsService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val fixedNow = Instant.parse("2026-08-19T12:00:00Z")
+        val fixedZone = ZoneOffset.UTC
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            settingsService = settingsService,
+            nowProvider = { fixedNow },
+            zoneIdProvider = { fixedZone }
+        )
+        advanceUntilIdle()
+
+        assertTrue(viewModel.todayState.value is TodayUiState.Empty)
+        assertTrue(viewModel.upcomingState.value is UpcomingUiState.Empty)
+
+        // 1. Create Inbox task (no date)
+        viewModel.createTask("Inbox item")
+        advanceUntilIdle()
+
+        // 2. Create Today task
+        viewModel.createTask("Today item", plan = Plan.DateOnly("2026-08-19"))
+        advanceUntilIdle()
+
+        // 3. Create Tomorrow task
+        viewModel.createTask("Tomorrow item", plan = Plan.DateOnly("2026-08-20"))
+        advanceUntilIdle()
+
+        // 4. Create Overdue task
+        viewModel.createTask("Overdue item", plan = Plan.DateOnly("2026-08-18"))
+        advanceUntilIdle()
+
+        // Verify Today State contains Overdue and Today items, not Inbox or Tomorrow
+        val todayState = viewModel.todayState.value
+        assertTrue(todayState is TodayUiState.Success)
+        val todayTasks = (todayState as TodayUiState.Success).tasks
+        assertEquals(2, todayTasks.size)
+        assertEquals("Overdue item", todayTasks[0].title)
+        assertEquals("Today item", todayTasks[1].title)
+
+        // Verify Upcoming State contains Overdue strip and groups
+        val upcomingState = viewModel.upcomingState.value
+        assertTrue(upcomingState is UpcomingUiState.Success)
+        val upcoming = upcomingState as UpcomingUiState.Success
+        assertEquals(1, upcoming.overdue.size)
+        assertEquals("Overdue item", upcoming.overdue[0].title)
+        assertEquals(2, upcoming.groups.size)
+        assertEquals("2026-08-19", upcoming.groups[0].date)
+        assertEquals("Today", upcoming.groups[0].dateLabel)
+        assertEquals("2026-08-20", upcoming.groups[1].date)
+        assertEquals("Tomorrow", upcoming.groups[1].dateLabel)
+    }
+
+    @Test
+    fun `updateTask with clearPlan moves task to Inbox and removes from Today and Upcoming`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val settingsService = FakeSettingsService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val fixedNow = Instant.parse("2026-08-19T12:00:00Z")
+        val fixedZone = ZoneOffset.UTC
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            settingsService = settingsService,
+            nowProvider = { fixedNow },
+            zoneIdProvider = { fixedZone }
+        )
+        advanceUntilIdle()
+
+        viewModel.createTask("Scheduled task", plan = Plan.DateOnly("2026-08-19"))
+        advanceUntilIdle()
+
+        // Initially in Today, not in Inbox
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+        assertTrue(viewModel.todayState.value is TodayUiState.Success)
+
+        val scheduledTask = (viewModel.todayState.value as TodayUiState.Success).tasks[0]
+
+        // Clear plan
+        viewModel.updateTask(
+            UpdateTaskParams(
+                id = scheduledTask.id,
+                clearPlan = true
+            )
+        )
+        advanceUntilIdle()
+
+        // Now in Inbox, empty in Today and Upcoming
+        assertTrue(viewModel.inboxState.value is InboxUiState.Success)
+        assertTrue(viewModel.todayState.value is TodayUiState.Empty)
+        assertTrue(viewModel.upcomingState.value is UpcomingUiState.Empty)
     }
 }

@@ -20,15 +20,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Sell
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,13 +59,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.cras.app.data.UpdateTaskParams
+import com.cras.app.domain.CreatePlanParams
+import com.cras.app.domain.TimedPlanType
+import com.cras.app.domain.createPlanFromInputs
+import com.cras.app.domain.formatPlanDisplay
+import com.cras.app.domain.getDeviceLocalDate
+import com.cras.app.domain.getPlanLocalDate
 import com.cras.app.domain.isCompleted
 import com.cras.app.domain.isSubtask
 import com.cras.app.models.Comment
 import com.cras.app.models.Label
+import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import com.cras.app.models.TaskPriorities
 import com.cras.app.ui.labels.parseHexColor
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -69,6 +85,7 @@ fun TaskDetailDialog(
     availableLabels: List<Label> = emptyList(),
     comments: List<Comment> = emptyList(),
     subtasks: List<Task> = emptyList(),
+    effectiveDefault: TimedPlanType = TimedPlanType.INSTANT,
     onDismiss: () -> Unit,
     onSave: (UpdateTaskParams, onSuccess: () -> Unit, onError: (String) -> Unit) -> Unit,
     onComplete: (String, completedAt: String?, onSuccess: () -> Unit, onError: (String) -> Unit) -> Unit,
@@ -84,6 +101,38 @@ fun TaskDetailDialog(
     var priority by remember(task.id) { mutableIntStateOf(task.priority) }
     var selectedLabels by remember(task.id, task.labels) { mutableStateOf(task.labels) }
 
+    var planDate by remember(task.id, task.plan) { mutableStateOf(getPlanLocalDate(task.plan) ?: "") }
+    var planTime by remember(task.id, task.plan) {
+        mutableStateOf(
+            when (val p = task.plan) {
+                is Plan.Floating -> {
+                    val parts = p.time.split(":")
+                    if (parts.size >= 2) "${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}" else p.time
+                }
+                is Plan.Instant -> {
+                    try {
+                        val instant = Instant.parse(p.at)
+                        val zdt = instant.atZone(ZoneId.systemDefault())
+                        zdt.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm"))
+                    } catch (_: Exception) {
+                        ""
+                    }
+                }
+                else -> ""
+            }
+        )
+    }
+    var planType by remember(task.id, task.plan) {
+        mutableStateOf(
+            when (val p = task.plan) {
+                is Plan.Floating -> TimedPlanType.FLOATING
+                is Plan.Instant -> TimedPlanType.INSTANT
+                else -> effectiveDefault
+            }
+        )
+    }
+    var isTypeMenuExpanded by remember { mutableStateOf(false) }
+
     var newCommentContent by remember(task.id) { mutableStateOf("") }
     var isAddingComment by remember { mutableStateOf(false) }
 
@@ -97,11 +146,36 @@ fun TaskDetailDialog(
     val isTaskCompleted = task.isCompleted
     val isTaskSubtask = task.isSubtask
 
+    val todayDate = remember { getDeviceLocalDate() }
+    val tomorrowDate = remember { LocalDate.now().plusDays(1).toString() }
+
     LaunchedEffect(task) {
         title = task.title
         description = task.description ?: ""
         priority = task.priority
         selectedLabels = task.labels
+        planDate = getPlanLocalDate(task.plan) ?: ""
+        planTime = when (val p = task.plan) {
+            is Plan.Floating -> {
+                val parts = p.time.split(":")
+                if (parts.size >= 2) "${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}" else p.time
+            }
+            is Plan.Instant -> {
+                try {
+                    val instant = Instant.parse(p.at)
+                    val zdt = instant.atZone(ZoneId.systemDefault())
+                    zdt.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm"))
+                } catch (_: Exception) {
+                    ""
+                }
+            }
+            else -> ""
+        }
+        planType = when (val p = task.plan) {
+            is Plan.Floating -> TimedPlanType.FLOATING
+            is Plan.Instant -> TimedPlanType.INSTANT
+            else -> effectiveDefault
+        }
         newCommentContent = ""
         newSubtaskTitle = ""
         errorMessage = null
@@ -324,6 +398,225 @@ fun TaskDetailDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // Plan Date & Time Section
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.CalendarMonth,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Plan Date & Time",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (!isTaskCompleted && planDate.isNotBlank()) {
+                        Text(
+                            text = "Clear date (Move to Inbox)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable {
+                                    planDate = ""
+                                    planTime = ""
+                                }
+                                .padding(4.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                if (isTaskCompleted) {
+                    val display = formatPlanDisplay(task.plan)
+                    if (display != null) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = buildString {
+                                    append(display.dateLabel)
+                                    if (display.timeLabel != null) append(" · ${display.timeLabel}")
+                                    if (display.typeLabel != null) append(" (${display.typeLabel})")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "No plan date (Inbox)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    // Quick Date Chips
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val isInboxSelected = planDate.isBlank()
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isInboxSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(enabled = !isSaving) {
+                                    planDate = ""
+                                    planTime = ""
+                                }
+                        ) {
+                            Text(
+                                text = "Inbox",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isInboxSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isInboxSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        val isTodaySelected = planDate == todayDate
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isTodaySelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(enabled = !isSaving) {
+                                    planDate = todayDate
+                                }
+                        ) {
+                            Text(
+                                text = "Today",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isTodaySelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isTodaySelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        val isTomorrowSelected = planDate == tomorrowDate
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isTomorrowSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(enabled = !isSaving) {
+                                    planDate = tomorrowDate
+                                }
+                        ) {
+                            Text(
+                                text = "Tomorrow",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isTomorrowSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isTomorrowSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = planDate,
+                            onValueChange = { planDate = it },
+                            placeholder = { Text("YYYY-MM-DD", style = MaterialTheme.typography.labelSmall) },
+                            singleLine = true,
+                            enabled = !isSaving,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                            ),
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.weight(1.2f)
+                        )
+
+                        if (planDate.isNotBlank()) {
+                            OutlinedTextField(
+                                value = planTime,
+                                onValueChange = { planTime = it },
+                                placeholder = { Text("HH:mm", style = MaterialTheme.typography.labelSmall) },
+                                singleLine = true,
+                                enabled = !isSaving,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                                ),
+                                shape = MaterialTheme.shapes.small,
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            if (planTime.isNotBlank()) {
+                                Box {
+                                    val typeLabel = if (planType == TimedPlanType.INSTANT) "Instant" else "Floating"
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .clickable(enabled = !isSaving) { isTypeMenuExpanded = true }
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
+                                        ) {
+                                            Text(
+                                                text = typeLabel,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Default.KeyboardArrowDown,
+                                                contentDescription = "Select type",
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = isTypeMenuExpanded,
+                                        onDismissRequest = { isTypeMenuExpanded = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Instant") },
+                                            onClick = {
+                                                planType = TimedPlanType.INSTANT
+                                                isTypeMenuExpanded = false
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Floating") },
+                                            onClick = {
+                                                planType = TimedPlanType.FLOATING
+                                                isTypeMenuExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 // Priority Selection
                 Text(
                     text = "Priority",
@@ -490,6 +783,20 @@ fun TaskDetailDialog(
                                 }
                                 isSaving = true
                                 errorMessage = null
+
+                                val computedPlan = if (planDate.isNotBlank()) {
+                                    createPlanFromInputs(
+                                        CreatePlanParams(
+                                            date = planDate.trim(),
+                                            time = planTime.trim().ifEmpty { null },
+                                            type = if (planTime.isNotBlank()) planType else null,
+                                            effectiveDefault = effectiveDefault
+                                        )
+                                    )
+                                } else null
+
+                                val shouldClearPlan = computedPlan == null && task.plan != null
+
                                 onSave(
                                     UpdateTaskParams(
                                         id = task.id,
@@ -497,6 +804,8 @@ fun TaskDetailDialog(
                                         description = description.trim().ifEmpty { null },
                                         priority = priority,
                                         labels = selectedLabels,
+                                        plan = computedPlan,
+                                        clearPlan = shouldClearPlan,
                                         expectedVersion = task.version
                                     ),
                                     {
@@ -801,10 +1110,10 @@ fun TaskDetailDialog(
                         OutlinedTextField(
                             value = newCommentContent,
                             onValueChange = { newCommentContent = it },
-                            placeholder = { Text("Add a comment...", style = MaterialTheme.typography.bodyMedium) },
+                            placeholder = { Text("Add a comment...", style = MaterialTheme.typography.bodySmall) },
+                            enabled = !isAddingComment,
                             minLines = 2,
                             maxLines = 4,
-                            enabled = !isAddingComment,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = MaterialTheme.colorScheme.primary,
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
@@ -842,9 +1151,9 @@ fun TaskDetailDialog(
                                         modifier = Modifier.size(16.dp),
                                         strokeWidth = 2.dp
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                } else {
+                                    Text("Add comment")
                                 }
-                                Text("Add comment")
                             }
                         }
                     }

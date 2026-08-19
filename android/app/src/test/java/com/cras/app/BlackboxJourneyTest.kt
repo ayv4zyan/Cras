@@ -13,15 +13,25 @@ import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
 import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.SupabaseCommentService
+import com.cras.app.data.DeploymentConfig
+import com.cras.app.data.OperatorSettings
+import com.cras.app.data.SupabaseSettingsService
+import com.cras.app.domain.TimedPlanType
 import com.cras.app.domain.filterSubtasks
 import com.cras.app.models.Comment
 import com.cras.app.models.Label
 import com.cras.app.models.Plan
+import com.cras.app.models.PlanSerializer
 import com.cras.app.models.Task
 import com.cras.app.ui.inbox.AuthUiState
 import com.cras.app.ui.inbox.CompletedUiState
 import com.cras.app.ui.inbox.InboxUiState
 import com.cras.app.ui.inbox.InboxViewModel
+import com.cras.app.ui.inbox.TodayUiState
+import com.cras.app.ui.inbox.UpcomingUiState
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -95,6 +105,8 @@ class BlackboxJourneyTest {
     private val dbRows = CopyOnWriteArrayList<SimulatedDbRow>()
     private val labelDbRows = CopyOnWriteArrayList<SimulatedLabelDbRow>()
     private val commentDbRows = CopyOnWriteArrayList<SimulatedCommentDbRow>()
+    private val operatorSettingsRows = CopyOnWriteArrayList<OperatorSettings>()
+    private var deploymentConfigRow = DeploymentConfig(defaultTimedPlanType = TimedPlanType.INSTANT)
     private val testDispatcher = StandardTestDispatcher()
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -104,6 +116,8 @@ class BlackboxJourneyTest {
         dbRows.clear()
         labelDbRows.clear()
         commentDbRows.clear()
+        operatorSettingsRows.clear()
+        deploymentConfigRow = DeploymentConfig(defaultTimedPlanType = TimedPlanType.INSTANT)
 
         mockWebServer = MockWebServer()
         mockWebServer.dispatcher = object : Dispatcher() {
@@ -363,6 +377,61 @@ class BlackboxJourneyTest {
                     return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
                 }
 
+                // Operator Settings REST endpoints
+                if (path.startsWith("/rest/v1/settings")) {
+                    if (callerOperatorId == null) {
+                        return MockResponse().setResponseCode(401).setBody("""{"code":"42501","message":"Unauthorized"}""")
+                    }
+
+                    when (method) {
+                        "GET" -> {
+                            val setting = operatorSettingsRows.find { it.operatorId == callerOperatorId }
+                            val accept = request.getHeader("Accept")
+                            val respBody = if (accept?.contains("vnd.pgrst.object") == true) {
+                                if (setting != null) json.encodeToString(OperatorSettings.serializer(), setting)
+                                else "{}"
+                            } else {
+                                val list = if (setting != null) listOf(setting) else emptyList()
+                                json.encodeToString(
+                                    kotlinx.serialization.builtins.ListSerializer(OperatorSettings.serializer()),
+                                    list
+                                )
+                            }
+                            return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
+                        }
+                        "POST" -> {
+                            val body = request.body.readUtf8()
+                            val reqJson = json.parseToJsonElement(body).jsonObject
+                            val defaultTypeStr = reqJson["default_timed_plan_type"]?.jsonPrimitive?.content
+                            val type = if (defaultTypeStr == "floating") TimedPlanType.FLOATING else if (defaultTypeStr == "instant") TimedPlanType.INSTANT else null
+
+                            operatorSettingsRows.removeAll { it.operatorId == callerOperatorId }
+                            val newSetting = OperatorSettings(
+                                operatorId = callerOperatorId,
+                                defaultTimedPlanType = type
+                            )
+                            operatorSettingsRows.add(newSetting)
+
+                            val respBody = json.encodeToString(OperatorSettings.serializer(), newSetting)
+                            return MockResponse().setResponseCode(201).setHeader("Content-Type", "application/json").setBody(respBody)
+                        }
+                    }
+                }
+
+                // Deployment Config REST endpoints
+                if (path.startsWith("/rest/v1/deployment_config")) {
+                    val accept = request.getHeader("Accept")
+                    val respBody = if (accept?.contains("vnd.pgrst.object") == true) {
+                        json.encodeToString(DeploymentConfig.serializer(), deploymentConfigRow)
+                    } else {
+                        json.encodeToString(
+                            kotlinx.serialization.builtins.ListSerializer(DeploymentConfig.serializer()),
+                            listOf(deploymentConfigRow)
+                        )
+                    }
+                    return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
+                }
+
                 // Data API: api.create_task RPC
                 if (path.startsWith("/rest/v1/rpc/create_task")) {
                     if (callerOperatorId == null) {
@@ -390,13 +459,17 @@ class BlackboxJourneyTest {
                         }
                     }
 
+                    val parsedPlan: Plan? = if (reqJson.containsKey("plan") && reqJson["plan"] != null && reqJson["plan"] !is kotlinx.serialization.json.JsonNull) {
+                        json.decodeFromJsonElement(PlanSerializer, reqJson["plan"]!!)
+                    } else null
+
                     val newRow = SimulatedDbRow(
                         id = UUID.randomUUID().toString(),
                         operatorId = callerOperatorId,
                         title = title.trim(),
                         description = reqJson["description"]?.jsonPrimitive?.content,
                         priority = reqJson["priority"]?.jsonPrimitive?.content?.toIntOrNull() ?: 4,
-                        plan = null,
+                        plan = parsedPlan,
                         labels = parsedLabels,
                         parentId = parentId,
                         completedAt = null,
@@ -465,10 +538,20 @@ class BlackboxJourneyTest {
                         existing.labels
                     }
 
+                    val clearPlan = reqJson["clear_plan"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+                    val newPlan = when {
+                        clearPlan -> null
+                        reqJson.containsKey("plan") && reqJson["plan"] != null && reqJson["plan"] !is kotlinx.serialization.json.JsonNull -> {
+                            json.decodeFromJsonElement(PlanSerializer, reqJson["plan"]!!)
+                        }
+                        else -> existing.plan
+                    }
+
                     val updatedRow = existing.copy(
                         title = newTitle?.trim() ?: existing.title,
                         description = if (reqJson.containsKey("description")) reqJson["description"]?.jsonPrimitive?.content else existing.description,
                         priority = newPriority ?: existing.priority,
+                        plan = newPlan,
                         labels = newLabels,
                         updatedAt = "2026-08-19T00:10:00Z",
                         version = existing.version + 1
@@ -589,14 +672,27 @@ class BlackboxJourneyTest {
         mockWebServer.shutdown()
     }
 
-    private fun createViewModel(sessionStore: InMemorySessionStore = InMemorySessionStore()): InboxViewModel {
+    private fun createViewModel(
+        sessionStore: InMemorySessionStore = InMemorySessionStore(),
+        nowProvider: () -> Instant = { Instant.now() },
+        zoneIdProvider: () -> ZoneId = { ZoneId.systemDefault() }
+    ): InboxViewModel {
         val baseUrl = mockWebServer.url("/").toString().removeSuffix("/")
         val config = PublicSupabaseConfig(url = baseUrl, publishableKey = "sb_publishable_anon")
         val authService = SupabaseAuthService(config, sessionStore, OkHttpClient())
         val taskService = SupabaseTaskService(config, OkHttpClient())
         val labelService = SupabaseLabelService(config, OkHttpClient())
         val commentService = SupabaseCommentService(config, OkHttpClient())
-        return InboxViewModel(authService, taskService, labelService, commentService)
+        val settingsService = SupabaseSettingsService(config, OkHttpClient())
+        return InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            settingsService = settingsService,
+            nowProvider = nowProvider,
+            zoneIdProvider = zoneIdProvider
+        )
     }
 
     @Test
@@ -1386,5 +1482,239 @@ class BlackboxJourneyTest {
         bobViewModel.createComment(aliceTask.id, "Bob snooping remark", onError = { bobCommentError = it })
         advanceUntilIdle()
         assertNotNull(bobCommentError)
+    }
+
+    @Test
+    fun `proves Issue 48 AC 1 - Android creates and edits absent, Date-only, Floating, and Instant plans through shared contract`() = runTest {
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        // 1. Absent plan (inbox)
+        viewModel.createTask("Task without plan")
+        advanceUntilIdle()
+        val task1 = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertNull(task1.plan)
+
+        // 2. Date-only plan
+        viewModel.createTask("Task date-only", plan = Plan.DateOnly("2026-08-19"))
+        advanceUntilIdle()
+        val task2 = viewModel.allTasks.value.find { it.title == "Task date-only" }!!
+        assertTrue(task2.plan is Plan.DateOnly)
+        assertEquals("2026-08-19", (task2.plan as Plan.DateOnly).date)
+
+        // 3. Floating plan
+        viewModel.createTask("Task floating", plan = Plan.Floating("2026-08-19", "14:30"))
+        advanceUntilIdle()
+        val task3 = viewModel.allTasks.value.find { it.title == "Task floating" }!!
+        assertTrue(task3.plan is Plan.Floating)
+        assertEquals("2026-08-19", (task3.plan as Plan.Floating).date)
+        assertEquals("14:30", (task3.plan as Plan.Floating).time)
+
+        // 4. Instant plan
+        viewModel.createTask("Task instant", plan = Plan.Instant("2026-08-19T14:30:00Z"))
+        advanceUntilIdle()
+        val task4 = viewModel.allTasks.value.find { it.title == "Task instant" }!!
+        assertTrue(task4.plan is Plan.Instant)
+        assertEquals("2026-08-19T14:30:00Z", (task4.plan as Plan.Instant).at)
+
+        // 5. Edit plan: Date-only -> Floating
+        viewModel.updateTask(
+            UpdateTaskParams(
+                id = task2.id,
+                plan = Plan.Floating("2026-08-20", "09:00"),
+                expectedVersion = task2.version
+            )
+        )
+        advanceUntilIdle()
+        val updatedTask2 = viewModel.allTasks.value.find { it.id == task2.id }!!
+        assertTrue(updatedTask2.plan is Plan.Floating)
+        assertEquals("2026-08-20", (updatedTask2.plan as Plan.Floating).date)
+        assertEquals("09:00", (updatedTask2.plan as Plan.Floating).time)
+
+        // 6. Edit plan: clear plan (move back to inbox)
+        viewModel.updateTask(
+            UpdateTaskParams(
+                id = task3.id,
+                clearPlan = true,
+                expectedVersion = task3.version
+            )
+        )
+        advanceUntilIdle()
+        val clearedTask3 = viewModel.allTasks.value.find { it.id == task3.id }!!
+        assertNull(clearedTask3.plan)
+    }
+
+    @Test
+    fun `proves Issue 48 AC 2 - Explicit and inherited timed-type behavior matches web and preserves existing timed types`() = runTest {
+        val fixedNow = Instant.parse("2026-08-19T10:00:00Z")
+        val fixedZone = ZoneOffset.UTC
+
+        val viewModel = createViewModel(
+            nowProvider = { fixedNow },
+            zoneIdProvider = { fixedZone }
+        )
+        advanceUntilIdle()
+        viewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        // 1. Initial effective timed plan type is INSTANT (deployment default)
+        assertEquals(TimedPlanType.INSTANT, viewModel.effectiveTimedPlanType.value)
+
+        // 2. Operator updates default to FLOATING
+        viewModel.updateOperatorTimedPlanType(TimedPlanType.FLOATING)
+        advanceUntilIdle()
+        assertEquals(TimedPlanType.FLOATING, viewModel.effectiveTimedPlanType.value)
+
+        // 3. Creating timed plan without explicit type inherits operator setting (FLOATING)
+        val inheritedPlan = com.cras.app.domain.createPlanFromInputs(
+            com.cras.app.domain.CreatePlanParams(
+                date = "2026-08-19",
+                time = "16:00",
+                type = null,
+                effectiveDefault = viewModel.effectiveTimedPlanType.value,
+                zoneId = fixedZone
+            )
+        )
+        assertTrue(inheritedPlan is Plan.Floating)
+        assertEquals("16:00", (inheritedPlan as Plan.Floating).time)
+
+        // 4. Preserving existing timed type when editing an Instant task even when default is Floating
+        val existingInstant = Plan.Instant("2026-08-19T08:00:00Z")
+        val preservedPlan = com.cras.app.domain.createPlanFromInputs(
+            com.cras.app.domain.CreatePlanParams(
+                date = "2026-08-19",
+                time = "10:00",
+                type = TimedPlanType.INSTANT, // preserved from existing
+                effectiveDefault = viewModel.effectiveTimedPlanType.value,
+                zoneId = fixedZone
+            )
+        )
+        assertTrue(preservedPlan is Plan.Instant)
+        assertEquals("2026-08-19T10:00:00Z", (preservedPlan as Plan.Instant).at)
+    }
+
+    @Test
+    fun `proves Issue 48 AC 3 & 4 - Today and Upcoming derive membership from device local calendar date and relative dates resolve immediately`() = runTest {
+        val fixedNow = Instant.parse("2026-08-19T12:00:00Z")
+        val fixedZone = ZoneOffset.UTC
+
+        val viewModel = createViewModel(
+            nowProvider = { fixedNow },
+            zoneIdProvider = { fixedZone }
+        )
+        advanceUntilIdle()
+        viewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        // Create tasks across different dates
+        viewModel.createTask("Today task", plan = Plan.DateOnly("2026-08-19"))
+        advanceUntilIdle()
+        viewModel.createTask("Overdue task", plan = Plan.DateOnly("2026-08-17"))
+        advanceUntilIdle()
+        viewModel.createTask("Tomorrow task", plan = Plan.DateOnly("2026-08-20"))
+        advanceUntilIdle()
+        viewModel.createTask("Future task", plan = Plan.DateOnly("2026-08-25"))
+        advanceUntilIdle()
+        viewModel.createTask("Inbox task")
+        advanceUntilIdle()
+
+        // Verify Today View: Contains Overdue and Today items, sorted asc by date
+        val todayState = viewModel.todayState.value
+        assertTrue(todayState is TodayUiState.Success)
+        val todayTasks = (todayState as TodayUiState.Success).tasks
+        assertEquals(2, todayTasks.size)
+        assertEquals("Overdue task", todayTasks[0].title)
+        assertEquals("Today task", todayTasks[1].title)
+
+        // Verify Upcoming View: Contains Overdue strip and Day Groups from today forward
+        val upcomingState = viewModel.upcomingState.value
+        assertTrue(upcomingState is UpcomingUiState.Success)
+        val upcoming = upcomingState as UpcomingUiState.Success
+        assertEquals(1, upcoming.overdue.size)
+        assertEquals("Overdue task", upcoming.overdue[0].title)
+
+        assertEquals(3, upcoming.groups.size)
+        assertEquals("2026-08-19", upcoming.groups[0].date)
+        assertEquals("Today", upcoming.groups[0].dateLabel)
+        assertEquals("2026-08-20", upcoming.groups[1].date)
+        assertEquals("Tomorrow", upcoming.groups[1].dateLabel)
+        assertEquals("2026-08-25", upcoming.groups[2].date)
+    }
+
+    @Test
+    fun `proves Issue 48 AC 5 - Controlled clocks and explicit timezones for midnight and cross-timezone cases`() = runTest {
+        // Instant: 2026-08-19T16:00:00Z
+        // In Tokyo (UTC+9): 2026-08-20 01:00 -> Local date is 2026-08-20
+        // In New York (UTC-4): 2026-08-19 12:00 -> Local date is 2026-08-19
+        val instantUtc = "2026-08-19T16:00:00Z"
+        val instantPlan = Plan.Instant(instantUtc)
+
+        val tokyoZone = ZoneId.of("Asia/Tokyo")
+        val nyZone = ZoneId.of("America/New_York")
+
+        // 1. Plan local date derivation
+        val tokyoLocalDate = com.cras.app.domain.getPlanLocalDate(instantPlan, tokyoZone)
+        val nyLocalDate = com.cras.app.domain.getPlanLocalDate(instantPlan, nyZone)
+        assertEquals("2026-08-20", tokyoLocalDate)
+        assertEquals("2026-08-19", nyLocalDate)
+
+        // 2. Today membership in Tokyo: at 2026-08-19T16:00:00Z (01:00 on 2026-08-20 in Tokyo), device today is 2026-08-20
+        val tokyoNow = Instant.parse("2026-08-19T16:00:00Z")
+        val tokyoDeviceDate = com.cras.app.domain.getDeviceLocalDate(tokyoNow, tokyoZone)
+        assertEquals("2026-08-20", tokyoDeviceDate)
+
+        // In Tokyo, instantPlan (local date 2026-08-20) is scheduled for Today
+        val task = Task(
+            id = "550e8400-e29b-41d4-a716-446655440099",
+            title = "Cross-timezone meeting",
+            description = null,
+            priority = 4,
+            plan = instantPlan,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-19T00:00:00Z",
+            updatedAt = "2026-08-19T00:00:00Z",
+            version = 1
+        )
+
+        val tokyoTodayTasks = com.cras.app.domain.filterTodayTasks(listOf(task), tokyoNow, tokyoZone)
+        assertEquals(1, tokyoTodayTasks.size)
+        assertEquals("Cross-timezone meeting", tokyoTodayTasks[0].title)
+
+        // In New York, at 2026-08-19T16:00:00Z (12:00 on 2026-08-19), device date is 2026-08-19, instantPlan local date is 2026-08-19 -> also Today
+        val nyNow = Instant.parse("2026-08-19T16:00:00Z")
+        val nyDeviceDate = com.cras.app.domain.getDeviceLocalDate(nyNow, nyZone)
+        assertEquals("2026-08-19", nyDeviceDate)
+
+        val nyTodayTasks = com.cras.app.domain.filterTodayTasks(listOf(task), nyNow, nyZone)
+        assertEquals(1, nyTodayTasks.size)
+        assertEquals("Cross-timezone meeting", nyTodayTasks[0].title)
+    }
+
+    @Test
+    fun `proves Issue 48 AC 6 - Date-only plans contain no timed type and request no Notification`() = runTest {
+        val plan = com.cras.app.domain.createPlanFromInputs(
+            com.cras.app.domain.CreatePlanParams(
+                date = "2026-08-19",
+                time = null,
+                type = null,
+                effectiveDefault = TimedPlanType.INSTANT
+            )
+        )
+
+        assertNotNull(plan)
+        assertTrue(plan is Plan.DateOnly)
+        assertEquals("2026-08-19", (plan as Plan.DateOnly).date)
+
+        // JSON serialization verification: must be strictly {"date":"YYYY-MM-DD"} with no type, time, or at keys
+        val encoded = json.encodeToString(PlanSerializer, plan)
+        assertEquals("""{"date":"2026-08-19"}""", encoded)
+        val jsonObject = json.parseToJsonElement(encoded).jsonObject
+        assertFalse(jsonObject.containsKey("time"))
+        assertFalse(jsonObject.containsKey("at"))
+        assertFalse(jsonObject.containsKey("type"))
     }
 }

@@ -2,6 +2,7 @@ package com.cras.app.data
 
 import com.cras.app.auth.OperatorSession
 import com.cras.app.config.PublicSupabaseConfig
+import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
@@ -12,6 +13,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -127,6 +129,48 @@ class TaskServiceTest {
     }
 
     @Test
+    fun `createTask with plan sends plan in RPC payload`() = runTest {
+        val createdJson = """
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440011",
+                "title": "Floating meeting",
+                "description": null,
+                "priority": 4,
+                "plan": {"type":"floating","date":"2026-08-19","time":"14:00"},
+                "labels": [],
+                "parentId": null,
+                "completedAt": null,
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T00:00:00Z",
+                "version": 1
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(createdJson)
+        )
+
+        val task = taskService.createTask(
+            session = testSession,
+            params = CreateTaskParams(
+                title = "Floating meeting",
+                plan = Plan.Floating("2026-08-19", "14:00")
+            )
+        )
+
+        assertNotNull(task)
+        assertTrue(task.plan is Plan.Floating)
+
+        val request = mockWebServer.takeRequest()
+        val body = request.body.readUtf8()
+        assertEquals("/rest/v1/rpc/create_task", request.path)
+        assertTrue(body.contains("\"plan\":{\"type\":\"floating\",\"date\":\"2026-08-19\",\"time\":\"14:00\"}"))
+    }
+
+    @Test
     fun `createTask rejects empty title before network call`() = runTest {
         assertThrows(IllegalArgumentException::class.java) {
             kotlinx.coroutines.runBlocking {
@@ -186,6 +230,46 @@ class TaskServiceTest {
         assertEquals("POST", request.method)
         assertEquals("api", request.getHeader("Content-Profile"))
         assertEquals("api", request.getHeader("Accept-Profile"))
+    }
+
+    @Test
+    fun `updateTask with plan or clearPlan sends plan and clear_plan in RPC payload`() = runTest {
+        val updatedJson = """
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440011",
+                "title": "Updated task",
+                "description": null,
+                "priority": 4,
+                "plan": null,
+                "labels": [],
+                "parentId": null,
+                "completedAt": null,
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T00:10:00Z",
+                "version": 2
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(updatedJson)
+        )
+
+        val task = taskService.updateTask(
+            session = testSession,
+            params = UpdateTaskParams(
+                id = "550e8400-e29b-41d4-a716-446655440011",
+                clearPlan = true
+            )
+        )
+
+        assertNotNull(task)
+        val request = mockWebServer.takeRequest()
+        val body = request.body.readUtf8()
+        assertEquals("/rest/v1/rpc/update_task", request.path)
+        assertTrue(body.contains("\"clear_plan\":true"))
     }
 
     @Test

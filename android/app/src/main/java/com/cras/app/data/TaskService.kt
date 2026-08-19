@@ -32,6 +32,7 @@ data class UpdateTaskParams(
     val description: String? = null,
     val priority: Int? = null,
     val plan: Plan? = null,
+    val clearPlan: Boolean = false,
     val parentId: String? = null,
     val expectedVersion: Int? = null,
     val labels: List<String>? = null
@@ -126,6 +127,8 @@ class SupabaseTaskService(
             require(params.priority in 1..4) { "Priority must be between 1 and 4" }
         }
 
+        val clearPlan = params.clearPlan || (params.plan == null && false)
+
         val bodyObject = buildJsonObject {
             put("id", params.id)
             if (params.title != null) {
@@ -139,6 +142,9 @@ class SupabaseTaskService(
             }
             if (params.plan != null) {
                 put("plan", json.encodeToJsonElement(params.plan))
+            }
+            if (params.clearPlan) {
+                put("clear_plan", true)
             }
             if (params.parentId != null) {
                 put("parent_id", params.parentId)

@@ -2,12 +2,15 @@ package com.cras.app.ui.inbox
 
 import com.cras.app.auth.AuthService
 import com.cras.app.auth.OperatorSession
+import com.cras.app.data.CommentService
+import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
 import com.cras.app.data.LabelService
 import com.cras.app.data.TaskService
 import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
+import com.cras.app.models.Comment
 import com.cras.app.models.Label
 import com.cras.app.models.Task
 import kotlinx.coroutines.Dispatchers
@@ -102,6 +105,33 @@ class InboxViewModelTest {
         }
     }
 
+    private class FakeCommentService : CommentService {
+        val commentsInDb = mutableListOf<Comment>()
+        var shouldFail = false
+        var failureMessage = "Network error"
+
+        override suspend fun fetchComments(session: OperatorSession, taskId: String?): List<Comment> {
+            if (shouldFail) throw RuntimeException(failureMessage)
+            return if (taskId != null) {
+                commentsInDb.filter { it.taskId == taskId }
+            } else {
+                commentsInDb.toList()
+            }
+        }
+
+        override suspend fun createComment(session: OperatorSession, params: CreateCommentParams): Comment {
+            if (shouldFail) throw RuntimeException(failureMessage)
+            val comment = Comment(
+                id = params.id ?: UUID.randomUUID().toString(),
+                taskId = params.taskId,
+                content = params.content.trim(),
+                createdAt = "2026-08-19T10:00:00Z"
+            )
+            commentsInDb.add(comment)
+            return comment
+        }
+    }
+
     private class FakeTaskService : TaskService {
         val tasksInDb = mutableListOf<Task>()
         var shouldFail = false
@@ -114,6 +144,13 @@ class InboxViewModelTest {
 
         override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
             if (shouldFail) throw RuntimeException(failureMessage)
+            if (params.parentId != null) {
+                val parent = tasksInDb.find { it.id == params.parentId }
+                if (parent != null && parent.parentId != null) {
+                    throw RuntimeException("Subtasks cannot have children (one-level nesting only)")
+                }
+            }
+
             val task = Task(
                 id = UUID.randomUUID().toString(),
                 title = params.title.trim(),
@@ -204,7 +241,8 @@ class InboxViewModelTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
         val labelService = FakeLabelService()
-        val viewModel = InboxViewModel(authService, taskService, labelService)
+        val commentService = FakeCommentService()
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
 
         advanceUntilIdle()
         assertTrue(viewModel.authState.value is AuthUiState.Unauthenticated)
@@ -222,10 +260,11 @@ class InboxViewModelTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
         val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
         val session = OperatorSession("op-1", "alice@cras.app", "token-1")
         authService.sessionFlow.value = session
 
-        val viewModel = InboxViewModel(authService, taskService, labelService)
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
         advanceUntilIdle()
 
         // 1. Empty state when no tasks exist
@@ -258,10 +297,11 @@ class InboxViewModelTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
         val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
         val session = OperatorSession("op-1", "alice@cras.app", "token-1")
         authService.sessionFlow.value = session
 
-        val viewModel = InboxViewModel(authService, taskService, labelService)
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
         advanceUntilIdle()
 
         viewModel.createTask("Urgent task", description = "Must do today", priority = 1)
@@ -289,10 +329,11 @@ class InboxViewModelTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
         val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
         val session = OperatorSession("op-1", "alice@cras.app", "token-1")
         authService.sessionFlow.value = session
 
-        val viewModel = InboxViewModel(authService, taskService, labelService)
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
         advanceUntilIdle()
 
         viewModel.createTask("Task One")
@@ -341,10 +382,11 @@ class InboxViewModelTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
         val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
         val session = OperatorSession("op-1", "alice@cras.app", "token-1")
         authService.sessionFlow.value = session
 
-        val viewModel = InboxViewModel(authService, taskService, labelService)
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
         advanceUntilIdle()
 
         viewModel.createTask("Initial Title")
@@ -405,7 +447,7 @@ class InboxViewModelTest {
             UpdateTaskParams(
                 id = uncompletedTask.id,
                 title = "Conflict Attempt",
-                expectedVersion = 1 // Stale expected version (current is 4)
+                expectedVersion = 1
             ),
             onError = { conflictError = it }
         )
@@ -420,10 +462,11 @@ class InboxViewModelTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
         val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
         val session = OperatorSession("op-1", "alice@cras.app", "token-1")
         authService.sessionFlow.value = session
 
-        val viewModel = InboxViewModel(authService, taskService, labelService)
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
         advanceUntilIdle()
 
         // 1. Create label
@@ -458,7 +501,7 @@ class InboxViewModelTest {
         assertNotNull(updatedLabel)
         assertEquals("Critical", updatedLabel!!.name)
         assertEquals("#f97316", updatedLabel!!.color)
-        assertEquals(createdLabel!!.id, updatedLabel!!.id) // Stable ID!
+        assertEquals(createdLabel!!.id, updatedLabel!!.id)
         assertEquals("Critical", viewModel.labels.value[0].name)
 
         // 4. Create task with label
@@ -476,5 +519,85 @@ class InboxViewModelTest {
 
         assertTrue(deleted)
         assertEquals(0, viewModel.labels.value.size)
+    }
+
+    @Test
+    fun `comment lifecycle - create comment updates comments flow and handles error`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        viewModel.createTask("Main feature")
+        advanceUntilIdle()
+
+        val task = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(0, viewModel.comments.value.size)
+
+        // 1. Add comment
+        var createdComment: Comment? = null
+        viewModel.createComment(task.id, "First feedback note", onSuccess = { createdComment = it })
+        advanceUntilIdle()
+
+        assertNotNull(createdComment)
+        assertEquals("First feedback note", createdComment!!.content)
+        assertEquals(task.id, createdComment!!.taskId)
+        assertEquals(1, viewModel.comments.value.size)
+        assertEquals("First feedback note", viewModel.comments.value[0].content)
+
+        // 2. Reject empty comment
+        var commentError: String? = null
+        viewModel.createComment(task.id, "   ", onError = { commentError = it })
+        advanceUntilIdle()
+
+        assertNotNull(commentError)
+        assertEquals("Comment content cannot be empty", commentError)
+        assertEquals(1, viewModel.comments.value.size)
+    }
+
+    @Test
+    fun `subtask lifecycle - createSubtask creates subtask and enforces one-level nesting`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        viewModel.createTask("Top Level Task")
+        advanceUntilIdle()
+
+        val parentTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(1, (viewModel.inboxState.value as InboxUiState.Success).tasks.size)
+
+        // 1. Create subtask under top level task
+        var createdSubtask: Task? = null
+        viewModel.createSubtask(parentTask.id, "Child subtask", onSuccess = { createdSubtask = it })
+        advanceUntilIdle()
+
+        assertNotNull(createdSubtask)
+        assertEquals("Child subtask", createdSubtask!!.title)
+        assertEquals(parentTask.id, createdSubtask!!.parentId)
+
+        // Subtask should NOT be in Inbox view (filterInboxTasks excludes subtasks)
+        val inboxTasks = (viewModel.inboxState.value as InboxUiState.Success).tasks
+        assertEquals(1, inboxTasks.size)
+        assertEquals(parentTask.id, inboxTasks[0].id)
+
+        // 2. Attempt creating child under the subtask (nested level 2) - must fail
+        var nestingError: String? = null
+        viewModel.createSubtask(createdSubtask!!.id, "Illegal nested subtask", onError = { nestingError = it })
+        advanceUntilIdle()
+
+        assertNotNull(nestingError)
+        assertTrue(nestingError!!.contains("Subtasks cannot have children (one-level nesting only)"))
     }
 }

@@ -37,8 +37,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cras.app.auth.SharedPreferencesSessionStore
 import com.cras.app.auth.SupabaseAuthService
 import com.cras.app.config.getPublicSupabaseConfig
+import com.cras.app.data.SupabaseCommentService
 import com.cras.app.data.SupabaseLabelService
 import com.cras.app.data.SupabaseTaskService
+import com.cras.app.domain.filterSubtasks
 import com.cras.app.ui.auth.SignInScreen
 import com.cras.app.ui.completed.CompletedScreen
 import com.cras.app.ui.detail.TaskDetailDialog
@@ -90,7 +92,8 @@ fun CrasApp(
             val authService = SupabaseAuthService(config, sessionStore)
             val taskService = SupabaseTaskService(config)
             val labelService = SupabaseLabelService(config)
-            InboxViewModel(authService, taskService, labelService)
+            val commentService = SupabaseCommentService(config)
+            InboxViewModel(authService, taskService, labelService, commentService)
         }
     },
     onGoogleSignInRequested: (() -> Unit)? = null
@@ -99,6 +102,8 @@ fun CrasApp(
     val inboxState by viewModel.inboxState.collectAsState()
     val completedState by viewModel.completedState.collectAsState()
     val labels by viewModel.labels.collectAsState()
+    val comments by viewModel.comments.collectAsState()
+    val allTasks by viewModel.allTasks.collectAsState()
     val selectedTask by viewModel.selectedTask.collectAsState()
     val isCreatingTask by viewModel.isCreatingTask.collectAsState()
     val createTaskError by viewModel.createTaskError.collectAsState()
@@ -226,9 +231,15 @@ fun CrasApp(
                     }
 
                     if (selectedTask != null) {
+                        val currentTaskId = selectedTask!!.id
+                        val taskComments = comments.filter { it.taskId == currentTaskId }
+                        val taskSubtasks = filterSubtasks(allTasks, currentTaskId)
+
                         TaskDetailDialog(
                             task = selectedTask,
                             availableLabels = labels,
+                            comments = taskComments,
+                            subtasks = taskSubtasks,
                             onDismiss = { viewModel.selectTask(null) },
                             onSave = { params, onSuccess, onError ->
                                 viewModel.updateTask(params, onSuccess, onError)
@@ -238,6 +249,15 @@ fun CrasApp(
                             },
                             onUncomplete = { taskId, onSuccess, onError ->
                                 viewModel.uncompleteTask(taskId, onSuccess, onError)
+                            },
+                            onAddComment = { taskId, content, onSuccess, onError ->
+                                viewModel.createComment(taskId, content, onSuccess = { onSuccess() }, onError = onError)
+                            },
+                            onCreateSubtask = { parentId, title, onSuccess, onError ->
+                                viewModel.createSubtask(parentId, title, onSuccess = { onSuccess() }, onError = onError)
+                            },
+                            onSelectSubtask = { subtask ->
+                                viewModel.selectTask(subtask)
                             }
                         )
                     }

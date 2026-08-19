@@ -1709,11 +1709,12 @@ class BlackboxJourneyTest {
         assertTrue(plan is Plan.DateOnly)
         assertEquals("2026-08-19", (plan as Plan.DateOnly).date)
 
-        // JSON serialization verification: must be strictly {"date":"YYYY-MM-DD"}
+        // JSON serialization verification: must be strictly {"date":"YYYY-MM-DD"} with no type, time, or at keys
         val encoded = json.encodeToString(PlanSerializer, plan)
         assertEquals("""{"date":"2026-08-19"}""", encoded)
-        assertFalse(encoded.contains("time"))
-        assertFalse(encoded.contains("at"))
-        assertFalse(encoded.contains("00:00"))
+        val jsonObject = json.parseToJsonElement(encoded).jsonObject
+        assertFalse(jsonObject.containsKey("time"))
+        assertFalse(jsonObject.containsKey("at"))
+        assertFalse(jsonObject.containsKey("type"))
     }
 }

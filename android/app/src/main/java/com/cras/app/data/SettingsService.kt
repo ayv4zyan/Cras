@@ -115,12 +115,15 @@ class SupabaseSettingsService(
             .get()
             .build()
 
-        return try {
-            val responseBody = executeRequest(request, "fetch operator settings")
-            if (responseBody.trim().isEmpty() || responseBody.trim() == "null") null
-            else json.decodeFromString<OperatorSettings>(responseBody)
-        } catch (_: Exception) {
+        val responseBody = executeRequest(request, "fetch operator settings")
+        return if (responseBody.trim().isEmpty() || responseBody.trim() == "null" || responseBody.trim() == "{}") {
             null
+        } else {
+            try {
+                json.decodeFromString<OperatorSettings>(responseBody)
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 
@@ -135,12 +138,15 @@ class SupabaseSettingsService(
             .get()
             .build()
 
-        return try {
-            val responseBody = executeRequest(request, "fetch deployment config")
-            if (responseBody.trim().isEmpty() || responseBody.trim() == "null") null
-            else json.decodeFromString<DeploymentConfig>(responseBody)
-        } catch (_: Exception) {
+        val responseBody = executeRequest(request, "fetch deployment config")
+        return if (responseBody.trim().isEmpty() || responseBody.trim() == "null" || responseBody.trim() == "{}") {
             null
+        } else {
+            try {
+                json.decodeFromString<DeploymentConfig>(responseBody)
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 

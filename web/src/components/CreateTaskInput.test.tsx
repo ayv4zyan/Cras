@@ -91,4 +91,45 @@ describe("CreateTaskInput Component", () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  it("submits selected labels when creating a task in expanded mode", async () => {
+    const handleCreate = vi.fn().mockResolvedValue(undefined);
+    const availableLabels = [
+      {
+        id: "22222222-2222-2222-2222-222222222222",
+        name: "Urgent",
+        color: "#ef4444",
+      },
+      {
+        id: "33333333-3333-3333-3333-333333333333",
+        name: "Work",
+        color: "#3b82f6",
+      },
+    ];
+
+    render(
+      <CreateTaskInput
+        onCreateTask={handleCreate}
+        availableLabels={availableLabels}
+      />,
+    );
+
+    const expandBtn = screen.getByRole("button", { name: /add details/i });
+    fireEvent.click(expandBtn);
+
+    const titleInput = screen.getByPlaceholderText(/create a task in inbox/i);
+    const urgentLabelCheckbox = screen.getByLabelText("Urgent");
+    const submitBtn = screen.getByRole("button", { name: /create task/i });
+
+    fireEvent.change(titleInput, { target: { value: "Task With Label" } });
+    fireEvent.click(urgentLabelCheckbox);
+    fireEvent.click(submitBtn);
+
+    expect(handleCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Task With Label",
+        labels: ["22222222-2222-2222-2222-222222222222"],
+      }),
+    );
+  });
 });

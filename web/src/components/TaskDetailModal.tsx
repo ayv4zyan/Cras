@@ -1,10 +1,23 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { X, CheckCircle2, Circle, AlertCircle, Loader2 } from "lucide-react";
-import { PRIORITY_OPTIONS, type Priority, type Task } from "../contracts/task";
+import {
+  X,
+  CheckCircle2,
+  Circle,
+  AlertCircle,
+  Loader2,
+  Tag,
+} from "lucide-react";
+import {
+  PRIORITY_OPTIONS,
+  type Priority,
+  type Task,
+  type Label,
+} from "../contracts/task";
 import type { UpdateTaskParams } from "../services/taskService";
 
 export interface TaskDetailModalProps {
   readonly task: Task | null;
+  readonly availableLabels?: readonly Label[];
   readonly isOpen: boolean;
   readonly onClose: () => void;
   readonly onSave: (params: UpdateTaskParams) => Promise<void> | void;
@@ -13,6 +26,7 @@ export interface TaskDetailModalProps {
 
 export function TaskDetailModal({
   task,
+  availableLabels = [],
   isOpen,
   onClose,
   onSave,
@@ -21,6 +35,7 @@ export function TaskDetailModal({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<Priority>(4);
+  const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isToggling, setIsToggling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,11 +45,24 @@ export function TaskDetailModal({
       setTitle(task.title);
       setDescription(task.description ?? "");
       setPriority(task.priority);
+      setSelectedLabels(task.labels ? [...task.labels] : []);
       setError(null);
     }
   }, [task]);
 
   const isCompleted = task?.completedAt !== null;
+
+  const toggleLabel = useCallback(
+    (labelId: string) => {
+      if (isCompleted || isSaving) return;
+      setSelectedLabels((prev) =>
+        prev.includes(labelId)
+          ? prev.filter((id) => id !== labelId)
+          : [...prev, labelId],
+      );
+    },
+    [isCompleted, isSaving],
+  );
 
   const handleSave = useCallback(
     async (e: React.FormEvent) => {
@@ -55,6 +83,7 @@ export function TaskDetailModal({
           title: trimmedTitle,
           description: description.trim() || null,
           priority,
+          labels: selectedLabels,
           expectedVersion: task.version,
         });
         onClose();
@@ -64,7 +93,16 @@ export function TaskDetailModal({
         setIsSaving(false);
       }
     },
-    [task, isCompleted, title, description, priority, onSave, onClose],
+    [
+      task,
+      isCompleted,
+      title,
+      description,
+      priority,
+      selectedLabels,
+      onSave,
+      onClose,
+    ],
   );
 
   const handleToggle = useCallback(async () => {
@@ -206,6 +244,54 @@ export function TaskDetailModal({
               ))}
             </select>
           </div>
+
+          {/* Labels Section */}
+          {availableLabels.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="flex items-center space-x-1.5 text-xs font-medium text-muted-foreground">
+                <Tag className="h-3 w-3" />
+                <span>Labels</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {availableLabels.map((label) => {
+                  const isSelected = selectedLabels.includes(label.id);
+                  return (
+                    <label
+                      key={label.id}
+                      className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs border select-none transition-colors ${
+                        isCompleted
+                          ? isSelected
+                            ? "border-border/80 bg-secondary/80 text-foreground cursor-not-allowed opacity-75"
+                            : "hidden"
+                          : isSelected
+                            ? "border-primary bg-primary/10 text-primary font-medium cursor-pointer"
+                            : "border-border/60 bg-background text-muted-foreground hover:bg-secondary/60 cursor-pointer"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleLabel(label.id)}
+                        disabled={isCompleted || isSaving}
+                        className="sr-only"
+                        aria-label={label.name}
+                      />
+                      <span
+                        className="h-2 w-2 rounded-full shrink-0"
+                        style={{ backgroundColor: label.color }}
+                      />
+                      <span>{label.name}</span>
+                    </label>
+                  );
+                })}
+                {isCompleted && selectedLabels.length === 0 && (
+                  <span className="text-xs text-muted-foreground italic">
+                    No labels attached
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
           {error && <p className="text-xs text-destructive">{error}</p>}
 

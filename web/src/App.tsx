@@ -7,6 +7,8 @@ import {
   LogOut,
   User as UserIcon,
   Loader2,
+  Tag,
+  Plus,
 } from "lucide-react";
 import { AuthProvider } from "./contexts/AuthContext";
 import { useAuth } from "./contexts/useAuth";
@@ -14,6 +16,7 @@ import { SignInScreen } from "./components/SignInScreen";
 import { InboxView } from "./components/InboxView";
 import { CompletedView } from "./components/CompletedView";
 import { TaskDetailModal } from "./components/TaskDetailModal";
+import { LabelManagerModal } from "./components/LabelManagerModal";
 import {
   fetchTasks,
   createTask,
@@ -25,7 +28,15 @@ import {
   type CreateTaskParams,
   type UpdateTaskParams,
 } from "./services/taskService";
-import type { Priority, Task } from "./contracts/task";
+import {
+  fetchLabels,
+  createLabel,
+  updateLabel,
+  deleteLabel,
+  type CreateLabelParams,
+  type UpdateLabelParams,
+} from "./services/labelService";
+import type { Priority, Task, Label } from "./contracts/task";
 import { supabase } from "./config/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -54,24 +65,31 @@ export function CrasApp({
   } = useAuth();
   const [activeView, setActiveView] = useState<ViewMode>("inbox");
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [labels, setLabels] = useState<Label[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isLabelManagerOpen, setIsLabelManagerOpen] = useState(false);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const loadTasks = useCallback(async () => {
+  const loadData = useCallback(async () => {
     if (!user) {
       setTasks([]);
+      setLabels([]);
       return;
     }
     setIsTasksLoading(true);
     setErrorMessage(null);
     try {
-      const allTasks = await fetchTasks(client);
+      const [allTasks, allLabels] = await Promise.all([
+        fetchTasks(client),
+        fetchLabels(client).catch(() => [] as Label[]),
+      ]);
       setTasks(allTasks);
+      setLabels(allLabels);
     } catch (err) {
       setErrorMessage(
-        err instanceof Error ? err.message : "Failed to load tasks",
+        err instanceof Error ? err.message : "Failed to load data",
       );
     } finally {
       setIsTasksLoading(false);
@@ -80,9 +98,9 @@ export function CrasApp({
 
   useEffect(() => {
     if (user) {
-      loadTasks();
+      loadData();
     }
-  }, [user, loadTasks]);
+  }, [user, loadData]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
@@ -152,6 +170,45 @@ export function CrasApp({
       }
     },
     [handleCompleteTask, handleUncompleteTask],
+  );
+
+  const handleCreateLabel = useCallback(
+    async (params: CreateLabelParams) => {
+      const newLabel = await createLabel(client, params);
+      setLabels((prev) => [...prev, newLabel]);
+    },
+    [client],
+  );
+
+  const handleUpdateLabel = useCallback(
+    async (params: UpdateLabelParams) => {
+      const updated = await updateLabel(client, params);
+      setLabels((prev) =>
+        prev.map((l) => (l.id === updated.id ? updated : l)),
+      );
+    },
+    [client],
+  );
+
+  const handleDeleteLabel = useCallback(
+    async (labelId: string) => {
+      await deleteLabel(client, labelId);
+      setLabels((prev) => prev.filter((l) => l.id !== labelId));
+      // Remove deleted label from loaded tasks
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.labels.includes(labelId)
+            ? { ...t, labels: t.labels.filter((id) => id !== labelId) }
+            : t,
+        ),
+      );
+      setSelectedTask((prev) =>
+        prev && prev.labels.includes(labelId)
+          ? { ...prev, labels: prev.labels.filter((id) => id !== labelId) }
+          : prev,
+      );
+    },
+    [client],
   );
 
   if (isAuthLoading) {
@@ -252,6 +309,54 @@ export function CrasApp({
               );
             })}
           </nav>
+
+          {/* Labels Section */}
+          <div className="space-y-2 pt-2 border-t border-border/60">
+            <div className="flex items-center justify-between px-3">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Labels
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsLabelManagerOpen(true)}
+                aria-label="Add or manage labels"
+                title="Manage labels"
+                className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <div className="space-y-0.5 max-h-40 overflow-y-auto px-1">
+              {labels.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setIsLabelManagerOpen(true)}
+                  className="w-full text-left px-2 py-1.5 rounded-md text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors flex items-center space-x-2 cursor-pointer"
+                >
+                  <Tag className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span>Manage labels...</span>
+                </button>
+              ) : (
+                labels.map((label) => (
+                  <button
+                    key={label.id}
+                    type="button"
+                    onClick={() => setIsLabelManagerOpen(true)}
+                    className="w-full text-left px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors flex items-center justify-between cursor-pointer"
+                  >
+                    <div className="flex items-center space-x-2 truncate">
+                      <span
+                        className="h-2 w-2 rounded-full shrink-0"
+                        style={{ backgroundColor: label.color }}
+                      />
+                      <span className="truncate">{label.name}</span>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Operator Profile & Sign Out */}
@@ -297,6 +402,7 @@ export function CrasApp({
         {activeView === "inbox" ? (
           <InboxView
             tasks={inboxTasks}
+            labels={labels}
             onCreateTask={handleCreateTask}
             onCompleteTask={handleCompleteTask}
             onSelectTask={handleSelectTask}
@@ -305,6 +411,7 @@ export function CrasApp({
         ) : activeView === "completed" ? (
           <CompletedView
             tasks={completedTasks}
+            labels={labels}
             onUncompleteTask={handleUncompleteTask}
             onSelectTask={handleSelectTask}
             isLoading={isTasksLoading}
@@ -339,10 +446,21 @@ export function CrasApp({
       {/* Task Detail Modal */}
       <TaskDetailModal
         task={selectedTask}
+        availableLabels={labels}
         isOpen={isDetailModalOpen}
         onClose={handleCloseDetailModal}
         onSave={handleUpdateTask}
         onToggleComplete={handleToggleCompleteInModal}
+      />
+
+      {/* Label Manager Modal */}
+      <LabelManagerModal
+        isOpen={isLabelManagerOpen}
+        labels={labels}
+        onClose={() => setIsLabelManagerOpen(false)}
+        onCreateLabel={handleCreateLabel}
+        onUpdateLabel={handleUpdateLabel}
+        onDeleteLabel={handleDeleteLabel}
       />
     </div>
   );

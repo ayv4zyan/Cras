@@ -75,6 +75,34 @@ export const CommentSchema = Schema.Struct({
 
 export type Comment = Schema.Schema.Type<typeof CommentSchema>;
 
+export const LabelSchema = Schema.Struct({
+  id: Schema.UUID,
+  name: Schema.NonEmptyTrimmedString,
+  color: Schema.NonEmptyTrimmedString,
+  createdAt: Schema.optional(IsoDateTimeString),
+  updatedAt: Schema.optional(IsoDateTimeString),
+});
+
+export type Label = Schema.Schema.Type<typeof LabelSchema>;
+
+export interface LabelColorOption {
+  readonly name: string;
+  readonly value: string;
+}
+
+export const LABEL_COLORS: readonly LabelColorOption[] = [
+  { name: "Red", value: "#ef4444" },
+  { name: "Orange", value: "#f97316" },
+  { name: "Amber", value: "#f59e0b" },
+  { name: "Green", value: "#10b981" },
+  { name: "Teal", value: "#14b8a6" },
+  { name: "Blue", value: "#3b82f6" },
+  { name: "Indigo", value: "#6366f1" },
+  { name: "Purple", value: "#a855f7" },
+  { name: "Pink", value: "#ec4899" },
+  { name: "Slate", value: "#64748b" },
+];
+
 export const parseTask = Schema.decodeUnknownSync(TaskSchema, {
   onExcessProperty: "error",
 });
@@ -82,3 +110,8 @@ export const parseTask = Schema.decodeUnknownSync(TaskSchema, {
 export const parseComment = Schema.decodeUnknownSync(CommentSchema, {
   onExcessProperty: "error",
 });
+
+export const parseLabel = Schema.decodeUnknownSync(LabelSchema, {
+  onExcessProperty: "error",
+});
+

@@ -12,7 +12,7 @@ import { getPublicSupabaseConfig } from "../config/supabase";
 import type { SupabaseClient, Session, User } from "@supabase/supabase-js";
 import type { Task, Plan } from "../contracts/task";
 
-describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39 & #41)", () => {
+describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, & #43)", () => {
   // In-memory simulated Postgres database for black-box testing
   interface DbRow {
     id: string;
@@ -28,7 +28,24 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39 & #41)
     version: number;
   }
 
+  interface DbLabelRow {
+    id: string;
+    operator_id: string;
+    name: string;
+    color: string;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface DbTaskLabelRow {
+    task_id: string;
+    label_id: string;
+    operator_id: string;
+  }
+
   let dbTasks: DbRow[];
+  let dbLabels: DbLabelRow[];
+  let dbTaskLabels: DbTaskLabelRow[];
 
   function createMockSupabaseForOperator(
     currentUser: User | null,
@@ -62,6 +79,180 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39 & #41)
           .mockResolvedValue({ data: { provider: "google" }, error: null }),
         signOut: vi.fn().mockResolvedValue({ error: null }),
       },
+      from: (tableName: string) => {
+        if (tableName !== "labels")
+          throw new Error(`Unknown public table: ${tableName}`);
+
+        return {
+          select: vi.fn().mockImplementation(() => {
+            return {
+              order: vi.fn().mockImplementation(async () => {
+                if (!currentUser) {
+                  return {
+                    data: null,
+                    error: { message: "Unauthorized", code: "42501" },
+                  };
+                }
+                const userLabels = dbLabels.filter(
+                  (l) => l.operator_id === currentUser.id,
+                );
+                return { data: [...userLabels], error: null };
+              }),
+            };
+          }),
+          insert: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            return {
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockImplementation(async () => {
+                  if (!currentUser) {
+                    return {
+                      data: null,
+                      error: { message: "Unauthorized", code: "42501" },
+                    };
+                  }
+                  const name = (payload.name as string).trim();
+                  const color = (payload.color as string).trim();
+                  if (!name) {
+                    return {
+                      data: null,
+                      error: {
+                        message: "Label name cannot be empty",
+                        code: "23514",
+                      },
+                    };
+                  }
+                  // Check unique constraint: (name, operator_id)
+                  const exists = dbLabels.some(
+                    (l) =>
+                      l.operator_id === currentUser.id &&
+                      l.name.toLowerCase() === name.toLowerCase(),
+                  );
+                  if (exists) {
+                    return {
+                      data: null,
+                      error: {
+                        message:
+                          'duplicate key value violates unique constraint "uq_labels_name_operator"',
+                        code: "23505",
+                      },
+                    };
+                  }
+                  const now = new Date().toISOString();
+                  const newLabel: DbLabelRow = {
+                    id: (payload.id as string) || crypto.randomUUID(),
+                    operator_id: currentUser.id,
+                    name,
+                    color,
+                    created_at: now,
+                    updated_at: now,
+                  };
+                  dbLabels.push(newLabel);
+                  return { data: newLabel, error: null };
+                }),
+              }),
+            };
+          }),
+          update: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+            return {
+              eq: vi.fn().mockImplementation((col: string, val: string) => {
+                const runUpdate = async () => {
+                  if (!currentUser) {
+                    return {
+                      data: null,
+                      error: { message: "Unauthorized", code: "42501" },
+                    };
+                  }
+                  const index = dbLabels.findIndex(
+                    (l) => l.id === val && l.operator_id === currentUser.id,
+                  );
+                  if (index === -1) {
+                    return {
+                      data: null,
+                      error: {
+                        message: "Label not found or unauthorized",
+                        code: "P0002",
+                      },
+                    };
+                  }
+                  const existing = dbLabels[index];
+                  const newName =
+                    payload.name !== undefined
+                      ? (payload.name as string).trim()
+                      : existing.name;
+                  const newColor =
+                    payload.color !== undefined
+                      ? (payload.color as string).trim()
+                      : existing.color;
+
+                  // Check unique constraint on rename
+                  if (newName.toLowerCase() !== existing.name.toLowerCase()) {
+                    const duplicate = dbLabels.some(
+                      (l) =>
+                        l.id !== val &&
+                        l.operator_id === currentUser.id &&
+                        l.name.toLowerCase() === newName.toLowerCase(),
+                    );
+                    if (duplicate) {
+                      return {
+                        data: null,
+                        error: {
+                          message:
+                            'duplicate key value violates unique constraint "uq_labels_name_operator"',
+                          code: "23505",
+                        },
+                      };
+                    }
+                  }
+
+                  const updated: DbLabelRow = {
+                    ...existing,
+                    name: newName,
+                    color: newColor,
+                    updated_at: new Date().toISOString(),
+                  };
+                  dbLabels[index] = updated;
+                  return { data: updated, error: null };
+                };
+
+                return {
+                  then: (resolve: (v: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+                    runUpdate().then(resolve, reject),
+                  select: vi.fn().mockReturnValue({
+                    single: vi.fn().mockImplementation(runUpdate),
+                  }),
+                };
+              }),
+            };
+          }),
+          delete: vi.fn().mockImplementation(() => {
+            return {
+              eq: vi.fn().mockImplementation((col: string, val: string) => {
+                const runDelete = async () => {
+                  if (!currentUser) {
+                    return {
+                      data: null,
+                      error: { message: "Unauthorized", code: "42501" },
+                    };
+                  }
+                  dbLabels = dbLabels.filter(
+                    (l) => !(l.id === val && l.operator_id === currentUser.id),
+                  );
+                  // Cascade delete from task_labels
+                  dbTaskLabels = dbTaskLabels.filter(
+                    (tl) =>
+                      !(tl.label_id === val && tl.operator_id === currentUser.id),
+                  );
+                  return { data: null, error: null };
+                };
+                return {
+                  then: (resolve: (v: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+                    runDelete().then(resolve, reject),
+                };
+              }),
+            };
+          }),
+        };
+      },
       schema: (schemaName: string) => {
         if (schemaName !== "api")
           throw new Error(`Access denied to non-api schema: ${schemaName}`);
@@ -81,19 +272,28 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39 & #41)
                 const userTasks = dbTasks.filter(
                   (t) => t.operator_id === currentUser.id,
                 );
-                const mapped: Task[] = userTasks.map((t) => ({
-                  id: t.id,
-                  title: t.title,
-                  description: t.description,
-                  priority: t.priority as 1 | 2 | 3 | 4,
-                  plan: t.plan,
-                  labels: [],
-                  parentId: t.parent_id,
-                  completedAt: t.completed_at,
-                  createdAt: t.created_at,
-                  updatedAt: t.updated_at,
-                  version: t.version,
-                }));
+                const mapped: Task[] = userTasks.map((t) => {
+                  const taskLabelIds = dbTaskLabels
+                    .filter(
+                      (tl) =>
+                        tl.task_id === t.id &&
+                        tl.operator_id === currentUser.id,
+                    )
+                    .map((tl) => tl.label_id);
+                  return {
+                    id: t.id,
+                    title: t.title,
+                    description: t.description,
+                    priority: t.priority as 1 | 2 | 3 | 4,
+                    plan: t.plan,
+                    labels: taskLabelIds,
+                    parentId: t.parent_id,
+                    completedAt: t.completed_at,
+                    createdAt: t.created_at,
+                    updatedAt: t.updated_at,
+                    version: t.version,
+                  };
+                });
                 return { data: mapped, error: null };
               }),
             };
@@ -140,13 +340,36 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39 & #41)
 
               dbTasks.push(newRow);
 
+              const labelIds = (params.labels as string[] | undefined) ?? [];
+              // Enforce foreign key constraints and operator isolation on labels
+              for (const labelId of labelIds) {
+                const labelExistsForOp = dbLabels.some(
+                  (l) => l.id === labelId && l.operator_id === currentUser.id,
+                );
+                if (!labelExistsForOp) {
+                  return Promise.resolve({
+                    data: null,
+                    error: {
+                      message:
+                        'insert or update on table "task_labels" violates foreign key constraint "fk_task_labels_label"',
+                      code: "23503",
+                    },
+                  });
+                }
+                dbTaskLabels.push({
+                  task_id: newId,
+                  label_id: labelId,
+                  operator_id: currentUser.id,
+                });
+              }
+
               const resultTask: Task = {
                 id: newRow.id,
                 title: newRow.title,
                 description: newRow.description,
                 priority: newRow.priority as 1 | 2 | 3 | 4,
                 plan: newRow.plan,
-                labels: [],
+                labels: labelIds,
                 parentId: newRow.parent_id,
                 completedAt: newRow.completed_at,
                 createdAt: newRow.created_at,
@@ -240,13 +463,57 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39 & #41)
 
               dbTasks[taskIndex] = updatedRow;
 
+              if (params.labels !== undefined && params.labels !== null) {
+                const labelIds = params.labels as string[];
+                // Verify all labels belong to current operator
+                for (const labelId of labelIds) {
+                  const labelExistsForOp = dbLabels.some(
+                    (l) => l.id === labelId && l.operator_id === currentUser.id,
+                  );
+                  if (!labelExistsForOp) {
+                    return Promise.resolve({
+                      data: null,
+                      error: {
+                        message:
+                          'insert or update on table "task_labels" violates foreign key constraint "fk_task_labels_label"',
+                        code: "23503",
+                      },
+                    });
+                  }
+                }
+                // Delete old associations
+                dbTaskLabels = dbTaskLabels.filter(
+                  (tl) =>
+                    !(
+                      tl.task_id === taskId &&
+                      tl.operator_id === currentUser.id
+                    ),
+                );
+                // Insert new associations
+                for (const labelId of labelIds) {
+                  dbTaskLabels.push({
+                    task_id: taskId,
+                    label_id: labelId,
+                    operator_id: currentUser.id,
+                  });
+                }
+              }
+
+              const currentLabelIds = dbTaskLabels
+                .filter(
+                  (tl) =>
+                    tl.task_id === taskId &&
+                    tl.operator_id === currentUser.id,
+                )
+                .map((tl) => tl.label_id);
+
               const resultTask: Task = {
                 id: updatedRow.id,
                 title: updatedRow.title,
                 description: updatedRow.description,
                 priority: updatedRow.priority as 1 | 2 | 3 | 4,
                 plan: updatedRow.plan,
-                labels: [],
+                labels: currentLabelIds,
                 parentId: updatedRow.parent_id,
                 completedAt: updatedRow.completed_at,
                 createdAt: updatedRow.created_at,
@@ -286,13 +553,21 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39 & #41)
 
               dbTasks[taskIndex] = updatedRow;
 
+              const currentLabelIds = dbTaskLabels
+                .filter(
+                  (tl) =>
+                    tl.task_id === taskId &&
+                    tl.operator_id === currentUser.id,
+                )
+                .map((tl) => tl.label_id);
+
               const resultTask: Task = {
                 id: updatedRow.id,
                 title: updatedRow.title,
                 description: updatedRow.description,
                 priority: updatedRow.priority as 1 | 2 | 3 | 4,
                 plan: updatedRow.plan,
-                labels: [],
+                labels: currentLabelIds,
                 parentId: updatedRow.parent_id,
                 completedAt: updatedRow.completed_at,
                 createdAt: updatedRow.created_at,
@@ -330,13 +605,21 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39 & #41)
 
               dbTasks[taskIndex] = updatedRow;
 
+              const currentLabelIds = dbTaskLabels
+                .filter(
+                  (tl) =>
+                    tl.task_id === taskId &&
+                    tl.operator_id === currentUser.id,
+                )
+                .map((tl) => tl.label_id);
+
               const resultTask: Task = {
                 id: updatedRow.id,
                 title: updatedRow.title,
                 description: updatedRow.description,
                 priority: updatedRow.priority as 1 | 2 | 3 | 4,
                 plan: updatedRow.plan,
-                labels: [],
+                labels: currentLabelIds,
                 parentId: updatedRow.parent_id,
                 completedAt: updatedRow.completed_at,
                 createdAt: updatedRow.created_at,
@@ -356,6 +639,8 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39 & #41)
 
   beforeEach(() => {
     dbTasks = [];
+    dbLabels = [];
+    dbTaskLabels = [];
   });
 
   it("proves Criterion 4: public configuration contains only project URL and publishable key", () => {
@@ -790,5 +1075,374 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39 & #41)
       title: "Forged Title",
     });
     expect(rpcResult.error?.message).toBe("Unauthorized");
+  });
+
+  it("proves Issue #43 Criterion 1: Operator can create, rename, recolor, and remove a Label", async () => {
+    const op1: User = { id: "op-1", email: "alice@example.com" } as User;
+    const client = createMockSupabaseForOperator(op1);
+
+    render(
+      <AuthProvider client={client}>
+        <CrasApp client={client} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("alice@example.com")).toBeInTheDocument();
+    });
+
+    // 1. Open Label Manager Modal from sidebar
+    const manageLabelsBtn = screen.getByRole("button", {
+      name: /add or manage labels/i,
+    });
+    fireEvent.click(manageLabelsBtn);
+
+    const modal = screen.getByRole("dialog", { name: /manage labels/i });
+    expect(modal).toBeInTheDocument();
+
+    // 2. Create Label "Urgent" with red color
+    const newNameInput = within(modal).getByPlaceholderText(/new label name/i);
+    const addLabelBtn = within(modal).getByRole("button", {
+      name: /add label/i,
+    });
+
+    fireEvent.change(newNameInput, { target: { value: "Urgent" } });
+    fireEvent.click(addLabelBtn);
+
+    await waitFor(() => {
+      expect(within(modal).getByText("Urgent")).toBeInTheDocument();
+    });
+
+    const urgentLabel = dbLabels.find(
+      (l) => l.name === "Urgent" && l.operator_id === "op-1",
+    );
+    expect(urgentLabel).toBeDefined();
+    const urgentId = urgentLabel!.id;
+
+    // 3. Rename "Urgent" to "Critical" and recolor to orange
+    const editBtn = within(modal).getByRole("button", {
+      name: /edit label urgent/i,
+    });
+    fireEvent.click(editBtn);
+
+    const editInput = within(modal).getByDisplayValue("Urgent");
+    const orangeColorBtns = within(modal).getAllByRole("button", {
+      name: /select orange color/i,
+    });
+    const orangeColorBtn = orangeColorBtns[orangeColorBtns.length - 1];
+    const saveLabelBtn = within(modal).getByRole("button", {
+      name: /save label/i,
+    });
+
+    fireEvent.change(editInput, { target: { value: "Critical" } });
+    fireEvent.click(orangeColorBtn);
+    fireEvent.click(saveLabelBtn);
+
+    await waitFor(() => {
+      expect(within(modal).getByText("Critical")).toBeInTheDocument();
+      expect(within(modal).queryByText("Urgent")).not.toBeInTheDocument();
+    });
+
+    // Identity preserved
+    expect(dbLabels[0].id).toBe(urgentId);
+    expect(dbLabels[0].name).toBe("Critical");
+    expect(dbLabels[0].color).toBe("#f97316");
+
+    // 4. Create another label "Temporary" and remove it
+    fireEvent.change(newNameInput, { target: { value: "Temporary" } });
+    fireEvent.click(addLabelBtn);
+
+    await waitFor(() => {
+      expect(within(modal).getByText("Temporary")).toBeInTheDocument();
+    });
+
+    const deleteTempBtn = within(modal).getByRole("button", {
+      name: /delete label temporary/i,
+    });
+    fireEvent.click(deleteTempBtn);
+
+    await waitFor(() => {
+      expect(
+        within(modal).queryByText("Temporary"),
+      ).not.toBeInTheDocument();
+    });
+
+    expect(dbLabels.some((l) => l.name === "Temporary")).toBe(false);
+
+    // Close modal
+    fireEvent.click(within(modal).getByRole("button", { name: /done/i }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      // Sidebar should display "Critical"
+      expect(screen.getByText("Critical")).toBeInTheDocument();
+    });
+  });
+
+  it("proves Issue #43 Criteria 2 & 6: Label names are unique within one Operator task space (duplicate-name rejection in UI & DB)", async () => {
+    const op1: User = { id: "op-1", email: "alice@example.com" } as User;
+    const client = createMockSupabaseForOperator(op1);
+
+    // Pre-populate label "Work"
+    dbLabels.push({
+      id: "11111111-1111-4111-a111-111111111111",
+      operator_id: "op-1",
+      name: "Work",
+      color: "#3b82f6",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    render(
+      <AuthProvider client={client}>
+        <CrasApp client={client} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Work")).toBeInTheDocument();
+    });
+
+    // Open Label Manager
+    fireEvent.click(screen.getByRole("button", { name: /add or manage labels/i }));
+    const modal = screen.getByRole("dialog", { name: /manage labels/i });
+
+    // 1. Attempt to create duplicate label "Work"
+    const nameInput = within(modal).getByPlaceholderText(/new label name/i);
+    const addBtn = within(modal).getByRole("button", { name: /add label/i });
+
+    fireEvent.change(nameInput, { target: { value: "Work" } });
+    fireEvent.click(addBtn);
+
+    await waitFor(() => {
+      expect(
+        within(modal).getByText(/a label with this name already exists/i),
+      ).toBeInTheDocument();
+    });
+
+    // 2. Create label "Personal"
+    fireEvent.change(nameInput, { target: { value: "Personal" } });
+    fireEvent.click(addBtn);
+
+    await waitFor(() => {
+      expect(within(modal).getByText("Personal")).toBeInTheDocument();
+    });
+
+    // 3. Attempt to rename "Personal" to "Work" -> duplicate rejected
+    const editPersonalBtn = within(modal).getByRole("button", {
+      name: /edit label personal/i,
+    });
+    fireEvent.click(editPersonalBtn);
+
+    const editInput = within(modal).getByDisplayValue("Personal");
+    const saveBtn = within(modal).getByRole("button", { name: /save label/i });
+
+    fireEvent.change(editInput, { target: { value: "Work" } });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(
+        within(modal).getByText(/a label with this name already exists/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("proves Issue #43 Criteria 3 & 4: Renaming a Label preserves its identity and existing Task associations; a Task can have multiple Labels", async () => {
+    const op1: User = { id: "op-1", email: "alice@example.com" } as User;
+    const client = createMockSupabaseForOperator(op1);
+
+    // Pre-populate labels
+    const backendLabelId = "22222222-2222-4222-a222-222222222222";
+    const urgentLabelId = "33333333-3333-4333-a333-333333333333";
+    const frontendLabelId = "44444444-4444-4444-a444-444444444444";
+
+    dbLabels.push(
+      {
+        id: backendLabelId,
+        operator_id: "op-1",
+        name: "Backend",
+        color: "#3b82f6",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: urgentLabelId,
+        operator_id: "op-1",
+        name: "Urgent",
+        color: "#ef4444",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: frontendLabelId,
+        operator_id: "op-1",
+        name: "Frontend",
+        color: "#10b981",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    );
+
+    render(
+      <AuthProvider client={client}>
+        <CrasApp client={client} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Backend")).toBeInTheDocument();
+      expect(screen.getByText("Urgent")).toBeInTheDocument();
+    });
+
+    // 1. Create a task with multiple labels ("Backend" and "Urgent")
+    const expandBtn = screen.getByRole("button", { name: /add details/i });
+    fireEvent.click(expandBtn);
+
+    const titleInput = screen.getByPlaceholderText(/create a task in inbox/i);
+    const backendCheckbox = screen.getByLabelText("Backend");
+    const urgentCheckbox = screen.getByLabelText("Urgent");
+    const createBtn = screen.getByRole("button", { name: /create task/i });
+
+    fireEvent.change(titleInput, { target: { value: "Optimize SQL index" } });
+    fireEvent.click(backendCheckbox);
+    fireEvent.click(urgentCheckbox);
+    fireEvent.click(createBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Optimize SQL index")).toBeInTheDocument();
+    });
+
+    const taskItem = screen.getByTestId(`task-item-${dbTasks[0].id}`);
+    expect(within(taskItem).getByText("Backend")).toBeInTheDocument();
+    expect(within(taskItem).getByText("Urgent")).toBeInTheDocument();
+
+    // 2. Open Label Manager and Rename "Backend" to "Infrastructure"
+    fireEvent.click(screen.getByRole("button", { name: /add or manage labels/i }));
+    const labelModal = screen.getByRole("dialog", { name: /manage labels/i });
+
+    const editBackendBtn = within(labelModal).getByRole("button", {
+      name: /edit label backend/i,
+    });
+    fireEvent.click(editBackendBtn);
+
+    const editInput = within(labelModal).getByDisplayValue("Backend");
+    const saveLabelBtn = within(labelModal).getByRole("button", {
+      name: /save label/i,
+    });
+
+    fireEvent.change(editInput, { target: { value: "Infrastructure" } });
+    fireEvent.click(saveLabelBtn);
+
+    await waitFor(() => {
+      expect(
+        within(labelModal).getByText("Infrastructure"),
+      ).toBeInTheDocument();
+    });
+
+    // Close label manager modal
+    fireEvent.click(within(labelModal).getByRole("button", { name: /done/i }));
+
+    // 3. Verify task association is preserved with the renamed label!
+    await waitFor(() => {
+      expect(within(taskItem).getByText("Infrastructure")).toBeInTheDocument();
+      expect(within(taskItem).getByText("Urgent")).toBeInTheDocument();
+      expect(within(taskItem).queryByText("Backend")).not.toBeInTheDocument();
+    });
+
+    // 4. Open Task Detail Modal and attach a 3rd label ("Frontend")
+    fireEvent.click(taskItem);
+    const detailModal = screen.getByRole("dialog", { name: /task details/i });
+
+    const frontendCheckboxInModal = within(detailModal).getByLabelText("Frontend");
+    expect(frontendCheckboxInModal).not.toBeChecked();
+    fireEvent.click(frontendCheckboxInModal);
+
+    const saveDetailBtn = within(detailModal).getByRole("button", {
+      name: /save changes/i,
+    });
+    fireEvent.click(saveDetailBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(within(taskItem).getByText("Frontend")).toBeInTheDocument();
+      expect(within(taskItem).getByText("Infrastructure")).toBeInTheDocument();
+      expect(within(taskItem).getByText("Urgent")).toBeInTheDocument();
+    });
+
+    // Verify persisted relationship in mock DB
+    const taskLabelsInDb = dbTaskLabels.filter(
+      (tl) => tl.task_id === dbTasks[0].id && tl.operator_id === "op-1",
+    );
+    expect(taskLabelsInDb).toHaveLength(3);
+    expect(taskLabelsInDb.map((tl) => tl.label_id)).toEqual(
+      expect.arrayContaining([backendLabelId, urgentLabelId, frontendLabelId]),
+    );
+  });
+
+  it("proves Issue #43 Criterion 5: Cross-Operator Label and Task–Label relationships are strictly rejected", async () => {
+    // Populate Operator 1 data in database
+    const op1LabelId = "11111111-1111-4111-a111-111111111111";
+    dbLabels.push({
+      id: op1LabelId,
+      operator_id: "op-1",
+      name: "Secret Alice Label",
+      color: "#ef4444",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    // 1. Operator 2 logs in
+    const op2: User = { id: "op-2", email: "bob@example.com" } as User;
+    const clientOp2 = createMockSupabaseForOperator(op2);
+
+    render(
+      <AuthProvider client={clientOp2}>
+        <CrasApp client={clientOp2} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("bob@example.com")).toBeInTheDocument();
+    });
+
+    // Bob cannot see Alice's label in his sidebar or task space
+    expect(screen.queryByText("Secret Alice Label")).not.toBeInTheDocument();
+
+    // 2. Bob tries to create a task referencing Alice's label ID -> Rejected
+    const forgedCreatePromise = clientOp2.schema("api").rpc("create_task", {
+      title: "Bob Task with Alice Label",
+      labels: [op1LabelId],
+    });
+    const forgedCreateResult = await forgedCreatePromise;
+    expect(forgedCreateResult.error?.message).toContain("foreign key constraint");
+
+    // 3. Bob creates his own task, then tries to update it with Alice's label ID -> Rejected
+    const bobTaskPromise = clientOp2.schema("api").rpc("create_task", {
+      title: "Bob Legitimate Task",
+      labels: [],
+    });
+    const bobTaskResult = await bobTaskPromise;
+    expect(bobTaskResult.data).toBeDefined();
+
+    const forgedUpdatePromise = clientOp2.schema("api").rpc("update_task", {
+      id: bobTaskResult.data.id,
+      labels: [op1LabelId],
+    });
+    const forgedUpdateResult = await forgedUpdatePromise;
+    expect(forgedUpdateResult.error?.message).toContain("foreign key constraint");
+
+    // 4. Bob tries to update or delete Alice's label directly -> Rejected / not found
+    const forgedLabelUpdate = await clientOp2
+      .from("labels")
+      .update({ name: "Hacked Name" })
+      .eq("id", op1LabelId);
+    expect(forgedLabelUpdate.error?.message).toContain("unauthorized");
+
+    // 5. Unauthenticated caller is blocked from reading or inserting labels
+    const unauthedClient = createMockSupabaseForOperator(null);
+    const unauthedSelect = await unauthedClient
+      .from("labels")
+      .select("*")
+      .order("created_at");
+    expect(unauthedSelect.error?.message).toBe("Unauthorized");
   });
 });

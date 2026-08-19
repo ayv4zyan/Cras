@@ -194,6 +194,43 @@ describe("Task Domain Service Seam", () => {
       expect(task.priority).toBe(2);
     });
 
+    it("passes labels array to create_task RPC", async () => {
+      const rawCreated = {
+        id: "550e8400-e29b-41d4-a716-446655440010",
+        title: "Triage bug",
+        description: null,
+        priority: 1,
+        plan: null,
+        labels: ["22222222-2222-2222-2222-222222222222"],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-18T20:05:00.000Z",
+        updatedAt: "2026-08-18T20:05:00.000Z",
+        version: 1,
+      };
+
+      const mockRpc = vi
+        .fn()
+        .mockResolvedValue({ data: rawCreated, error: null });
+      const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
+      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
+
+      const task = await createTask(mockClient, {
+        title: "Triage bug",
+        labels: ["22222222-2222-2222-2222-222222222222"],
+      });
+
+      expect(mockRpc).toHaveBeenCalledWith("create_task", {
+        title: "Triage bug",
+        description: null,
+        priority: 4,
+        plan: null,
+        parent_id: null,
+        labels: ["22222222-2222-2222-2222-222222222222"],
+      });
+      expect(task.labels).toEqual(["22222222-2222-2222-2222-222222222222"]);
+    });
+
     it("rejects empty or whitespace-only titles", async () => {
       const mockRpc = vi.fn();
       const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
@@ -215,7 +252,7 @@ describe("Task Domain Service Seam", () => {
         description: "Updated description",
         priority: 1,
         plan: null,
-        labels: [],
+        labels: ["22222222-2222-2222-2222-222222222222"],
         parentId: null,
         completedAt: null,
         createdAt: "2026-08-18T20:00:00.000Z",
@@ -235,6 +272,7 @@ describe("Task Domain Service Seam", () => {
         description: "Updated description",
         priority: 1,
         expectedVersion: 1,
+        labels: ["22222222-2222-2222-2222-222222222222"],
       });
 
       expect(mockSchema).toHaveBeenCalledWith("api");
@@ -246,9 +284,11 @@ describe("Task Domain Service Seam", () => {
         plan: null,
         parent_id: null,
         expected_version: 1,
+        labels: ["22222222-2222-2222-2222-222222222222"],
       });
       expect(task.title).toBe("Updated Title");
       expect(task.priority).toBe(1);
+      expect(task.labels).toEqual(["22222222-2222-2222-2222-222222222222"]);
       expect(task.version).toBe(2);
     });
 

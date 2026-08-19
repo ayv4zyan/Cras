@@ -76,4 +76,40 @@ describe("InboxView Component", () => {
     expect(handleCreate).toHaveBeenCalledWith("New task item");
     expect((input as HTMLInputElement).value).toBe("");
   });
+
+  it("calls onCompleteTask when task completion circle button is clicked", () => {
+    const handleComplete = vi.fn();
+    render(
+      <InboxView
+        tasks={[task1]}
+        onCreateTask={vi.fn()}
+        onCompleteTask={handleComplete}
+        isLoading={false}
+      />,
+    );
+
+    const completeBtn = screen.getByRole("button", {
+      name: /complete task buy groceries/i,
+    });
+    fireEvent.click(completeBtn);
+
+    expect(handleComplete).toHaveBeenCalledWith(task1);
+  });
+
+  it("calls onSelectTask when task item is clicked", () => {
+    const handleSelect = vi.fn();
+    render(
+      <InboxView
+        tasks={[task1]}
+        onCreateTask={vi.fn()}
+        onSelectTask={handleSelect}
+        isLoading={false}
+      />,
+    );
+
+    const taskItem = screen.getByTestId(`task-item-${task1.id}`);
+    fireEvent.click(taskItem);
+
+    expect(handleSelect).toHaveBeenCalledWith(task1);
+  });
 });

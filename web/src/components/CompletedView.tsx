@@ -1,35 +1,27 @@
 import React from "react";
-import { Layers, Circle } from "lucide-react";
-import { type Priority, type Task } from "../contracts/task";
-import type { CreateTaskParams } from "../services/taskService";
-import { CreateTaskInput } from "./CreateTaskInput";
+import { CheckCircle2, CheckSquare } from "lucide-react";
+import type { Task } from "../contracts/task";
 
-export interface InboxViewProps {
+export interface CompletedViewProps {
   readonly tasks: readonly Task[];
-  readonly onCreateTask: (
-    params: CreateTaskParams | string,
-    description?: string | null,
-    priority?: Priority,
-  ) => Promise<void> | void;
-  readonly onCompleteTask?: (task: Task) => Promise<void> | void;
+  readonly onUncompleteTask: (task: Task) => Promise<void> | void;
   readonly onSelectTask?: (task: Task) => void;
   readonly isLoading?: boolean;
 }
 
-export function InboxView({
+export function CompletedView({
   tasks,
-  onCreateTask,
-  onCompleteTask,
+  onUncompleteTask,
   onSelectTask,
   isLoading = false,
-}: InboxViewProps): React.JSX.Element {
+}: CompletedViewProps): React.JSX.Element {
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto">
       {/* Header */}
       <header className="h-14 border-b border-border/70 flex items-center justify-between px-8 bg-background/50 backdrop-blur-xs shrink-0">
         <div className="flex items-center space-x-3">
           <h2 className="text-lg font-semibold tracking-tight text-foreground">
-            Inbox
+            Completed
           </h2>
           <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-medium bg-secondary text-secondary-foreground">
             {tasks.length}
@@ -37,31 +29,24 @@ export function InboxView({
         </div>
       </header>
 
-      {/* Main Inbox Body */}
+      {/* Main Content */}
       <div className="flex-1 p-8 max-w-3xl w-full mx-auto space-y-6">
-        {/* Quick Task Creation */}
-        <div className="space-y-1">
-          <CreateTaskInput onCreateTask={onCreateTask} />
-        </div>
-
-        {/* Task List / Empty State */}
         {isLoading && tasks.length === 0 ? (
           <div className="flex items-center justify-center py-16 text-muted-foreground text-sm">
-            Loading tasks...
+            Loading completed tasks...
           </div>
         ) : tasks.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center space-y-4">
             <div className="w-12 h-12 rounded-full bg-secondary/80 flex items-center justify-center text-muted-foreground">
-              <Layers className="h-6 w-6" />
+              <CheckSquare className="h-6 w-6" />
             </div>
 
             <div className="space-y-1.5 max-w-sm">
               <h3 className="text-base font-medium tracking-tight text-foreground">
-                No tasks in Inbox
+                No completed tasks yet
               </h3>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Your task space is clear. Capture a new task or use Voice
-                capture to propose drafts.
+                Completed tasks will be retained here and listed newest-first.
               </p>
             </div>
           </div>
@@ -80,20 +65,20 @@ export function InboxView({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onCompleteTask?.(task);
+                      onUncompleteTask(task);
                     }}
-                    aria-label={`Complete task ${task.title}`}
-                    title="Complete task"
-                    className="text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors shrink-0 cursor-pointer"
+                    aria-label={`Uncomplete task ${task.title}`}
+                    title="Uncomplete task"
+                    className="text-emerald-600 dark:text-emerald-400 hover:text-muted-foreground transition-colors shrink-0 cursor-pointer"
                   >
-                    <Circle className="h-4 w-4" />
+                    <CheckCircle2 className="h-4 w-4" />
                   </button>
                   <div className="min-w-0">
-                    <span className="text-sm font-medium text-foreground truncate block">
+                    <span className="text-sm font-medium text-muted-foreground line-through truncate block">
                       {task.title}
                     </span>
                     {task.description && (
-                      <p className="text-xs text-muted-foreground truncate">
+                      <p className="text-xs text-muted-foreground/80 truncate">
                         {task.description}
                       </p>
                     )}
@@ -104,6 +89,11 @@ export function InboxView({
                   {task.priority < 4 && (
                     <span className="px-1.5 py-0.5 rounded-sm bg-secondary text-secondary-foreground font-medium text-[11px]">
                       P{task.priority}
+                    </span>
+                  )}
+                  {task.completedAt && (
+                    <span className="text-[11px] text-muted-foreground hidden sm:inline">
+                      {new Date(task.completedAt).toLocaleDateString()}
                     </span>
                   )}
                 </div>

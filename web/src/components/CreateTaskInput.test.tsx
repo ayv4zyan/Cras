@@ -60,4 +60,35 @@ describe("CreateTaskInput Component", () => {
 
     expect(handleCreate).not.toHaveBeenCalled();
   });
+
+  it("submits title, optional description, and priority level when expanded", async () => {
+    const handleCreate = vi.fn().mockResolvedValue(undefined);
+    render(<CreateTaskInput onCreateTask={handleCreate} />);
+
+    const expandBtn = screen.getByRole("button", { name: /add details/i });
+    fireEvent.click(expandBtn);
+
+    const titleInput = screen.getByPlaceholderText(/create a task in inbox/i);
+    const descInput = screen.getByPlaceholderText(/add description/i);
+    const prioritySelect = screen.getByLabelText(/priority/i);
+    const submitBtn = screen.getByRole("button", { name: /create task/i });
+
+    fireEvent.change(titleInput, { target: { value: "Detailed Task" } });
+    fireEvent.change(descInput, { target: { value: "Detailed Description" } });
+    fireEvent.change(prioritySelect, { target: { value: "1" } });
+    fireEvent.click(submitBtn);
+
+    expect(handleCreate).toHaveBeenCalledWith(
+      "Detailed Task",
+      "Detailed Description",
+      1,
+    );
+
+    await waitFor(() => {
+      expect((titleInput as HTMLInputElement).value).toBe("");
+      expect(
+        screen.queryByPlaceholderText(/add description/i),
+      ).not.toBeInTheDocument();
+    });
+  });
 });

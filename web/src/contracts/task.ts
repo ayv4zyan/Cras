@@ -32,6 +32,18 @@ export type Plan = Schema.Schema.Type<typeof PlanSchema>;
 export const PrioritySchema = Schema.Literal(1, 2, 3, 4);
 export type Priority = Schema.Schema.Type<typeof PrioritySchema>;
 
+export interface PriorityOption {
+  readonly value: Priority;
+  readonly label: string;
+}
+
+export const PRIORITY_OPTIONS: readonly PriorityOption[] = [
+  { value: 4, label: "Priority 4 (None)" },
+  { value: 3, label: "Priority 3 (Medium)" },
+  { value: 2, label: "Priority 2 (High)" },
+  { value: 1, label: "Priority 1 (Urgent)" },
+];
+
 export const LabelsSchema = Schema.Array(Schema.UUID).pipe(
   Schema.filter((arr) => new Set(arr).size === arr.length, {
     message: () => "labels must contain unique items",

@@ -12,12 +12,20 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { useAuth } from "./contexts/useAuth";
 import { SignInScreen } from "./components/SignInScreen";
 import { InboxView } from "./components/InboxView";
+import { CompletedView } from "./components/CompletedView";
+import { TaskDetailModal } from "./components/TaskDetailModal";
 import {
   fetchTasks,
   createTask,
+  updateTask,
+  completeTask,
+  uncompleteTask,
   filterInboxTasks,
+  filterCompletedTasks,
+  type CreateTaskParams,
+  type UpdateTaskParams,
 } from "./services/taskService";
-import type { Task } from "./contracts/task";
+import type { Priority, Task } from "./contracts/task";
 import { supabase } from "./config/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -46,6 +54,8 @@ export function CrasApp({
   } = useAuth();
   const [activeView, setActiveView] = useState<ViewMode>("inbox");
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -74,13 +84,74 @@ export function CrasApp({
     }
   }, [user, loadTasks]);
 
+  const applyTaskUpdate = useCallback((updated: Task) => {
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    setSelectedTask((prev) => (prev?.id === updated.id ? updated : prev));
+  }, []);
+
   const handleCreateTask = useCallback(
-    async (title: string) => {
+    async (
+      params: CreateTaskParams | string,
+      description?: string | null,
+      priority?: Priority,
+    ) => {
       setErrorMessage(null);
-      const newTask = await createTask(client, { title });
+      const createPayload: CreateTaskParams =
+        typeof params === "string"
+          ? { title: params, description, priority }
+          : params;
+      const newTask = await createTask(client, createPayload);
       setTasks((prev) => [newTask, ...prev]);
     },
     [client],
+  );
+
+  const handleUpdateTask = useCallback(
+    async (params: UpdateTaskParams) => {
+      setErrorMessage(null);
+      const updated = await updateTask(client, params);
+      applyTaskUpdate(updated);
+    },
+    [client, applyTaskUpdate],
+  );
+
+  const handleCompleteTask = useCallback(
+    async (task: Task) => {
+      setErrorMessage(null);
+      const completed = await completeTask(client, task.id);
+      applyTaskUpdate(completed);
+    },
+    [client, applyTaskUpdate],
+  );
+
+  const handleUncompleteTask = useCallback(
+    async (task: Task) => {
+      setErrorMessage(null);
+      const uncompleted = await uncompleteTask(client, task.id);
+      applyTaskUpdate(uncompleted);
+    },
+    [client, applyTaskUpdate],
+  );
+
+  const handleSelectTask = useCallback((task: Task) => {
+    setSelectedTask(task);
+    setIsDetailModalOpen(true);
+  }, []);
+
+  const handleCloseDetailModal = useCallback(() => {
+    setIsDetailModalOpen(false);
+    setSelectedTask(null);
+  }, []);
+
+  const handleToggleCompleteInModal = useCallback(
+    async (task: Task) => {
+      if (task.completedAt) {
+        await handleUncompleteTask(task);
+      } else {
+        await handleCompleteTask(task);
+      }
+    },
+    [handleCompleteTask, handleUncompleteTask],
   );
 
   if (isAuthLoading) {
@@ -104,6 +175,7 @@ export function CrasApp({
   }
 
   const inboxTasks = filterInboxTasks(tasks);
+  const completedTasks = filterCompletedTasks(tasks);
 
   const navItems: readonly NavItem[] = [
     {
@@ -130,6 +202,7 @@ export function CrasApp({
       label: "Completed",
       icon: CheckCircle2,
       iconClassName: "text-muted-foreground",
+      badge: completedTasks.length,
     },
   ];
 
@@ -225,6 +298,15 @@ export function CrasApp({
           <InboxView
             tasks={inboxTasks}
             onCreateTask={handleCreateTask}
+            onCompleteTask={handleCompleteTask}
+            onSelectTask={handleSelectTask}
+            isLoading={isTasksLoading}
+          />
+        ) : activeView === "completed" ? (
+          <CompletedView
+            tasks={completedTasks}
+            onUncompleteTask={handleUncompleteTask}
+            onSelectTask={handleSelectTask}
             isLoading={isTasksLoading}
           />
         ) : (
@@ -241,9 +323,8 @@ export function CrasApp({
               <div className="max-w-md w-full text-center space-y-4">
                 <div className="space-y-1.5">
                   <h3 className="text-base font-medium tracking-tight">
-                    {activeView === "today" && "No tasks scheduled for Today"}
+                    {activeView === "today" && "No tasks for Today"}
                     {activeView === "upcoming" && "No upcoming tasks"}
-                    {activeView === "completed" && "No completed tasks yet"}
                   </h3>
                   <p className="text-sm text-muted-foreground">
                     Your task space is clear.
@@ -254,6 +335,15 @@ export function CrasApp({
           </div>
         )}
       </main>
+
+      {/* Task Detail Modal */}
+      <TaskDetailModal
+        task={selectedTask}
+        isOpen={isDetailModalOpen}
+        onClose={handleCloseDetailModal}
+        onSave={handleUpdateTask}
+        onToggleComplete={handleToggleCompleteInModal}
+      />
     </div>
   );
 }

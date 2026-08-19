@@ -189,6 +189,49 @@ class TaskServiceTest {
     }
 
     @Test
+    fun `updateTask with labels sends labels array in RPC payload`() = runTest {
+        val updatedJson = """
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440011",
+                "title": "Labeled task",
+                "description": null,
+                "priority": 4,
+                "plan": null,
+                "labels": ["22222222-2222-2222-2222-222222222222"],
+                "parentId": null,
+                "completedAt": null,
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T00:10:00Z",
+                "version": 2
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(updatedJson)
+        )
+
+        val task = taskService.updateTask(
+            session = testSession,
+            params = UpdateTaskParams(
+                id = "550e8400-e29b-41d4-a716-446655440011",
+                labels = listOf("22222222-2222-2222-2222-222222222222")
+            )
+        )
+
+        assertNotNull(task)
+        assertEquals(1, task.labels.size)
+        assertEquals("22222222-2222-2222-2222-222222222222", task.labels[0])
+
+        val request = mockWebServer.takeRequest()
+        val body = request.body.readUtf8()
+        assertEquals("/rest/v1/rpc/update_task", request.path)
+        assertEquals(true, body.contains("\"labels\":[\"22222222-2222-2222-2222-222222222222\"]"))
+    }
+
+    @Test
     fun `updateTask rejects empty title or invalid priority before network call`() = runTest {
         assertThrows(IllegalArgumentException::class.java) {
             kotlinx.coroutines.runBlocking {

@@ -33,7 +33,8 @@ data class UpdateTaskParams(
     val priority: Int? = null,
     val plan: Plan? = null,
     val parentId: String? = null,
-    val expectedVersion: Int? = null
+    val expectedVersion: Int? = null,
+    val labels: List<String>? = null
 )
 
 interface TaskService {
@@ -144,6 +145,11 @@ class SupabaseTaskService(
             }
             if (params.expectedVersion != null) {
                 put("expected_version", params.expectedVersion)
+            }
+            if (params.labels != null) {
+                put("labels", buildJsonArray {
+                    params.labels.forEach { add(JsonPrimitive(it)) }
+                })
             }
         }
 

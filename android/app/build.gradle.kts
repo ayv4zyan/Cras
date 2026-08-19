@@ -1,9 +1,29 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+
+val rootEnvFile = rootDir.parentFile.resolve(".env.local").takeIf { it.exists() }
+    ?: rootDir.parentFile.resolve(".env").takeIf { it.exists() }
+
+val rootEnvProps = Properties().apply {
+    rootEnvFile?.inputStream()?.use { load(it) }
+}
+
+val defaultLocalUrl = "http://10.0.2.2:54321"
+val defaultLocalAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM0MTI4MDB9.CRAS_LOCAL_DEV_ANON_KEY"
+
+val supabaseUrl = rootEnvProps.getProperty("SUPABASE_URL")
+    ?: rootEnvProps.getProperty("VITE_SUPABASE_URL")
+    ?: defaultLocalUrl
+
+val supabaseAnonKey = rootEnvProps.getProperty("SUPABASE_ANON_KEY")
+    ?: rootEnvProps.getProperty("VITE_SUPABASE_ANON_KEY")
+    ?: defaultLocalAnonKey
 
 android {
     namespace = "com.cras.app"
@@ -17,6 +37,9 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
     }
 
     buildTypes {
@@ -36,6 +59,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

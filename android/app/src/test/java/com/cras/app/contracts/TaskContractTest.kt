@@ -164,5 +164,36 @@ class TaskContractTest {
         assertEquals("Urgent", label.name)
         assertEquals("#ef4444", label.color)
     }
+
+    @Test
+    fun `label serialization handles snake_case and camelCase timestamps and optional fields`() {
+        val jsonSnake = """
+            {
+                "id": "22222222-2222-2222-2222-222222222222",
+                "name": "Backend",
+                "color": "#3b82f6",
+                "created_at": "2026-08-19T10:00:00Z",
+                "updated_at": "2026-08-19T11:00:00Z"
+            }
+        """.trimIndent()
+        val labelSnake = json.decodeFromString<Label>(jsonSnake)
+        assertEquals("Backend", labelSnake.name)
+        assertEquals("#3b82f6", labelSnake.color)
+        assertEquals("2026-08-19T10:00:00Z", labelSnake.createdAt)
+        assertEquals("2026-08-19T11:00:00Z", labelSnake.updatedAt)
+
+        val jsonMinimal = """
+            {
+                "id": "22222222-2222-2222-2222-222222222222",
+                "name": "Minimal",
+                "color": "#10b981"
+            }
+        """.trimIndent()
+        val labelMinimal = json.decodeFromString<Label>(jsonMinimal)
+        assertEquals("Minimal", labelMinimal.name)
+        assertEquals("#10b981", labelMinimal.color)
+        assertEquals(null, labelMinimal.createdAt)
+        assertEquals(null, labelMinimal.updatedAt)
+    }
 }
 

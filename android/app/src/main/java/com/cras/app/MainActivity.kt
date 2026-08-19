@@ -11,6 +11,7 @@ import com.cras.app.auth.GoogleSignInResult
 import com.cras.app.auth.SharedPreferencesSessionStore
 import com.cras.app.auth.SupabaseAuthService
 import com.cras.app.config.getPublicSupabaseConfig
+import com.cras.app.data.SupabaseLabelService
 import com.cras.app.data.SupabaseTaskService
 import com.cras.app.ui.CrasApp
 import com.cras.app.ui.inbox.InboxViewModel
@@ -26,13 +27,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val config = getPublicSupabaseConfig()
+        val config = getPublicSupabaseConfig(
+            mapOf(
+                "SUPABASE_URL" to BuildConfig.SUPABASE_URL,
+                "SUPABASE_ANON_KEY" to BuildConfig.SUPABASE_ANON_KEY
+            )
+        )
         val prefs = getSharedPreferences("cras_session_prefs", MODE_PRIVATE)
         val sessionStore = SharedPreferencesSessionStore(prefs)
         val authService = SupabaseAuthService(config, sessionStore)
         val taskService = SupabaseTaskService(config)
+        val labelService = SupabaseLabelService(config)
 
-        inboxViewModel = InboxViewModel(authService, taskService)
+        inboxViewModel = InboxViewModel(authService, taskService, labelService)
         googleAuthManager = GoogleAuthManager(this)
 
         setContent {

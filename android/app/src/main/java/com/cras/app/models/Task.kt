@@ -183,21 +183,95 @@ data class Comment(
 
 private val HEX_COLOR_REGEX = Regex("""^#[0-9a-fA-F]{6}$""")
 
-@Serializable
+@Serializable(with = LabelSerializer::class)
 data class Label(
     val id: String,
     val name: String,
     val color: String,
-    val createdAt: String,
-    val updatedAt: String
+    val createdAt: String? = null,
+    val updatedAt: String? = null
 ) {
     init {
         require(isValidUuid(id)) { "Label id must be a valid UUID: $id" }
         require(name.trim().isNotEmpty()) { "Label name must not be empty" }
         require(HEX_COLOR_REGEX.matches(color)) { "Label color must be a valid 6-digit hex code: $color" }
-        require(isValidIsoDateTime(createdAt)) { "Label createdAt must be a valid ISO 8601 date-time: $createdAt" }
-        require(isValidIsoDateTime(updatedAt)) { "Label updatedAt must be a valid ISO 8601 date-time: $updatedAt" }
+        require(createdAt == null || isValidIsoDateTime(createdAt)) { "Label createdAt must be a valid ISO 8601 date-time: $createdAt" }
+        require(updatedAt == null || isValidIsoDateTime(updatedAt)) { "Label updatedAt must be a valid ISO 8601 date-time: $updatedAt" }
     }
+}
+
+object LabelSerializer : KSerializer<Label> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("Label") {
+        element<String>("id")
+        element<String>("name")
+        element<String>("color")
+        element<String?>("createdAt", isOptional = true)
+        element<String?>("updatedAt", isOptional = true)
+    }
+
+    override fun deserialize(decoder: Decoder): Label {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: throw IllegalStateException("LabelSerializer requires JsonDecoder")
+        val element = jsonDecoder.decodeJsonElement()
+        if (element !is JsonObject) {
+            throw SerializationException("Label must be a JSON object")
+        }
+
+        val id = element["id"]?.jsonPrimitive?.content
+            ?: throw SerializationException("Label requires 'id'")
+        val name = element["name"]?.jsonPrimitive?.content
+            ?: throw SerializationException("Label requires 'name'")
+        val color = element["color"]?.jsonPrimitive?.content
+            ?: throw SerializationException("Label requires 'color'")
+
+        val createdAt = element["createdAt"]?.jsonPrimitive?.content
+            ?: element["created_at"]?.jsonPrimitive?.content
+        val updatedAt = element["updatedAt"]?.jsonPrimitive?.content
+            ?: element["updated_at"]?.jsonPrimitive?.content
+
+        return Label(
+            id = id,
+            name = name,
+            color = color,
+            createdAt = createdAt,
+            updatedAt = updatedAt
+        )
+    }
+
+    override fun serialize(encoder: Encoder, value: Label) {
+        val jsonElement = buildJsonObject {
+            put("id", JsonPrimitive(value.id))
+            put("name", JsonPrimitive(value.name))
+            put("color", JsonPrimitive(value.color))
+            if (value.createdAt != null) {
+                put("createdAt", JsonPrimitive(value.createdAt))
+            }
+            if (value.updatedAt != null) {
+                put("updatedAt", JsonPrimitive(value.updatedAt))
+            }
+        }
+        val jsonEncoder = encoder as? kotlinx.serialization.json.JsonEncoder
+            ?: throw IllegalStateException("LabelSerializer requires JsonEncoder")
+        jsonEncoder.encodeJsonElement(jsonElement)
+    }
+}
+
+data class LabelColorOption(val name: String, val value: String)
+
+object LabelColors {
+    val ALL = listOf(
+        LabelColorOption("Red", "#ef4444"),
+        LabelColorOption("Orange", "#f97316"),
+        LabelColorOption("Amber", "#f59e0b"),
+        LabelColorOption("Green", "#10b981"),
+        LabelColorOption("Teal", "#14b8a6"),
+        LabelColorOption("Blue", "#3b82f6"),
+        LabelColorOption("Indigo", "#6366f1"),
+        LabelColorOption("Purple", "#a855f7"),
+        LabelColorOption("Pink", "#ec4899"),
+        LabelColorOption("Slate", "#64748b")
+    )
+    val DEFAULT = ALL[0].value
 }
 
 data class TaskPriorityOption(val value: Int, val label: String)

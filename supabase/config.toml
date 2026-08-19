@@ -24,8 +24,8 @@ enabled = false
 
 [auth]
 enabled = true
-site_url = "http://127.0.0.1:5173"
-additional_redirect_urls = ["http://localhost:5173"]
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173/**", "http://127.0.0.1:5173/**"]
 jwt_expiry = 3600
 
 [edge_runtime]

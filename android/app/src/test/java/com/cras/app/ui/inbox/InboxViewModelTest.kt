@@ -2,9 +2,13 @@ package com.cras.app.ui.inbox
 
 import com.cras.app.auth.AuthService
 import com.cras.app.auth.OperatorSession
+import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
+import com.cras.app.data.LabelService
 import com.cras.app.data.TaskService
+import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
+import com.cras.app.models.Label
 import com.cras.app.models.Task
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -46,6 +50,55 @@ class InboxViewModelTest {
 
         override suspend fun signOut() {
             sessionFlow.value = null
+        }
+    }
+
+    private class FakeLabelService : LabelService {
+        val labelsInDb = mutableListOf<Label>()
+        var shouldFail = false
+        var failureMessage = "Network error"
+
+        override suspend fun fetchLabels(session: OperatorSession): List<Label> {
+            if (shouldFail) throw RuntimeException(failureMessage)
+            return labelsInDb.toList()
+        }
+
+        override suspend fun createLabel(session: OperatorSession, params: CreateLabelParams): Label {
+            if (shouldFail) throw RuntimeException(failureMessage)
+            if (labelsInDb.any { it.name.equals(params.name.trim(), ignoreCase = true) }) {
+                throw RuntimeException("A label with this name already exists")
+            }
+            val label = Label(
+                id = params.id ?: UUID.randomUUID().toString(),
+                name = params.name.trim(),
+                color = params.color.trim(),
+                createdAt = "2026-08-19T00:00:00Z",
+                updatedAt = "2026-08-19T00:00:00Z"
+            )
+            labelsInDb.add(label)
+            return label
+        }
+
+        override suspend fun updateLabel(session: OperatorSession, params: UpdateLabelParams): Label {
+            if (shouldFail) throw RuntimeException(failureMessage)
+            val index = labelsInDb.indexOfFirst { it.id == params.id }
+            if (index == -1) throw RuntimeException("Label not found")
+            if (params.name != null && labelsInDb.any { it.id != params.id && it.name.equals(params.name.trim(), ignoreCase = true) }) {
+                throw RuntimeException("A label with this name already exists")
+            }
+            val existing = labelsInDb[index]
+            val updated = existing.copy(
+                name = params.name?.trim() ?: existing.name,
+                color = params.color?.trim() ?: existing.color,
+                updatedAt = "2026-08-19T00:05:00Z"
+            )
+            labelsInDb[index] = updated
+            return updated
+        }
+
+        override suspend fun deleteLabel(session: OperatorSession, labelId: String) {
+            if (shouldFail) throw RuntimeException(failureMessage)
+            labelsInDb.removeAll { it.id == labelId }
         }
     }
 
@@ -94,6 +147,7 @@ class InboxViewModelTest {
                 description = params.description ?: existing.description,
                 priority = params.priority ?: existing.priority,
                 plan = params.plan ?: existing.plan,
+                labels = params.labels ?: existing.labels,
                 parentId = params.parentId ?: existing.parentId,
                 updatedAt = "2026-08-19T00:05:00Z",
                 version = existing.version + 1
@@ -149,7 +203,8 @@ class InboxViewModelTest {
     fun `initial unauthenticated state transitions to Authenticated upon sign in`() = runTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
-        val viewModel = InboxViewModel(authService, taskService)
+        val labelService = FakeLabelService()
+        val viewModel = InboxViewModel(authService, taskService, labelService)
 
         advanceUntilIdle()
         assertTrue(viewModel.authState.value is AuthUiState.Unauthenticated)
@@ -166,10 +221,11 @@ class InboxViewModelTest {
     fun `loadInbox transitions through Loading, Empty, Success, and Failure states`() = runTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
         val session = OperatorSession("op-1", "alice@cras.app", "token-1")
         authService.sessionFlow.value = session
 
-        val viewModel = InboxViewModel(authService, taskService)
+        val viewModel = InboxViewModel(authService, taskService, labelService)
         advanceUntilIdle()
 
         // 1. Empty state when no tasks exist
@@ -201,10 +257,11 @@ class InboxViewModelTest {
     fun `createTask with all priority states and descriptions`() = runTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
         val session = OperatorSession("op-1", "alice@cras.app", "token-1")
         authService.sessionFlow.value = session
 
-        val viewModel = InboxViewModel(authService, taskService)
+        val viewModel = InboxViewModel(authService, taskService, labelService)
         advanceUntilIdle()
 
         viewModel.createTask("Urgent task", description = "Must do today", priority = 1)
@@ -231,10 +288,11 @@ class InboxViewModelTest {
     fun `completeTask removes task from inbox and adds to completed ordered newest-first`() = runTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
         val session = OperatorSession("op-1", "alice@cras.app", "token-1")
         authService.sessionFlow.value = session
 
-        val viewModel = InboxViewModel(authService, taskService)
+        val viewModel = InboxViewModel(authService, taskService, labelService)
         advanceUntilIdle()
 
         viewModel.createTask("Task One")
@@ -282,10 +340,11 @@ class InboxViewModelTest {
     fun `updateTask edits fields and handles rejection on completed tasks or version conflict`() = runTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
         val session = OperatorSession("op-1", "alice@cras.app", "token-1")
         authService.sessionFlow.value = session
 
-        val viewModel = InboxViewModel(authService, taskService)
+        val viewModel = InboxViewModel(authService, taskService, labelService)
         advanceUntilIdle()
 
         viewModel.createTask("Initial Title")
@@ -354,5 +413,68 @@ class InboxViewModelTest {
 
         assertNotNull(conflictError)
         assertTrue(conflictError!!.contains("version conflict"))
+    }
+
+    @Test
+    fun `label lifecycle - create, rename, recolor, delete, and duplicate-name rejection`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService)
+        advanceUntilIdle()
+
+        // 1. Create label
+        var createdLabel: Label? = null
+        viewModel.createLabel("Urgent", "#ef4444", onSuccess = { createdLabel = it })
+        advanceUntilIdle()
+
+        assertNotNull(createdLabel)
+        assertEquals("Urgent", createdLabel!!.name)
+        assertEquals("#ef4444", createdLabel!!.color)
+        assertEquals(1, viewModel.labels.value.size)
+
+        // 2. Duplicate label rejection
+        var duplicateError: String? = null
+        viewModel.createLabel("urgent", "#3b82f6", onError = { duplicateError = it })
+        advanceUntilIdle()
+
+        assertNotNull(duplicateError)
+        assertTrue(duplicateError!!.contains("already exists"))
+        assertEquals(1, viewModel.labels.value.size)
+
+        // 3. Rename and recolor label
+        var updatedLabel: Label? = null
+        viewModel.updateLabel(
+            id = createdLabel!!.id,
+            name = "Critical",
+            color = "#f97316",
+            onSuccess = { updatedLabel = it }
+        )
+        advanceUntilIdle()
+
+        assertNotNull(updatedLabel)
+        assertEquals("Critical", updatedLabel!!.name)
+        assertEquals("#f97316", updatedLabel!!.color)
+        assertEquals(createdLabel!!.id, updatedLabel!!.id) // Stable ID!
+        assertEquals("Critical", viewModel.labels.value[0].name)
+
+        // 4. Create task with label
+        viewModel.createTask("Deploy MVP", labels = listOf(createdLabel!!.id))
+        advanceUntilIdle()
+
+        val task = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(1, task.labels.size)
+        assertEquals(createdLabel!!.id, task.labels[0])
+
+        // 5. Delete label
+        var deleted = false
+        viewModel.deleteLabel(createdLabel!!.id, onSuccess = { deleted = true })
+        advanceUntilIdle()
+
+        assertTrue(deleted)
+        assertEquals(0, viewModel.labels.value.size)
     }
 }

@@ -6,38 +6,64 @@ import {
   AlertCircle,
   Loader2,
   Tag,
+  MessageSquare,
+  ListTree,
+  Plus,
 } from "lucide-react";
 import {
   PRIORITY_OPTIONS,
   type Priority,
   type Task,
   type Label,
+  type Comment,
 } from "../contracts/task";
 import type { UpdateTaskParams } from "../services/taskService";
 
 export interface TaskDetailModalProps {
   readonly task: Task | null;
   readonly availableLabels?: readonly Label[];
+  readonly comments?: readonly Comment[];
+  readonly subtasks?: readonly Task[];
   readonly isOpen: boolean;
   readonly onClose: () => void;
   readonly onSave: (params: UpdateTaskParams) => Promise<void> | void;
   readonly onToggleComplete: (task: Task) => Promise<void> | void;
+  readonly onAddComment?: (
+    taskId: string,
+    content: string,
+  ) => Promise<void> | void;
+  readonly onCreateSubtask?: (
+    parentId: string,
+    title: string,
+  ) => Promise<void> | void;
+  readonly onToggleSubtaskComplete?: (subtask: Task) => Promise<void> | void;
+  readonly onSelectSubtask?: (subtask: Task) => void;
 }
 
 export function TaskDetailModal({
   task,
   availableLabels = [],
+  comments = [],
+  subtasks = [],
   isOpen,
   onClose,
   onSave,
   onToggleComplete,
+  onAddComment,
+  onCreateSubtask,
+  onToggleSubtaskComplete,
+  onSelectSubtask,
 }: TaskDetailModalProps): React.JSX.Element | null {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<Priority>(4);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
+  const [newCommentContent, setNewCommentContent] = useState("");
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isToggling, setIsToggling] = useState(false);
+  const [isAddingComment, setIsAddingComment] = useState(false);
+  const [isAddingSubtask, setIsAddingSubtask] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -46,11 +72,14 @@ export function TaskDetailModal({
       setDescription(task.description ?? "");
       setPriority(task.priority);
       setSelectedLabels(task.labels ? [...task.labels] : []);
+      setNewCommentContent("");
+      setNewSubtaskTitle("");
       setError(null);
     }
   }, [task]);
 
   const isCompleted = task?.completedAt !== null;
+  const isSubtask = task?.parentId !== null;
 
   const toggleLabel = useCallback(
     (labelId: string) => {
@@ -121,6 +150,52 @@ export function TaskDetailModal({
     }
   }, [task, onToggleComplete, onClose]);
 
+  const handleAddCommentSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!task || !onAddComment) return;
+
+      const trimmed = newCommentContent.trim();
+      if (!trimmed) return;
+
+      setIsAddingComment(true);
+      setError(null);
+      try {
+        await onAddComment(task.id, trimmed);
+        setNewCommentContent("");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to add comment");
+      } finally {
+        setIsAddingComment(false);
+      }
+    },
+    [task, onAddComment, newCommentContent],
+  );
+
+  const handleAddSubtaskSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!task || !onCreateSubtask || isSubtask) return;
+
+      const trimmed = newSubtaskTitle.trim();
+      if (!trimmed) return;
+
+      setIsAddingSubtask(true);
+      setError(null);
+      try {
+        await onCreateSubtask(task.id, trimmed);
+        setNewSubtaskTitle("");
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to create subtask",
+        );
+      } finally {
+        setIsAddingSubtask(false);
+      }
+    },
+    [task, onCreateSubtask, isSubtask, newSubtaskTitle],
+  );
+
   if (!isOpen || !task) {
     return null;
   }
@@ -130,9 +205,9 @@ export function TaskDetailModal({
       role="dialog"
       aria-modal="true"
       aria-label="Task details"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto"
     >
-      <div className="relative w-full max-w-lg rounded-xl border border-border bg-card p-6 shadow-xl space-y-5 text-foreground animate-in fade-in zoom-in-95 duration-150">
+      <div className="relative w-full max-w-xl rounded-xl border border-border bg-card p-6 shadow-xl space-y-6 text-foreground animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
@@ -156,6 +231,13 @@ export function TaskDetailModal({
               )}
               <span>{isCompleted ? "Completed" : "Mark complete"}</span>
             </button>
+
+            {isSubtask && (
+              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground text-xs font-medium border border-border/60">
+                <ListTree className="h-3 w-3" />
+                <span>Subtask</span>
+              </span>
+            )}
           </div>
 
           <button
@@ -316,6 +398,168 @@ export function TaskDetailModal({
             </div>
           )}
         </form>
+
+        {/* Subtasks Section (One-Level Nesting: only rendered for top-level tasks) */}
+        {!isSubtask && (
+          <div className="space-y-3 pt-4 border-t border-border/60">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-1.5 text-xs font-semibold text-foreground">
+                <ListTree className="h-3.5 w-3.5 text-muted-foreground" />
+                <span>Subtasks</span>
+                {subtasks.length > 0 && (
+                  <span className="text-muted-foreground font-normal">
+                    ({subtasks.length})
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Subtask list */}
+            {subtasks.length > 0 && (
+              <div className="space-y-1.5" role="list">
+                {subtasks.map((st) => {
+                  const isStCompleted = st.completedAt !== null;
+                  return (
+                    <div
+                      key={st.id}
+                      role="listitem"
+                      onClick={() => onSelectSubtask?.(st)}
+                      className="flex items-center justify-between p-2 rounded-md bg-secondary/30 border border-border/50 text-xs hover:border-border transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center space-x-2 min-w-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleSubtaskComplete?.(st);
+                          }}
+                          aria-label={
+                            isStCompleted
+                              ? `Uncomplete task ${st.title}`
+                              : `Complete task ${st.title}`
+                          }
+                          className="text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors shrink-0 cursor-pointer"
+                        >
+                          {isStCompleted ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                          ) : (
+                            <Circle className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                        <span
+                          className={`truncate ${
+                            isStCompleted
+                              ? "line-through text-muted-foreground"
+                              : "text-foreground"
+                          }`}
+                        >
+                          {st.title}
+                        </span>
+                      </div>
+
+                      {st.priority < 4 && (
+                        <span className="px-1.5 py-0.5 rounded-xs bg-secondary text-secondary-foreground text-[10px] font-medium shrink-0">
+                          P{st.priority}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Add Subtask Form */}
+            {!isCompleted && onCreateSubtask && (
+              <form
+                onSubmit={handleAddSubtaskSubmit}
+                className="flex space-x-2"
+              >
+                <input
+                  type="text"
+                  value={newSubtaskTitle}
+                  onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                  placeholder="Add subtask..."
+                  disabled={isAddingSubtask}
+                  className="flex-1 rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
+                />
+                <button
+                  type="submit"
+                  disabled={!newSubtaskTitle.trim() || isAddingSubtask}
+                  className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-md bg-secondary text-secondary-foreground text-xs font-medium hover:bg-secondary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isAddingSubtask ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Plus className="h-3 w-3" />
+                  )}
+                  <span>Add subtask</span>
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+
+        {/* Comments Section (Distinct from Description) */}
+        <div className="space-y-3 pt-4 border-t border-border/60">
+          <div className="flex items-center space-x-1.5 text-xs font-semibold text-foreground">
+            <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+            <span>Comments</span>
+            {comments.length > 0 && (
+              <span className="text-muted-foreground font-normal">
+                ({comments.length})
+              </span>
+            )}
+          </div>
+
+          {/* Comment List */}
+          {comments.length > 0 ? (
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              {comments.map((comment) => (
+                <div
+                  key={comment.id}
+                  className="p-2.5 rounded-md bg-secondary/40 border border-border/50 text-xs space-y-1"
+                >
+                  <p className="text-foreground whitespace-pre-wrap leading-relaxed">
+                    {comment.content}
+                  </p>
+                  <span className="text-[10px] text-muted-foreground block">
+                    {new Date(comment.createdAt).toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground italic">
+              No comments attached yet
+            </p>
+          )}
+
+          {/* Add Comment Form */}
+          {onAddComment && (
+            <form onSubmit={handleAddCommentSubmit} className="space-y-2">
+              <textarea
+                rows={2}
+                value={newCommentContent}
+                onChange={(e) => setNewCommentContent(e.target.value)}
+                placeholder="Add a comment..."
+                disabled={isAddingComment}
+                className="w-full rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring resize-none"
+              />
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={!newCommentContent.trim() || isAddingComment}
+                  className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground text-xs font-medium hover:bg-secondary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isAddingComment && (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  )}
+                  <span>Add comment</span>
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );

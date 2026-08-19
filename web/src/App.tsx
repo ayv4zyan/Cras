@@ -25,6 +25,7 @@ import {
   uncompleteTask,
   filterInboxTasks,
   filterCompletedTasks,
+  filterSubtasks,
   type CreateTaskParams,
   type UpdateTaskParams,
 } from "./services/taskService";
@@ -36,7 +37,8 @@ import {
   type CreateLabelParams,
   type UpdateLabelParams,
 } from "./services/labelService";
-import type { Priority, Task, Label } from "./contracts/task";
+import { fetchComments, createComment } from "./services/commentService";
+import type { Priority, Task, Label, Comment } from "./contracts/task";
 import { supabase } from "./config/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -66,6 +68,7 @@ export function CrasApp({
   const [activeView, setActiveView] = useState<ViewMode>("inbox");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
+  const [comments, setComments] = useState<Comment[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isLabelManagerOpen, setIsLabelManagerOpen] = useState(false);
@@ -76,17 +79,20 @@ export function CrasApp({
     if (!user) {
       setTasks([]);
       setLabels([]);
+      setComments([]);
       return;
     }
     setIsTasksLoading(true);
     setErrorMessage(null);
     try {
-      const [allTasks, allLabels] = await Promise.all([
+      const [allTasks, allLabels, allComments] = await Promise.all([
         fetchTasks(client),
         fetchLabels(client).catch(() => [] as Label[]),
+        fetchComments(client).catch(() => [] as Comment[]),
       ]);
       setTasks(allTasks);
       setLabels(allLabels);
+      setComments(allComments);
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Failed to load data",
@@ -172,6 +178,25 @@ export function CrasApp({
     [handleCompleteTask, handleUncompleteTask],
   );
 
+  const handleAddComment = useCallback(
+    async (taskId: string, content: string) => {
+      const newComment = await createComment(client, { taskId, content });
+      setComments((prev) => [...prev, newComment]);
+    },
+    [client],
+  );
+
+  const handleCreateSubtask = useCallback(
+    async (parentId: string, title: string) => {
+      const newSubtask = await createTask(client, {
+        title,
+        parentId,
+      });
+      setTasks((prev) => [...prev, newSubtask]);
+    },
+    [client],
+  );
+
   const handleCreateLabel = useCallback(
     async (params: CreateLabelParams) => {
       const newLabel = await createLabel(client, params);
@@ -231,6 +256,12 @@ export function CrasApp({
 
   const inboxTasks = filterInboxTasks(tasks);
   const completedTasks = filterCompletedTasks(tasks);
+  const selectedTaskComments = selectedTask
+    ? comments.filter((c) => c.taskId === selectedTask.id)
+    : [];
+  const selectedTaskSubtasks = selectedTask
+    ? filterSubtasks(tasks, selectedTask.id)
+    : [];
 
   const navItems: readonly NavItem[] = [
     {
@@ -445,10 +476,16 @@ export function CrasApp({
       <TaskDetailModal
         task={selectedTask}
         availableLabels={labels}
+        comments={selectedTaskComments}
+        subtasks={selectedTaskSubtasks}
         isOpen={isDetailModalOpen}
         onClose={handleCloseDetailModal}
         onSave={handleUpdateTask}
         onToggleComplete={handleToggleCompleteInModal}
+        onAddComment={handleAddComment}
+        onCreateSubtask={handleCreateSubtask}
+        onToggleSubtaskComplete={handleToggleCompleteInModal}
+        onSelectSubtask={handleSelectTask}
       />
 
       {/* Label Manager Modal */}

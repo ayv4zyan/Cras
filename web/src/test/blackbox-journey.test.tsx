@@ -10,9 +10,13 @@ import { AuthProvider } from "../contexts/AuthContext";
 import { CrasApp } from "../App";
 import { getPublicSupabaseConfig } from "../config/supabase";
 import type { SupabaseClient, Session, User } from "@supabase/supabase-js";
-import type { Task, Plan } from "../contracts/task";
+import type {
+  Task,
+  Plan,
+  Comment as TaskCommentContract,
+} from "../contracts/task";
 
-describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, & #43)", () => {
+describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, #43, & #45)", () => {
   // In-memory simulated Postgres database for black-box testing
   interface DbRow {
     id: string;
@@ -43,9 +47,18 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     operator_id: string;
   }
 
+  interface DbCommentRow {
+    id: string;
+    task_id: string;
+    operator_id: string;
+    content: string;
+    created_at: string;
+  }
+
   let dbTasks: DbRow[];
   let dbLabels: DbLabelRow[];
   let dbTaskLabels: DbTaskLabelRow[];
+  let dbComments: DbCommentRow[];
 
   function createMockSupabaseForOperator(
     currentUser: User | null,
@@ -268,6 +281,59 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
           throw new Error(`Access denied to non-api schema: ${schemaName}`);
         return {
           from: (tableName: string) => {
+            if (tableName === "comments") {
+              return {
+                select: vi.fn().mockImplementation(() => {
+                  const runQuery = async () => {
+                    if (!currentUser) {
+                      return {
+                        data: null,
+                        error: { message: "Unauthorized", code: "42501" },
+                      };
+                    }
+                    const userComments = dbComments.filter(
+                      (c) => c.operator_id === currentUser.id,
+                    );
+                    const mapped: TaskCommentContract[] = userComments.map(
+                      (c) => ({
+                        id: c.id,
+                        taskId: c.task_id,
+                        content: c.content,
+                        createdAt: c.created_at,
+                      }),
+                    );
+                    return { data: mapped, error: null };
+                  };
+                  return {
+                    eq: vi
+                      .fn()
+                      .mockImplementation((col: string, val: string) => {
+                        const runFilter = async () => {
+                          const base = await runQuery();
+                          if (base.error || !base.data) return base;
+                          const filtered = base.data.filter(
+                            (c) =>
+                              (c as unknown as Record<string, string>)[col] ===
+                              val,
+                          );
+                          return { data: filtered, error: null };
+                        };
+                        return {
+                          then: (
+                            resolve: (v: unknown) => unknown,
+                            reject?: (reason: unknown) => unknown,
+                          ) => runFilter().then(resolve, reject),
+                        };
+                      }),
+                    then: (
+                      resolve: (v: unknown) => unknown,
+                      reject?: (reason: unknown) => unknown,
+                    ) => runQuery().then(resolve, reject),
+                  };
+                }),
+              };
+            }
+
             if (tableName !== "tasks")
               throw new Error(`Unknown table in api: ${tableName}`);
             return {
@@ -318,6 +384,53 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
 
             const now = new Date().toISOString();
 
+            if (fnName === "create_comment") {
+              const contentParam =
+                typeof params.content === "string" ? params.content.trim() : "";
+              if (!contentParam) {
+                return Promise.resolve({
+                  data: null,
+                  error: {
+                    message: "Comment content cannot be empty",
+                    code: "23514",
+                  },
+                });
+              }
+
+              const taskId = params.task_id as string;
+              const targetTask = dbTasks.find(
+                (t) => t.id === taskId && t.operator_id === currentUser.id,
+              );
+              if (!targetTask) {
+                return Promise.resolve({
+                  data: null,
+                  error: {
+                    message: "Task not found or unauthorized",
+                    code: "P0001",
+                  },
+                });
+              }
+
+              const newComment: DbCommentRow = {
+                id: (params.id as string) || crypto.randomUUID(),
+                task_id: taskId,
+                operator_id: currentUser.id,
+                content: contentParam,
+                created_at: now,
+              };
+              dbComments.push(newComment);
+
+              return Promise.resolve({
+                data: {
+                  id: newComment.id,
+                  taskId: newComment.task_id,
+                  content: newComment.content,
+                  createdAt: newComment.created_at,
+                },
+                error: null,
+              });
+            }
+
             if (fnName === "create_task") {
               const titleParam =
                 typeof params.title === "string" ? params.title : "";
@@ -331,6 +444,33 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 });
               }
 
+              const parentId = (params.parent_id as string | null) ?? null;
+              if (parentId !== null) {
+                const parentTask = dbTasks.find(
+                  (t) => t.id === parentId && t.operator_id === currentUser.id,
+                );
+                if (!parentTask) {
+                  return Promise.resolve({
+                    data: null,
+                    error: {
+                      message:
+                        'insert or update on table "tasks" violates foreign key constraint "fk_tasks_parent"',
+                      code: "23503",
+                    },
+                  });
+                }
+                if (parentTask.parent_id !== null) {
+                  return Promise.resolve({
+                    data: null,
+                    error: {
+                      message:
+                        "Subtasks cannot have children (one-level nesting only)",
+                      code: "P0001",
+                    },
+                  });
+                }
+              }
+
               const newId =
                 typeof params.id === "string" ? params.id : crypto.randomUUID();
               const newRow: DbRow = {
@@ -341,7 +481,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 priority:
                   typeof params.priority === "number" ? params.priority : 4,
                 plan: (params.plan as Plan) ?? null,
-                parent_id: (params.parent_id as string | null) ?? null,
+                parent_id: parentId,
                 completed_at: null,
                 created_at: now,
                 updated_at: now,
@@ -470,6 +610,48 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 updated_at: now,
                 version: existing.version + 1,
               };
+
+              if (params.parent_id !== undefined && params.parent_id !== null) {
+                const parentTask = dbTasks.find(
+                  (t) =>
+                    t.id === params.parent_id &&
+                    t.operator_id === currentUser.id,
+                );
+                if (!parentTask) {
+                  return Promise.resolve({
+                    data: null,
+                    error: {
+                      message:
+                        'insert or update on table "tasks" violates foreign key constraint "fk_tasks_parent"',
+                      code: "23503",
+                    },
+                  });
+                }
+                if (parentTask.parent_id !== null) {
+                  return Promise.resolve({
+                    data: null,
+                    error: {
+                      message:
+                        "Subtasks cannot have children (one-level nesting only)",
+                      code: "P0001",
+                    },
+                  });
+                }
+                const hasChildren = dbTasks.some(
+                  (t) =>
+                    t.parent_id === taskId && t.operator_id === currentUser.id,
+                );
+                if (hasChildren) {
+                  return Promise.resolve({
+                    data: null,
+                    error: {
+                      message:
+                        "Subtasks cannot have children (one-level nesting only)",
+                      code: "P0001",
+                    },
+                  });
+                }
+              }
 
               dbTasks[taskIndex] = updatedRow;
 
@@ -647,6 +829,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     dbTasks = [];
     dbLabels = [];
     dbTaskLabels = [];
+    dbComments = [];
   });
 
   it("proves Criterion 4: public configuration contains only project URL and publishable key", () => {
@@ -1457,5 +1640,330 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
       .select("*")
       .order("created_at");
     expect(unauthedSelect.error?.message).toBe("Unauthorized");
+  });
+
+  it("proves Issue #45 Criterion 1: Operator can create and view dated Comments that remain distinct from Description", async () => {
+    const operator: User = {
+      id: "operator-comments-uuid",
+      email: "comments-op@example.com",
+    } as User;
+    const client = createMockSupabaseForOperator(operator);
+
+    render(
+      <AuthProvider client={client}>
+        <CrasApp client={client} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("comments-op@example.com")).toBeInTheDocument();
+    });
+
+    // 1. Create a task in Inbox
+    const input = screen.getByPlaceholderText(/create a task in inbox/i);
+    fireEvent.change(input, { target: { value: "Review security audit" } });
+    fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Review security audit")).toBeInTheDocument();
+    });
+
+    // 2. Open task detail modal
+    const taskItem = screen.getByText("Review security audit");
+    fireEvent.click(taskItem);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/task details/i)).toBeInTheDocument();
+    });
+
+    // 3. Add an optional Description and save
+    const descInput = screen.getByLabelText(/task description/i);
+    fireEvent.change(descInput, {
+      target: { value: "Full review of cloud infrastructure" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/task details/i)).not.toBeInTheDocument();
+    });
+
+    // 4. Reopen modal and add a dated Comment
+    fireEvent.click(screen.getByText("Review security audit"));
+    await waitFor(() => {
+      expect(screen.getByLabelText(/task details/i)).toBeInTheDocument();
+    });
+
+    // Verify description is present
+    expect(
+      screen.getByDisplayValue("Full review of cloud infrastructure"),
+    ).toBeInTheDocument();
+
+    // Add first Comment
+    const commentInput = screen.getByPlaceholderText(/add a comment/i);
+    fireEvent.change(commentInput, {
+      target: { value: "Checked AWS IAM policies - all good." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add comment/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Checked AWS IAM policies - all good."),
+      ).toBeInTheDocument();
+    });
+
+    // Add second Comment
+    fireEvent.change(commentInput, {
+      target: { value: "Checked VPC network ingress rules." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add comment/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Checked VPC network ingress rules."),
+      ).toBeInTheDocument();
+    });
+
+    // Verify that Description remains intact and distinct from Comments
+    expect(
+      screen.getByDisplayValue("Full review of cloud infrastructure"),
+    ).toBeInTheDocument();
+
+    // Verify in mock DB that description and comments are distinct entities
+    const taskInDb = dbTasks.find((t) => t.title === "Review security audit");
+    expect(taskInDb?.description).toBe("Full review of cloud infrastructure");
+    const commentsInDb = dbComments.filter((c) => c.task_id === taskInDb?.id);
+    expect(commentsInDb).toHaveLength(2);
+    expect(commentsInDb[0].content).toBe(
+      "Checked AWS IAM policies - all good.",
+    );
+    expect(commentsInDb[1].content).toBe("Checked VPC network ingress rules.");
+  });
+
+  it("proves Issue #45 Criteria 2 & 4: Operator can create a Subtask under a top-level Task; Subtasks are excluded from Inbox", async () => {
+    const operator: User = {
+      id: "operator-subtasks-uuid",
+      email: "subtasks-op@example.com",
+    } as User;
+    const client = createMockSupabaseForOperator(operator);
+
+    render(
+      <AuthProvider client={client}>
+        <CrasApp client={client} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("subtasks-op@example.com")).toBeInTheDocument();
+    });
+
+    // 1. Create a top-level task in Inbox
+    const input = screen.getByPlaceholderText(/create a task in inbox/i);
+    fireEvent.change(input, { target: { value: "Launch Cras v1" } });
+    fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Launch Cras v1")).toBeInTheDocument();
+    });
+
+    // 2. Open top-level task detail modal
+    fireEvent.click(screen.getByText("Launch Cras v1"));
+    await waitFor(() => {
+      expect(screen.getByLabelText(/task details/i)).toBeInTheDocument();
+    });
+
+    // 3. Create subtasks under top-level task
+    const subtaskInput = screen.getByPlaceholderText(/add subtask/i);
+    fireEvent.change(subtaskInput, { target: { value: "Set up CDN" } });
+    fireEvent.click(screen.getByRole("button", { name: /add subtask/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Set up CDN")).toBeInTheDocument();
+    });
+
+    fireEvent.change(subtaskInput, {
+      target: { value: "Configure custom domain" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add subtask/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Configure custom domain")).toBeInTheDocument();
+    });
+
+    // Close detail modal
+    fireEvent.click(screen.getByRole("button", { name: /close/i }));
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/task details/i)).not.toBeInTheDocument();
+    });
+
+    // 4. Acceptance Criterion 4: "Subtasks are excluded from Inbox."
+    // In Inbox view, only top-level task "Launch Cras v1" should appear; "Set up CDN" and "Configure custom domain" should NOT appear in main Inbox list!
+    expect(screen.getByText("Launch Cras v1")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId(
+        `task-item-${dbTasks.find((t) => t.title === "Set up CDN")?.id}`,
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId(
+        `task-item-${dbTasks.find((t) => t.title === "Configure custom domain")?.id}`,
+      ),
+    ).not.toBeInTheDocument();
+
+    // 5. Complete a subtask inside modal
+    fireEvent.click(screen.getByText("Launch Cras v1"));
+    await waitFor(() => {
+      expect(screen.getByLabelText(/task details/i)).toBeInTheDocument();
+    });
+
+    const completeCdnBtn = screen.getByLabelText(/complete task set up cdn/i);
+    fireEvent.click(completeCdnBtn);
+
+    await waitFor(() => {
+      const cdnInDb = dbTasks.find((t) => t.title === "Set up CDN");
+      expect(cdnInDb?.completed_at).not.toBeNull();
+    });
+  });
+
+  it("proves Issue #45 Criterion 3: A Subtask cannot receive its own child (one-level nesting only)", async () => {
+    const operator: User = {
+      id: "operator-nesting-uuid",
+      email: "nesting-op@example.com",
+    } as User;
+    const client = createMockSupabaseForOperator(operator);
+
+    // 1. Seed a top-level task and a subtask
+    const topLevelTaskRes = await client.schema("api").rpc("create_task", {
+      title: "Parent Task",
+    });
+    const topTaskId = topLevelTaskRes.data.id;
+
+    const subtaskRes = await client.schema("api").rpc("create_task", {
+      title: "Child Subtask",
+      parent_id: topTaskId,
+    });
+    const subtaskId = subtaskRes.data.id;
+    expect(subtaskRes.data.parentId).toBe(topTaskId);
+
+    // 2. Render UI and open detail modal for the subtask
+    render(
+      <AuthProvider client={client}>
+        <CrasApp client={client} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("nesting-op@example.com")).toBeInTheDocument();
+    });
+
+    // Open parent task first, click child subtask to navigate to subtask
+    fireEvent.click(screen.getByText("Parent Task"));
+    await waitFor(() => {
+      expect(screen.getByText("Child Subtask")).toBeInTheDocument();
+    });
+
+    // Click on Child Subtask to open subtask details
+    fireEvent.click(screen.getByText("Child Subtask"));
+    await waitFor(() => {
+      expect(screen.getByText(/subtask/i)).toBeInTheDocument();
+    });
+
+    // Verify subtask detail modal does NOT allow adding deeper child subtasks
+    expect(
+      screen.queryByPlaceholderText(/add subtask/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /add subtask/i }),
+    ).not.toBeInTheDocument();
+
+    // 3. Prove Database rejection when attempting to create a child under a subtask
+    const invalidSubtaskPromise = client.schema("api").rpc("create_task", {
+      title: "Grandchild Subtask (Forbidden)",
+      parent_id: subtaskId,
+    });
+    const invalidSubtaskResult = await invalidSubtaskPromise;
+    expect(invalidSubtaskResult.error?.message).toContain(
+      "Subtasks cannot have children (one-level nesting only)",
+    );
+
+    // 4. Prove Database rejection when attempting to set parent_id on a task that already has subtasks
+    const invalidParentUpdatePromise = client.schema("api").rpc("update_task", {
+      id: topTaskId,
+      parent_id: subtaskId,
+    });
+    const invalidParentUpdateResult = await invalidParentUpdatePromise;
+    expect(invalidParentUpdateResult.error?.message).toContain(
+      "Subtasks cannot have children (one-level nesting only)",
+    );
+  });
+
+  it("proves Issue #45 Criterion 5: Database relationships reject cross-Operator parents and Comments", async () => {
+    // 1. Operator 1 (Alice) creates a task
+    const op1: User = { id: "alice-uuid", email: "alice@example.com" } as User;
+    const clientOp1 = createMockSupabaseForOperator(op1);
+    const aliceTaskRes = await clientOp1.schema("api").rpc("create_task", {
+      title: "Alice Confidential Strategy",
+    });
+    const aliceTaskId = aliceTaskRes.data.id;
+
+    // Alice attaches a comment
+    const aliceCommentRes = await clientOp1
+      .schema("api")
+      .rpc("create_comment", {
+        task_id: aliceTaskId,
+        content: "Alice private remark",
+      });
+    expect(aliceCommentRes.data.content).toBe("Alice private remark");
+
+    // 2. Operator 2 (Bob) logs in
+    const op2: User = { id: "bob-uuid", email: "bob@example.com" } as User;
+    const clientOp2 = createMockSupabaseForOperator(op2);
+
+    render(
+      <AuthProvider client={clientOp2}>
+        <CrasApp client={clientOp2} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("bob@example.com")).toBeInTheDocument();
+    });
+
+    // Bob cannot see Alice's task in Inbox
+    expect(
+      screen.queryByText("Alice Confidential Strategy"),
+    ).not.toBeInTheDocument();
+
+    // 3. Bob attempts to create a comment under Alice's task -> Rejected
+    const forgedCommentPromise = clientOp2.schema("api").rpc("create_comment", {
+      task_id: aliceTaskId,
+      content: "Bob malicious comment",
+    });
+    const forgedCommentResult = await forgedCommentPromise;
+    expect(forgedCommentResult.error?.message).toContain(
+      "Task not found or unauthorized",
+    );
+
+    // 4. Bob attempts to create a subtask with Alice's task as parent -> Rejected
+    const forgedSubtaskPromise = clientOp2.schema("api").rpc("create_task", {
+      title: "Bob subtask under Alice task",
+      parent_id: aliceTaskId,
+    });
+    const forgedSubtaskResult = await forgedSubtaskPromise;
+    expect(forgedSubtaskResult.error?.message).toContain(
+      "foreign key constraint",
+    );
+
+    // 5. Bob creates his own task, then attempts to update it with Alice's task as parent -> Rejected
+    const bobTaskRes = await clientOp2.schema("api").rpc("create_task", {
+      title: "Bob Task",
+    });
+    const forgedUpdatePromise = clientOp2.schema("api").rpc("update_task", {
+      id: bobTaskRes.data.id,
+      parent_id: aliceTaskId,
+    });
+    const forgedUpdateResult = await forgedUpdatePromise;
+    expect(forgedUpdateResult.error?.message).toContain(
+      "foreign key constraint",
+    );
   });
 });

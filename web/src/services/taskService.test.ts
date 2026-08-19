@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   filterInboxTasks,
   filterCompletedTasks,
+  filterSubtasks,
   fetchTasks,
   createTask,
   updateTask,
@@ -70,6 +71,42 @@ describe("Task Domain Service Seam", () => {
         parentId: baseTask.id,
       };
       expect(filterInboxTasks([baseTask, subtask])).toEqual([baseTask]);
+    });
+  });
+
+  describe("filterSubtasks", () => {
+    it("returns only subtasks belonging to the specified parent task id", () => {
+      const subtask1: Task = {
+        ...baseTask,
+        id: "550e8400-e29b-41d4-a716-446655440005",
+        title: "Subtask 1",
+        parentId: baseTask.id,
+        createdAt: "2026-08-18T20:01:00.000Z",
+      };
+      const subtask2: Task = {
+        ...baseTask,
+        id: "550e8400-e29b-41d4-a716-446655440006",
+        title: "Subtask 2",
+        parentId: baseTask.id,
+        createdAt: "2026-08-18T20:02:00.000Z",
+      };
+      const otherSubtask: Task = {
+        ...baseTask,
+        id: "550e8400-e29b-41d4-a716-446655440007",
+        title: "Subtask under other parent",
+        parentId: "550e8400-e29b-41d4-a716-446655440999",
+      };
+
+      const result = filterSubtasks(
+        [baseTask, subtask1, otherSubtask, subtask2],
+        baseTask.id,
+      );
+      expect(result).toHaveLength(2);
+      expect(result.map((t) => t.id)).toEqual([subtask1.id, subtask2.id]);
+    });
+
+    it("returns empty array if no subtasks belong to the parent", () => {
+      expect(filterSubtasks([baseTask], baseTask.id)).toEqual([]);
     });
   });
 

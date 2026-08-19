@@ -121,7 +121,7 @@ fun getPlanLocalDate(
 }
 
 /**
- * Creates a contract-compliant Plan object from user inputs.
+ * Creates a contract-compliant Plan object from operator inputs.
  * - If date is omitted or blank, returns null.
  * - If time is omitted or blank, returns Date-only plan Plan.DateOnly(date) without fake midnight or type.
  * - If time is provided, resolves explicit type or falls back to effective default.

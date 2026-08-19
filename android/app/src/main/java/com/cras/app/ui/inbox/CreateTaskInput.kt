@@ -16,6 +16,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,15 +47,18 @@ fun CreateTaskInput(
     errorMessage: String? = null,
     modifier: Modifier = Modifier
 ) {
-    var text by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var description by remember { mutableStateOf("") }
     var priority by remember { mutableIntStateOf(4) }
     var isExpanded by remember { mutableStateOf(false) }
 
     val submit = {
-        val trimmed = text.trim()
-        if (trimmed.isNotEmpty() && !isSubmitting) {
-            onCreateTask(trimmed, null, priority)
-            text = ""
+        val trimmedTitle = title.trim()
+        if (trimmedTitle.isNotEmpty() && !isSubmitting) {
+            val desc = description.trim().ifEmpty { null }
+            onCreateTask(trimmedTitle, desc, priority)
+            title = ""
+            description = ""
             priority = 4
             isExpanded = false
         }
@@ -65,11 +70,8 @@ fun CreateTaskInput(
             verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedTextField(
-                value = text,
-                onValueChange = {
-                    text = it
-                    if (it.isNotEmpty()) isExpanded = true
-                },
+                value = title,
+                onValueChange = { title = it },
                 placeholder = {
                     Text(
                         text = "Create a task in Inbox...",
@@ -88,12 +90,23 @@ fun CreateTaskInput(
                 modifier = Modifier.weight(1f)
             )
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+
+            IconButton(
+                onClick = { isExpanded = !isExpanded },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (isExpanded) "Hide details" else "Add details",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             IconButton(
                 onClick = { submit() },
-                enabled = text.trim().isNotEmpty() && !isSubmitting,
-                modifier = Modifier.size(48.dp)
+                enabled = title.trim().isNotEmpty() && !isSubmitting,
+                modifier = Modifier.size(44.dp)
             ) {
                 if (isSubmitting) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -101,14 +114,37 @@ fun CreateTaskInput(
                     Icon(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Create task",
-                        tint = if (text.trim().isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                        tint = if (title.trim().isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                     )
                 }
             }
         }
 
-        if (isExpanded || priority < 4) {
-            Spacer(modifier = Modifier.height(6.dp))
+        if (isExpanded) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = description,
+                onValueChange = { description = it },
+                placeholder = {
+                    Text(
+                        text = "Add optional description...",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                },
+                enabled = !isSubmitting,
+                minLines = 2,
+                maxLines = 3,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                ),
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -128,7 +164,7 @@ fun CreateTaskInput(
                             .clip(RoundedCornerShape(6.dp))
                             .clickable(enabled = !isSubmitting) { priority = opt.value }
                     ) {
-                        Box(modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)) {
+                        Box(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
                             Text(
                                 text = if (opt.value == TaskPriorities.P4) "P4 (None)" else "P${opt.value}",
                                 style = MaterialTheme.typography.labelSmall,

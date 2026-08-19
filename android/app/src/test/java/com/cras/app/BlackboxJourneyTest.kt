@@ -423,7 +423,7 @@ class BlackboxJourneyTest {
             SimulatedDbRow(
                 id = UUID.randomUUID().toString(),
                 operatorId = aliceId,
-                title = "Subtask item",
+                title = "Subtask task",
                 description = null,
                 priority = 4,
                 plan = null,
@@ -477,7 +477,7 @@ class BlackboxJourneyTest {
 
         // Inbox contains ONLY the 2 open top-level undated tasks
         assertEquals(2, refreshedTasks.size)
-        assertTrue(refreshedTasks.none { it.title == "Subtask item" })
+        assertTrue(refreshedTasks.none { it.title == "Subtask task" })
         assertTrue(refreshedTasks.none { it.title == "Tomorrow meeting" })
         assertTrue(refreshedTasks.none { it.title == "Done task" })
     }

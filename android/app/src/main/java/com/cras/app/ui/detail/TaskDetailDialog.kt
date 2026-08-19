@@ -343,7 +343,7 @@ fun TaskDetailDialog(
                                     UpdateTaskParams(
                                         id = task.id,
                                         title = trimmedTitle,
-                                        description = description.trim().ifEmpty { null },
+                                        description = description.trim(),
                                         priority = priority,
                                         expectedVersion = task.version
                                     ),

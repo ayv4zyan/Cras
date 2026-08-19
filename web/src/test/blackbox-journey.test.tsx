@@ -158,7 +158,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
             .fn()
             .mockImplementation((payload: Record<string, unknown>) => {
               return {
-                eq: vi.fn().mockImplementation((col: string, val: string) => {
+                eq: vi.fn().mockImplementation((_col: string, val: string) => {
                   const runUpdate = async () => {
                     if (!currentUser) {
                       return {
@@ -232,7 +232,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
             }),
           delete: vi.fn().mockImplementation(() => {
             return {
-              eq: vi.fn().mockImplementation((col: string, val: string) => {
+              eq: vi.fn().mockImplementation((_col: string, val: string) => {
                 const runDelete = async () => {
                   if (!currentUser) {
                     return {

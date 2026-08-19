@@ -48,15 +48,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.cras.app.data.UpdateTaskParams
 import com.cras.app.domain.isCompleted
 import com.cras.app.models.Task
-
-data class PriorityOption(val level: Int, val label: String)
-
-val PRIORITY_LEVELS = listOf(
-    PriorityOption(1, "P1 - Urgent"),
-    PriorityOption(2, "P2 - High"),
-    PriorityOption(3, "P3 - Medium"),
-    PriorityOption(4, "P4 - None")
-)
+import com.cras.app.models.TaskPriorities
 
 @Composable
 fun TaskDetailDialog(
@@ -280,8 +272,8 @@ fun TaskDetailDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    PRIORITY_LEVELS.forEach { opt ->
-                        val isSelected = priority == opt.level
+                    TaskPriorities.ALL.forEach { opt ->
+                        val isSelected = priority == opt.value
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
@@ -295,7 +287,7 @@ fun TaskDetailDialog(
                                 .weight(1f)
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable(enabled = !isTaskCompleted && !isSaving) {
-                                    priority = opt.level
+                                    priority = opt.value
                                 }
                         ) {
                             Box(
@@ -303,7 +295,7 @@ fun TaskDetailDialog(
                                 modifier = Modifier.padding(vertical = 8.dp)
                             ) {
                                 Text(
-                                    text = "P${opt.level}",
+                                    text = "P${opt.value}",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant

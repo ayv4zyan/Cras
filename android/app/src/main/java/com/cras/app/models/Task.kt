@@ -180,3 +180,19 @@ data class Comment(
         require(isValidIsoDateTime(createdAt)) { "Comment createdAt must be a valid ISO 8601 date-time: $createdAt" }
     }
 }
+
+data class TaskPriorityOption(val value: Int, val label: String)
+
+object TaskPriorities {
+    const val P1 = 1
+    const val P2 = 2
+    const val P3 = 3
+    const val P4 = 4
+
+    val ALL = listOf(
+        TaskPriorityOption(P1, "P1 - Urgent"),
+        TaskPriorityOption(P2, "P2 - High"),
+        TaskPriorityOption(P3, "P3 - Medium"),
+        TaskPriorityOption(P4, "P4 - None")
+    )
+}

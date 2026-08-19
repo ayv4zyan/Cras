@@ -5,6 +5,7 @@ import com.cras.app.config.PublicSupabaseConfig
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -59,6 +60,23 @@ class SupabaseTaskService(
         return responseBody
     }
 
+    private fun executeRpc(session: OperatorSession, rpcName: String, bodyObject: JsonObject): Task {
+        val endpoint = "${config.url}/rest/v1/rpc/$rpcName"
+
+        val request = Request.Builder()
+            .url(endpoint)
+            .addHeader("apikey", config.publishableKey)
+            .addHeader("Authorization", "Bearer ${session.accessToken}")
+            .addHeader("Accept-Profile", "api")
+            .addHeader("Content-Profile", "api")
+            .addHeader("Content-Type", "application/json")
+            .post(bodyObject.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val responseBody = executeRequest(request, rpcName.replace('_', ' '))
+        return json.decodeFromString<Task>(responseBody)
+    }
+
     override suspend fun fetchTasks(session: OperatorSession): List<Task> {
         val endpoint = "${config.url}/rest/v1/tasks?select=*"
 
@@ -78,8 +96,6 @@ class SupabaseTaskService(
         val trimmedTitle = params.title.trim()
         require(trimmedTitle.isNotEmpty()) { "Task title cannot be empty" }
 
-        val endpoint = "${config.url}/rest/v1/rpc/create_task"
-
         val bodyObject = buildJsonObject {
             put("title", trimmedTitle)
             if (params.description != null) {
@@ -97,18 +113,7 @@ class SupabaseTaskService(
             })
         }
 
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("apikey", config.publishableKey)
-            .addHeader("Authorization", "Bearer ${session.accessToken}")
-            .addHeader("Accept-Profile", "api")
-            .addHeader("Content-Profile", "api")
-            .addHeader("Content-Type", "application/json")
-            .post(bodyObject.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val responseBody = executeRequest(request, "create task")
-        return json.decodeFromString<Task>(responseBody)
+        return executeRpc(session, "create_task", bodyObject)
     }
 
     override suspend fun updateTask(session: OperatorSession, params: UpdateTaskParams): Task {
@@ -119,8 +124,6 @@ class SupabaseTaskService(
         if (params.priority != null) {
             require(params.priority in 1..4) { "Priority must be between 1 and 4" }
         }
-
-        val endpoint = "${config.url}/rest/v1/rpc/update_task"
 
         val bodyObject = buildJsonObject {
             put("id", params.id)
@@ -144,18 +147,7 @@ class SupabaseTaskService(
             }
         }
 
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("apikey", config.publishableKey)
-            .addHeader("Authorization", "Bearer ${session.accessToken}")
-            .addHeader("Accept-Profile", "api")
-            .addHeader("Content-Profile", "api")
-            .addHeader("Content-Type", "application/json")
-            .post(bodyObject.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val responseBody = executeRequest(request, "update task")
-        return json.decodeFromString<Task>(responseBody)
+        return executeRpc(session, "update_task", bodyObject)
     }
 
     override suspend fun completeTask(
@@ -165,8 +157,6 @@ class SupabaseTaskService(
     ): Task {
         require(taskId.isNotBlank()) { "Task id cannot be empty" }
 
-        val endpoint = "${config.url}/rest/v1/rpc/complete_task"
-
         val bodyObject = buildJsonObject {
             put("id", taskId)
             if (completedAt != null) {
@@ -174,40 +164,16 @@ class SupabaseTaskService(
             }
         }
 
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("apikey", config.publishableKey)
-            .addHeader("Authorization", "Bearer ${session.accessToken}")
-            .addHeader("Accept-Profile", "api")
-            .addHeader("Content-Profile", "api")
-            .addHeader("Content-Type", "application/json")
-            .post(bodyObject.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val responseBody = executeRequest(request, "complete task")
-        return json.decodeFromString<Task>(responseBody)
+        return executeRpc(session, "complete_task", bodyObject)
     }
 
     override suspend fun uncompleteTask(session: OperatorSession, taskId: String): Task {
         require(taskId.isNotBlank()) { "Task id cannot be empty" }
 
-        val endpoint = "${config.url}/rest/v1/rpc/uncomplete_task"
-
         val bodyObject = buildJsonObject {
             put("id", taskId)
         }
 
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("apikey", config.publishableKey)
-            .addHeader("Authorization", "Bearer ${session.accessToken}")
-            .addHeader("Accept-Profile", "api")
-            .addHeader("Content-Profile", "api")
-            .addHeader("Content-Type", "application/json")
-            .post(bodyObject.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val responseBody = executeRequest(request, "uncomplete task")
-        return json.decodeFromString<Task>(responseBody)
+        return executeRpc(session, "uncomplete_task", bodyObject)
     }
 }

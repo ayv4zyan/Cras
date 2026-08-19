@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.cras.app.models.TaskPriorities
 
 @Composable
 fun CreateTaskInput(
@@ -118,18 +119,18 @@ fun CreateTaskInput(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                listOf(1, 2, 3, 4).forEach { p ->
-                    val isSelected = priority == p
+                TaskPriorities.ALL.forEach { opt ->
+                    val isSelected = priority == opt.value
                     Surface(
                         shape = RoundedCornerShape(6.dp),
                         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
-                            .clickable(enabled = !isSubmitting) { priority = p }
+                            .clickable(enabled = !isSubmitting) { priority = opt.value }
                     ) {
                         Box(modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)) {
                             Text(
-                                text = if (p == 4) "P4 (None)" else "P$p",
+                                text = if (opt.value == TaskPriorities.P4) "P4 (None)" else "P${opt.value}",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                 color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant

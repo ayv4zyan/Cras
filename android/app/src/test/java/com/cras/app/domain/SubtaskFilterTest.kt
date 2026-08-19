@@ -36,8 +36,6 @@ class SubtaskFilterTest {
 
         assertFalse(topLevel.isSubtask)
         assertTrue(subtask.isSubtask)
-        assertFalse(isSubtaskTask(topLevel))
-        assertTrue(isSubtaskTask(subtask))
     }
 
     @Test

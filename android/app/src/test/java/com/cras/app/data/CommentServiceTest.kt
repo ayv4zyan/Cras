@@ -116,7 +116,7 @@ class CommentServiceTest {
             {
                 "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                 "taskId": "550e8400-e29b-41d4-a716-446655440010",
-                "content": "New observation note",
+                "content": "Verified staging replication metrics",
                 "createdAt": "2026-08-19T11:00:00Z"
             }
         """.trimIndent()
@@ -132,14 +132,14 @@ class CommentServiceTest {
             session = testSession,
             params = CreateCommentParams(
                 taskId = "550e8400-e29b-41d4-a716-446655440010",
-                content = "New observation note"
+                content = "Verified staging replication metrics"
             )
         )
 
         assertNotNull(comment)
         assertEquals("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", comment.id)
         assertEquals("550e8400-e29b-41d4-a716-446655440010", comment.taskId)
-        assertEquals("New observation note", comment.content)
+        assertEquals("Verified staging replication metrics", comment.content)
         assertEquals("2026-08-19T11:00:00Z", comment.createdAt)
 
         val request = mockWebServer.takeRequest()
@@ -150,7 +150,7 @@ class CommentServiceTest {
 
         val body = request.body.readUtf8()
         assertTrue(body.contains("\"task_id\":\"550e8400-e29b-41d4-a716-446655440010\""))
-        assertTrue(body.contains("\"content\":\"New observation note\""))
+        assertTrue(body.contains("\"content\":\"Verified staging replication metrics\""))
     }
 
     @Test

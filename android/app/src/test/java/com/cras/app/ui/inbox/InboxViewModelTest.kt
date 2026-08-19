@@ -541,14 +541,14 @@ class InboxViewModelTest {
 
         // 1. Add comment
         var createdComment: Comment? = null
-        viewModel.createComment(task.id, "First feedback note", onSuccess = { createdComment = it })
+        viewModel.createComment(task.id, "First feedback remark", onSuccess = { createdComment = it })
         advanceUntilIdle()
 
         assertNotNull(createdComment)
-        assertEquals("First feedback note", createdComment!!.content)
+        assertEquals("First feedback remark", createdComment!!.content)
         assertEquals(task.id, createdComment!!.taskId)
         assertEquals(1, viewModel.comments.value.size)
-        assertEquals("First feedback note", viewModel.comments.value[0].content)
+        assertEquals("First feedback remark", viewModel.comments.value[0].content)
 
         // 2. Reject empty comment
         var commentError: String? = null

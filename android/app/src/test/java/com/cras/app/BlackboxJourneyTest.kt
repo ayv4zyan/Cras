@@ -1236,13 +1236,13 @@ class BlackboxJourneyTest {
         // 1. Create a top-level task with Description
         viewModel.createTask(
             title = "Production Incident Triage",
-            description = "Initial incident notes in description field"
+            description = "Initial incident details in description field"
         )
         advanceUntilIdle()
 
         val task = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
         assertEquals("Production Incident Triage", task.title)
-        assertEquals("Initial incident notes in description field", task.description)
+        assertEquals("Initial incident details in description field", task.description)
 
         // 2. Add first dated comment
         var comment1: Comment? = null
@@ -1277,7 +1277,7 @@ class BlackboxJourneyTest {
 
         // Description is unaffected and distinct
         val refreshedTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
-        assertEquals("Initial incident notes in description field", refreshedTask.description)
+        assertEquals("Initial incident details in description field", refreshedTask.description)
 
         // 5. Empty comment content is rejected
         var emptyCommentError: String? = null
@@ -1361,7 +1361,7 @@ class BlackboxJourneyTest {
         assertNotNull(aliceSubtask)
 
         var aliceComment: Comment? = null
-        aliceViewModel.createComment(aliceTask.id, "Alice confidential note", onSuccess = { aliceComment = it })
+        aliceViewModel.createComment(aliceTask.id, "Alice confidential remark", onSuccess = { aliceComment = it })
         advanceUntilIdle()
         assertNotNull(aliceComment)
 
@@ -1382,7 +1382,7 @@ class BlackboxJourneyTest {
         assertNotNull(bobSubtaskError)
 
         var bobCommentError: String? = null
-        bobViewModel.createComment(aliceTask.id, "Bob snooping note", onError = { bobCommentError = it })
+        bobViewModel.createComment(aliceTask.id, "Bob snooping remark", onError = { bobCommentError = it })
         advanceUntilIdle()
         assertNotNull(bobCommentError)
     }

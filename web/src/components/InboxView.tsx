@@ -1,11 +1,13 @@
 import React from "react";
-import { Layers, Circle } from "lucide-react";
-import { type Priority, type Task } from "../contracts/task";
-import type { CreateTaskParams } from "../services/taskService";
+import { CheckSquare, Circle } from "lucide-react";
 import { CreateTaskInput } from "./CreateTaskInput";
+import { TaskLabelBadges } from "./TaskLabelBadges";
+import { type Priority, type Task, type Label } from "../contracts/task";
+import type { CreateTaskParams } from "../services/taskService";
 
 export interface InboxViewProps {
   readonly tasks: readonly Task[];
+  readonly labels?: readonly Label[];
   readonly onCreateTask: (
     params: CreateTaskParams | string,
     description?: string | null,
@@ -18,6 +20,7 @@ export interface InboxViewProps {
 
 export function InboxView({
   tasks,
+  labels = [],
   onCreateTask,
   onCompleteTask,
   onSelectTask,
@@ -41,7 +44,10 @@ export function InboxView({
       <div className="flex-1 p-8 max-w-3xl w-full mx-auto space-y-6">
         {/* Quick Task Creation */}
         <div className="space-y-1">
-          <CreateTaskInput onCreateTask={onCreateTask} />
+          <CreateTaskInput
+            onCreateTask={onCreateTask}
+            availableLabels={labels}
+          />
         </div>
 
         {/* Task List / Empty State */}
@@ -52,7 +58,7 @@ export function InboxView({
         ) : tasks.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center space-y-4">
             <div className="w-12 h-12 rounded-full bg-secondary/80 flex items-center justify-center text-muted-foreground">
-              <Layers className="h-6 w-6" />
+              <CheckSquare className="h-6 w-6" />
             </div>
 
             <div className="space-y-1.5 max-w-sm">
@@ -88,7 +94,7 @@ export function InboxView({
                   >
                     <Circle className="h-4 w-4" />
                   </button>
-                  <div className="min-w-0">
+                  <div className="min-w-0 space-y-0.5">
                     <span className="text-sm font-medium text-foreground truncate block">
                       {task.title}
                     </span>
@@ -97,6 +103,7 @@ export function InboxView({
                         {task.description}
                       </p>
                     )}
+                    <TaskLabelBadges labelIds={task.labels} labels={labels} />
                   </div>
                 </div>
 

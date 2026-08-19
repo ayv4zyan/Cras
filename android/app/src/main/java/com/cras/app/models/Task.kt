@@ -181,6 +181,25 @@ data class Comment(
     }
 }
 
+private val HEX_COLOR_REGEX = Regex("""^#[0-9a-fA-F]{6}$""")
+
+@Serializable
+data class Label(
+    val id: String,
+    val name: String,
+    val color: String,
+    val createdAt: String,
+    val updatedAt: String
+) {
+    init {
+        require(isValidUuid(id)) { "Label id must be a valid UUID: $id" }
+        require(name.trim().isNotEmpty()) { "Label name must not be empty" }
+        require(HEX_COLOR_REGEX.matches(color)) { "Label color must be a valid 6-digit hex code: $color" }
+        require(isValidIsoDateTime(createdAt)) { "Label createdAt must be a valid ISO 8601 date-time: $createdAt" }
+        require(isValidIsoDateTime(updatedAt)) { "Label updatedAt must be a valid ISO 8601 date-time: $updatedAt" }
+    }
+}
+
 data class TaskPriorityOption(val value: Int, val label: String)
 
 object TaskPriorities {

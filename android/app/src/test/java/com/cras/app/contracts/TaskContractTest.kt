@@ -1,6 +1,7 @@
 package com.cras.app.contracts
 
 import com.cras.app.models.Comment
+import com.cras.app.models.Label
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import kotlinx.serialization.json.Json
@@ -28,14 +29,18 @@ class TaskContractTest {
 
     private val invalidExamplesDir: File = File(examplesDir, "invalid")
 
-    private fun isCommentFixture(file: File): Boolean = file.name.contains("comment")
+    private fun isCommentFixture(file: File): Boolean =
+        file.name == "comment.json" || file.name.startsWith("invalid-comment-")
+
+    private fun isLabelFixture(file: File): Boolean =
+        file.name == "label.json" || file.name.startsWith("invalid-label-")
 
     private fun decodeFixture(file: File): Any {
         val content = file.readText()
-        return if (isCommentFixture(file)) {
-            json.decodeFromString<Comment>(content)
-        } else {
-            json.decodeFromString<Task>(content)
+        return when {
+            isCommentFixture(file) -> json.decodeFromString<Comment>(content)
+            isLabelFixture(file) -> json.decodeFromString<Label>(content)
+            else -> json.decodeFromString<Task>(content)
         }
     }
 
@@ -64,6 +69,11 @@ class TaskContractTest {
                     assertNotNull("Comment ID should not be null", model.id)
                     assertNotNull("Comment taskId should not be null", model.taskId)
                     assertTrue("Comment content should not be empty", model.content.isNotEmpty())
+                }
+                is Label -> {
+                    assertNotNull("Label ID should not be null", model.id)
+                    assertTrue("Label name should not be empty", model.name.isNotEmpty())
+                    assertTrue("Label color should start with #", model.color.startsWith("#"))
                 }
                 is Task -> {
                     assertNotNull("Task ID should not be null", model.id)
@@ -145,5 +155,14 @@ class TaskContractTest {
         assertEquals("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", comment.id)
         assertEquals("11111111-1111-1111-1111-111111111111", comment.taskId)
         assertEquals("Verified the staging run logs and all services healthy.", comment.content)
+
+        // 9. Label
+        val labelFile = File(examplesDir, "label.json")
+        assertTrue("label.json should exist", labelFile.exists())
+        val label = json.decodeFromString<Label>(labelFile.readText())
+        assertEquals("22222222-2222-2222-2222-222222222222", label.id)
+        assertEquals("Urgent", label.name)
+        assertEquals("#ef4444", label.color)
     }
 }
+

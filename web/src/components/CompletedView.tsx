@@ -1,9 +1,11 @@
 import React from "react";
 import { CheckCircle2, CheckSquare } from "lucide-react";
-import type { Task } from "../contracts/task";
+import { TaskLabelBadges } from "./TaskLabelBadges";
+import type { Task, Label } from "../contracts/task";
 
 export interface CompletedViewProps {
   readonly tasks: readonly Task[];
+  readonly labels?: readonly Label[];
   readonly onUncompleteTask: (task: Task) => Promise<void> | void;
   readonly onSelectTask?: (task: Task) => void;
   readonly isLoading?: boolean;
@@ -11,6 +13,7 @@ export interface CompletedViewProps {
 
 export function CompletedView({
   tasks,
+  labels = [],
   onUncompleteTask,
   onSelectTask,
   isLoading = false,
@@ -73,7 +76,7 @@ export function CompletedView({
                   >
                     <CheckCircle2 className="h-4 w-4" />
                   </button>
-                  <div className="min-w-0">
+                  <div className="min-w-0 space-y-0.5">
                     <span className="text-sm font-medium text-muted-foreground line-through truncate block">
                       {task.title}
                     </span>
@@ -82,6 +85,7 @@ export function CompletedView({
                         {task.description}
                       </p>
                     )}
+                    <TaskLabelBadges labelIds={task.labels} labels={labels} />
                   </div>
                 </div>
 

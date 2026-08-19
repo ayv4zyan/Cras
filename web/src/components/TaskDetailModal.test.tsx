@@ -77,6 +77,7 @@ describe("TaskDetailModal Component", () => {
         title: "Updated Documentation",
         description: "Updated description text",
         priority: 1,
+        labels: [],
         expectedVersion: openTask.version,
       });
     });
@@ -140,6 +141,65 @@ describe("TaskDetailModal Component", () => {
     fireEvent.click(completeBtn);
     await waitFor(() => {
       expect(handleToggleComplete).toHaveBeenCalledWith(openTask);
+    });
+  });
+
+  it("renders labels and allows adding and removing labels on an open task", async () => {
+    const handleSave = vi.fn().mockResolvedValue(undefined);
+    const availableLabels = [
+      {
+        id: "22222222-2222-2222-2222-222222222222",
+        name: "Urgent",
+        color: "#ef4444",
+      },
+      {
+        id: "33333333-3333-3333-3333-333333333333",
+        name: "Work",
+        color: "#3b82f6",
+      },
+    ];
+
+    const taskWithLabel: Task = {
+      ...openTask,
+      labels: ["22222222-2222-2222-2222-222222222222"],
+    };
+
+    render(
+      <TaskDetailModal
+        task={taskWithLabel}
+        isOpen={true}
+        availableLabels={availableLabels}
+        onClose={vi.fn()}
+        onSave={handleSave}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    // Urgent is currently checked, Work is not
+    const urgentCheckbox = screen.getByLabelText("Urgent");
+    const workCheckbox = screen.getByLabelText("Work");
+
+    expect(urgentCheckbox).toBeChecked();
+    expect(workCheckbox).not.toBeChecked();
+
+    // Toggle Work on
+    fireEvent.click(workCheckbox);
+
+    const saveButton = screen.getByRole("button", { name: /save changes/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(handleSave).toHaveBeenCalledWith({
+        id: taskWithLabel.id,
+        title: taskWithLabel.title,
+        description: taskWithLabel.description,
+        priority: taskWithLabel.priority,
+        expectedVersion: taskWithLabel.version,
+        labels: [
+          "22222222-2222-2222-2222-222222222222",
+          "33333333-3333-3333-3333-333333333333",
+        ],
+      });
     });
   });
 });

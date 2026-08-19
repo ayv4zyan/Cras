@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from "react";
-import { Plus, Loader2, SlidersHorizontal, ChevronUp } from "lucide-react";
-import { PRIORITY_OPTIONS, type Priority } from "../contracts/task";
+import { Plus, Loader2, SlidersHorizontal, ChevronUp, Tag } from "lucide-react";
+import { PRIORITY_OPTIONS, type Priority, type Label } from "../contracts/task";
 import type { CreateTaskParams } from "../services/taskService";
 
 export interface CreateTaskInputProps {
@@ -9,21 +9,32 @@ export interface CreateTaskInputProps {
     description?: string | null,
     priority?: Priority,
   ) => Promise<void> | void;
+  readonly availableLabels?: readonly Label[];
   readonly placeholder?: string;
   readonly className?: string;
 }
 
 export function CreateTaskInput({
   onCreateTask,
+  availableLabels = [],
   placeholder = "Create a task in Inbox...",
   className = "",
 }: CreateTaskInputProps): React.JSX.Element {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<Priority>(4);
+  const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const toggleLabel = useCallback((labelId: string) => {
+    setSelectedLabels((prev) =>
+      prev.includes(labelId)
+        ? prev.filter((id) => id !== labelId)
+        : [...prev, labelId],
+    );
+  }, []);
 
   const handleSubmit = useCallback(
     async (e?: React.FormEvent) => {
@@ -42,14 +53,24 @@ export function CreateTaskInput({
       try {
         const desc = description.trim() || null;
         const prio = priority === 4 ? undefined : priority;
-        if (desc !== null || prio !== undefined) {
+
+        if (selectedLabels.length > 0) {
+          await onCreateTask({
+            title: trimmed,
+            description: desc,
+            priority: prio ?? 4,
+            labels: selectedLabels,
+          });
+        } else if (desc !== null || prio !== undefined) {
           await onCreateTask(trimmed, desc, prio);
         } else {
           await onCreateTask(trimmed);
         }
+
         setTitle("");
         setDescription("");
         setPriority(4);
+        setSelectedLabels([]);
         setIsExpanded(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to create task");
@@ -57,7 +78,7 @@ export function CreateTaskInput({
         setIsSubmitting(false);
       }
     },
-    [title, description, priority, isSubmitting, onCreateTask],
+    [title, description, priority, selectedLabels, isSubmitting, onCreateTask],
   );
 
   const handleKeyDown = useCallback(
@@ -150,6 +171,43 @@ export function CreateTaskInput({
                 ))}
               </select>
             </div>
+
+            {availableLabels.length > 0 && (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center space-x-1.5 text-xs text-muted-foreground">
+                  <Tag className="h-3 w-3" />
+                  <span>Labels:</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {availableLabels.map((label) => {
+                    const isSelected = selectedLabels.includes(label.id);
+                    return (
+                      <label
+                        key={label.id}
+                        className={`inline-flex items-center space-x-1.5 px-2 py-1 rounded-md text-xs border cursor-pointer select-none transition-colors ${
+                          isSelected
+                            ? "border-primary bg-primary/10 text-primary font-medium"
+                            : "border-border/60 bg-background text-muted-foreground hover:bg-secondary/60"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleLabel(label.id)}
+                          className="sr-only"
+                          aria-label={label.name}
+                        />
+                        <span
+                          className="h-2 w-2 rounded-full shrink-0"
+                          style={{ backgroundColor: label.color }}
+                        />
+                        <span>{label.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

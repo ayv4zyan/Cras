@@ -3,7 +3,7 @@ import Ajv2020 from "ajv/dist/2020";
 import addFormats from "ajv-formats";
 import fs from "node:fs";
 import path from "node:path";
-import { parseTask, parseComment } from "./task";
+import { parseTask, parseComment, parseLabel } from "./task";
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 addFormats(ajv);
@@ -24,6 +24,15 @@ const commentSchemaContent = JSON.parse(
 );
 const validateComment = ajv.compile(commentSchemaContent);
 
+const labelSchemaPath = path.resolve(
+  __dirname,
+  "../../../contracts/schemas/label.schema.json",
+);
+const labelSchemaContent = JSON.parse(
+  fs.readFileSync(labelSchemaPath, "utf-8"),
+);
+const validateLabel = ajv.compile(labelSchemaContent);
+
 const examplesDir = path.resolve(__dirname, "../../../contracts/examples");
 const validFiles = fs
   .readdirSync(examplesDir)
@@ -40,13 +49,18 @@ const invalidFiles = fs
 describe("Shared Contract Suite - Web", () => {
   describe("Valid Golden Fixtures", () => {
     it("has comprehensive valid golden fixtures", () => {
-      expect(validFiles.length).toBeGreaterThanOrEqual(7);
+      expect(validFiles.length).toBeGreaterThanOrEqual(8);
     });
 
     for (const file of validFiles) {
       const isComment = file.startsWith("comment");
-      const validate = isComment ? validateComment : validateTask;
-      const parse = isComment ? parseComment : parseTask;
+      const isLabel = file.startsWith("label.");
+      const validate = isLabel
+        ? validateLabel
+        : isComment
+          ? validateComment
+          : validateTask;
+      const parse = isLabel ? parseLabel : isComment ? parseComment : parseTask;
 
       it(`validates golden fixture ${file} against JSON Schema`, () => {
         const filePath = path.join(examplesDir, file);
@@ -69,19 +83,27 @@ describe("Shared Contract Suite - Web", () => {
         if ("content" in parsed && "content" in raw) {
           expect(parsed.content).toBe(raw.content);
         }
+        if ("name" in parsed && "name" in raw) {
+          expect(parsed.name).toBe(raw.name);
+        }
       });
     }
   });
 
   describe("Invalid Boundary Fixtures", () => {
     it("has comprehensive invalid boundary fixtures", () => {
-      expect(invalidFiles.length).toBeGreaterThanOrEqual(10);
+      expect(invalidFiles.length).toBeGreaterThanOrEqual(12);
     });
 
     for (const file of invalidFiles) {
       const isComment = file.includes("comment");
-      const validate = isComment ? validateComment : validateTask;
-      const parse = isComment ? parseComment : parseTask;
+      const isLabel = file.includes("label") && !file.includes("labels");
+      const validate = isLabel
+        ? validateLabel
+        : isComment
+          ? validateComment
+          : validateTask;
+      const parse = isLabel ? parseLabel : isComment ? parseComment : parseTask;
 
       it(`rejects invalid fixture ${file} with JSON Schema`, () => {
         const filePath = path.join(invalidExamplesDir, file);

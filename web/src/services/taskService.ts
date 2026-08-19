@@ -19,6 +19,7 @@ export interface UpdateTaskParams {
   readonly plan?: Plan;
   readonly parentId?: string | null;
   readonly expectedVersion?: number;
+  readonly labels?: string[];
 }
 
 /**
@@ -116,6 +117,7 @@ export async function updateTask(
     plan: input.plan ?? null,
     parent_id: input.parentId ?? null,
     expected_version: input.expectedVersion ?? null,
+    labels: input.labels ?? null,
   });
 
   if (error) {

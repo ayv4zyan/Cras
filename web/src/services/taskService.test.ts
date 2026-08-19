@@ -322,11 +322,96 @@ describe("Task Domain Service Seam", () => {
         parent_id: null,
         expected_version: 1,
         labels: ["22222222-2222-2222-2222-222222222222"],
+        clear_plan: false,
       });
       expect(task.title).toBe("Updated Title");
       expect(task.priority).toBe(1);
       expect(task.labels).toEqual(["22222222-2222-2222-2222-222222222222"]);
       expect(task.version).toBe(2);
+    });
+
+    it("updates task with a new Plan", async () => {
+      const rawUpdated = {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Planned Task",
+        description: null,
+        priority: 2,
+        plan: { type: "floating", date: "2026-08-20", time: "10:00" },
+        labels: [],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-18T20:00:00.000Z",
+        updatedAt: "2026-08-18T20:10:00.000Z",
+        version: 2,
+      };
+
+      const mockRpc = vi
+        .fn()
+        .mockResolvedValue({ data: rawUpdated, error: null });
+      const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
+      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
+
+      const task = await updateTask(mockClient, {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        plan: { type: "floating", date: "2026-08-20", time: "10:00" },
+      });
+
+      expect(mockRpc).toHaveBeenCalledWith("update_task", {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        title: null,
+        description: null,
+        priority: null,
+        plan: { type: "floating", date: "2026-08-20", time: "10:00" },
+        parent_id: null,
+        expected_version: null,
+        labels: null,
+        clear_plan: false,
+      });
+      expect(task.plan).toEqual({
+        type: "floating",
+        date: "2026-08-20",
+        time: "10:00",
+      });
+    });
+
+    it("clears task plan (moves to Inbox) when plan is null", async () => {
+      const rawUpdated = {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Cleared Task",
+        description: null,
+        priority: 4,
+        plan: null,
+        labels: [],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-18T20:00:00.000Z",
+        updatedAt: "2026-08-18T20:10:00.000Z",
+        version: 2,
+      };
+
+      const mockRpc = vi
+        .fn()
+        .mockResolvedValue({ data: rawUpdated, error: null });
+      const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
+      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
+
+      const task = await updateTask(mockClient, {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        plan: null,
+      });
+
+      expect(mockRpc).toHaveBeenCalledWith("update_task", {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        title: null,
+        description: null,
+        priority: null,
+        plan: null,
+        parent_id: null,
+        expected_version: null,
+        labels: null,
+        clear_plan: true,
+      });
+      expect(task.plan).toBeNull();
     });
 
     it("rejects empty or whitespace-only titles when title is provided", async () => {

@@ -1,7 +1,20 @@
 import React, { useState, useCallback } from "react";
-import { Plus, Loader2, SlidersHorizontal, ChevronUp, Tag } from "lucide-react";
+import {
+  Plus,
+  Loader2,
+  SlidersHorizontal,
+  ChevronUp,
+  Tag,
+  Calendar,
+  Clock,
+} from "lucide-react";
 import { PRIORITY_OPTIONS, type Priority, type Label } from "../contracts/task";
 import type { CreateTaskParams } from "../services/taskService";
+import {
+  createPlanFromInputs,
+  getDeviceLocalDate,
+  type TimedPlanType,
+} from "../services/temporalService";
 
 export interface CreateTaskInputProps {
   readonly onCreateTask: (
@@ -12,6 +25,8 @@ export interface CreateTaskInputProps {
   readonly availableLabels?: readonly Label[];
   readonly placeholder?: string;
   readonly className?: string;
+  readonly defaultDate?: string | null;
+  readonly effectiveDefault?: TimedPlanType;
 }
 
 export function CreateTaskInput({
@@ -19,11 +34,18 @@ export function CreateTaskInput({
   availableLabels = [],
   placeholder = "Create a task in Inbox...",
   className = "",
+  defaultDate = null,
+  effectiveDefault = "instant",
 }: CreateTaskInputProps): React.JSX.Element {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<Priority>(4);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
+  const [planDate, setPlanDate] = useState<string>(defaultDate ?? "");
+  const [planTime, setPlanTime] = useState<string>("");
+  const [timedType, setTimedType] = useState<"default" | TimedPlanType>(
+    "default",
+  );
   const [isExpanded, setIsExpanded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +57,26 @@ export function CreateTaskInput({
         : [...prev, labelId],
     );
   }, []);
+
+  const handleSetQuickDate = useCallback(
+    (type: "none" | "today" | "tomorrow") => {
+      const now = new Date();
+      if (type === "none") {
+        setPlanDate("");
+        setPlanTime("");
+      } else if (type === "today") {
+        setPlanDate(getDeviceLocalDate(now));
+      } else if (type === "tomorrow") {
+        const tomorrow = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate() + 1,
+        );
+        setPlanDate(getDeviceLocalDate(tomorrow));
+      }
+    },
+    [],
+  );
 
   const handleSubmit = useCallback(
     async (e?: React.FormEvent) => {
@@ -54,11 +96,19 @@ export function CreateTaskInput({
         const desc = description.trim() || null;
         const prio = priority === 4 ? undefined : priority;
 
-        if (selectedLabels.length > 0) {
+        const plan = createPlanFromInputs({
+          date: planDate || null,
+          time: planTime || null,
+          type: timedType === "default" ? null : timedType,
+          effectiveDefault,
+        });
+
+        if (selectedLabels.length > 0 || plan !== null) {
           await onCreateTask({
             title: trimmed,
             description: desc,
             priority: prio ?? 4,
+            plan,
             labels: selectedLabels,
           });
         } else if (desc !== null || prio !== undefined) {
@@ -71,6 +121,9 @@ export function CreateTaskInput({
         setDescription("");
         setPriority(4);
         setSelectedLabels([]);
+        setPlanDate(defaultDate ?? "");
+        setPlanTime("");
+        setTimedType("default");
         setIsExpanded(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to create task");
@@ -78,7 +131,19 @@ export function CreateTaskInput({
         setIsSubmitting(false);
       }
     },
-    [title, description, priority, selectedLabels, isSubmitting, onCreateTask],
+    [
+      title,
+      description,
+      priority,
+      selectedLabels,
+      planDate,
+      planTime,
+      timedType,
+      effectiveDefault,
+      defaultDate,
+      isSubmitting,
+      onCreateTask,
+    ],
   );
 
   const handleKeyDown = useCallback(
@@ -148,7 +213,101 @@ export function CreateTaskInput({
               />
             </div>
 
-            <div className="flex items-center space-x-3">
+            {/* Plan / Date / Time Section */}
+            <div className="space-y-2 pt-1 border-t border-border/40">
+              <div className="flex items-center space-x-1.5 text-xs font-medium text-muted-foreground">
+                <Calendar className="h-3.5 w-3.5" />
+                <span>Plan Date & Time:</span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Quick Date Buttons */}
+                <div className="flex items-center space-x-1">
+                  <button
+                    type="button"
+                    onClick={() => handleSetQuickDate("none")}
+                    className={`px-2 py-1 rounded-md text-xs border transition-colors cursor-pointer ${
+                      !planDate
+                        ? "border-primary bg-primary/10 text-primary font-medium"
+                        : "border-border/60 bg-background text-muted-foreground hover:bg-secondary"
+                    }`}
+                  >
+                    Inbox
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetQuickDate("today")}
+                    className={`px-2 py-1 rounded-md text-xs border transition-colors cursor-pointer ${
+                      planDate === getDeviceLocalDate()
+                        ? "border-primary bg-primary/10 text-primary font-medium"
+                        : "border-border/60 bg-background text-muted-foreground hover:bg-secondary"
+                    }`}
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetQuickDate("tomorrow")}
+                    className="px-2 py-1 rounded-md text-xs border border-border/60 bg-background text-muted-foreground hover:bg-secondary transition-colors cursor-pointer"
+                  >
+                    Tomorrow
+                  </button>
+                </div>
+
+                {/* Custom Date Input */}
+                <input
+                  type="date"
+                  value={planDate}
+                  onChange={(e) => setPlanDate(e.target.value)}
+                  disabled={isSubmitting}
+                  aria-label="Plan Date"
+                  className="rounded-md border border-border/70 bg-background/60 px-2 py-1 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
+                />
+
+                {/* Time Input (only active if date is set) */}
+                {planDate && (
+                  <div className="flex items-center space-x-1.5 animate-in fade-in-50">
+                    <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                    <input
+                      type="time"
+                      value={planTime}
+                      onChange={(e) => setPlanTime(e.target.value)}
+                      disabled={isSubmitting}
+                      aria-label="Plan Time"
+                      className="rounded-md border border-border/70 bg-background/60 px-2 py-1 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
+                    />
+
+                    {/* Timed Type Dropdown when time is entered */}
+                    {planTime && (
+                      <select
+                        value={timedType}
+                        onChange={(e) =>
+                          setTimedType(
+                            e.target.value as "default" | TimedPlanType,
+                          )
+                        }
+                        disabled={isSubmitting}
+                        aria-label="Plan Type"
+                        className="rounded-md border border-border/70 bg-background/60 px-2 py-1 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring cursor-pointer"
+                      >
+                        <option value="default">
+                          Default (
+                          {effectiveDefault === "instant"
+                            ? "Instant"
+                            : "Floating"}
+                          )
+                        </option>
+                        <option value="instant">Instant</option>
+                        <option value="floating">Floating</option>
+                      </select>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Priority Section */}
+            <div className="flex items-center space-x-3 pt-1">
               <label
                 htmlFor="create-task-priority"
                 className="text-xs font-medium text-muted-foreground"
@@ -172,6 +331,7 @@ export function CreateTaskInput({
               </select>
             </div>
 
+            {/* Labels Section */}
             {availableLabels.length > 0 && (
               <div className="space-y-1.5 pt-1">
                 <div className="flex items-center space-x-1.5 text-xs text-muted-foreground">

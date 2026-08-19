@@ -15,6 +15,7 @@ import type {
   Plan,
   Comment as TaskCommentContract,
 } from "../contracts/task";
+import { getDeviceLocalDate } from "../services/temporalService";
 
 describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, #43, & #45)", () => {
   // In-memory simulated Postgres database for black-box testing
@@ -93,6 +94,27 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
         signOut: vi.fn().mockResolvedValue({ error: null }),
       },
       from: (tableName: string) => {
+        if (tableName === "settings") {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: null,
+                error: null,
+              }),
+            })),
+            upsert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        if (tableName === "deployment_config") {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { default_timed_plan_type: "instant" },
+                error: null,
+              }),
+            })),
+          };
+        }
         if (tableName !== "labels")
           throw new Error(`Unknown public table: ${tableName}`);
 
@@ -600,9 +622,11 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                     ? (params.priority as number)
                     : existing.priority,
                 plan:
-                  params.plan !== undefined
-                    ? (params.plan as Plan)
-                    : existing.plan,
+                  params.clear_plan === true
+                    ? null
+                    : params.plan !== undefined && params.plan !== null
+                      ? (params.plan as Plan)
+                      : existing.plan,
                 parent_id:
                   params.parent_id !== undefined
                     ? (params.parent_id as string | null)
@@ -1965,5 +1989,156 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     expect(forgedUpdateResult.error?.message).toContain(
       "foreign key constraint",
     );
+  });
+
+  it("Journey 7 (Issue #47): Plans tasks with temporal semantics and navigates Today and Upcoming views", async () => {
+    const operator: User = {
+      id: "operator-temporal-uuid",
+      email: "planner@example.com",
+    } as User;
+
+    const client = createMockSupabaseForOperator(operator);
+
+    const now = new Date();
+    const todayStr = getDeviceLocalDate(now);
+    const yesterdayDate = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - 1,
+    );
+    const yesterdayStr = getDeviceLocalDate(yesterdayDate);
+    const futureDate = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 6,
+    );
+    const futureStr = getDeviceLocalDate(futureDate);
+
+    // 1. Pre-seed tasks: 1 inbox task, 1 today task, 1 overdue task, 1 upcoming task
+    await client.schema("api").rpc("create_task", {
+      title: "Inbox Task",
+      plan: null,
+    });
+
+    await client.schema("api").rpc("create_task", {
+      title: "Today Urgent Task",
+      plan: { date: todayStr },
+      priority: 1,
+    });
+
+    await client.schema("api").rpc("create_task", {
+      title: "Overdue Task",
+      plan: { date: yesterdayStr },
+      priority: 2,
+    });
+
+    await client.schema("api").rpc("create_task", {
+      title: "Future Floating Task",
+      plan: { type: "floating", date: futureStr, time: "14:00" },
+      priority: 3,
+    });
+
+    const { unmount } = render(
+      <AuthProvider client={client}>
+        <CrasApp client={client} />
+      </AuthProvider>,
+    );
+
+    // Initial view is Inbox: should show only Inbox Task
+    await waitFor(() => {
+      expect(screen.getByText("Inbox Task")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Today Urgent Task")).not.toBeInTheDocument();
+    expect(screen.queryByText("Overdue Task")).not.toBeInTheDocument();
+    expect(screen.queryByText("Future Floating Task")).not.toBeInTheDocument();
+
+    // 2. Navigate to Today View
+    const todayNavBtn = screen.getByRole("button", { name: /today/i });
+    fireEvent.click(todayNavBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Today Urgent Task")).toBeInTheDocument();
+      expect(screen.getByText("Overdue Task")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Inbox Task")).not.toBeInTheDocument();
+    expect(screen.queryByText("Future Floating Task")).not.toBeInTheDocument();
+
+    // 3. Navigate to Upcoming View
+    const upcomingNavBtn = screen.getByRole("button", { name: /upcoming/i });
+    fireEvent.click(upcomingNavBtn);
+
+    await waitFor(() => {
+      // Overdue section
+      expect(screen.getByText(/overdue \(\d+\)/i)).toBeInTheDocument();
+      expect(screen.getByText("Overdue Task")).toBeInTheDocument();
+      // Future tasks
+      expect(screen.getByText("Today Urgent Task")).toBeInTheDocument();
+      expect(screen.getByText("Future Floating Task")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Inbox Task")).not.toBeInTheDocument();
+
+    // 4. Open Task Detail modal on Future Floating Task and edit plan
+    const futureTaskItem = screen.getByText("Future Floating Task");
+    fireEvent.click(futureTaskItem);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: /task details/i }),
+      ).toBeInTheDocument();
+    });
+
+    // Remove clock time -> becomes Date-only
+    const timeInput = screen.getByLabelText(/task plan time/i);
+    fireEvent.change(timeInput, { target: { value: "" } });
+
+    const saveChangesBtn = screen.getByRole("button", {
+      name: /save changes/i,
+    });
+    fireEvent.click(saveChangesBtn);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: /task details/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    // Check DB state: plan should now be Date-only without type or time
+    const updatedTask = dbTasks.find((t) => t.title === "Future Floating Task");
+    expect(updatedTask?.plan).toEqual({ date: futureStr });
+
+    // 5. Open modal again and clear date -> moves to Inbox
+    fireEvent.click(screen.getByText("Future Floating Task"));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: /task details/i }),
+      ).toBeInTheDocument();
+    });
+
+    const clearDateBtn = screen.getByRole("button", {
+      name: /clear date \(move to inbox\)/i,
+    });
+    fireEvent.click(clearDateBtn);
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: /task details/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    const movedToInboxTask = dbTasks.find(
+      (t) => t.title === "Future Floating Task",
+    );
+    expect(movedToInboxTask?.plan).toBeNull();
+
+    // Navigate to Inbox: Future Floating Task is now in Inbox
+    const inboxNavBtn = screen.getByRole("button", { name: /inbox/i });
+    fireEvent.click(inboxNavBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Future Floating Task")).toBeInTheDocument();
+    });
+
+    unmount();
   });
 });

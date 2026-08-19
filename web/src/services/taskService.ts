@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { type Task, parseTask, type Plan } from "../contracts/task";
+import { filterTodayTasks, filterUpcomingTasks } from "./temporalService";
+
+export { filterTodayTasks, filterUpcomingTasks };
 
 export interface CreateTaskParams {
   readonly id?: string;
@@ -17,6 +20,7 @@ export interface UpdateTaskParams {
   readonly description?: string | null;
   readonly priority?: 1 | 2 | 3 | 4;
   readonly plan?: Plan;
+  readonly clearPlan?: boolean;
   readonly parentId?: string | null;
   readonly expectedVersion?: number;
   readonly labels?: string[];
@@ -120,15 +124,18 @@ export async function updateTask(
     throw new Error("Task title cannot be empty");
   }
 
+  const clearPlan = input.clearPlan ?? (input.plan === null ? true : false);
+
   const { data, error } = await client.schema("api").rpc("update_task", {
     id: input.id,
     title: input.title !== undefined ? input.title.trim() : null,
     description: input.description !== undefined ? input.description : null,
     priority: input.priority ?? null,
-    plan: input.plan ?? null,
-    parent_id: input.parentId ?? null,
+    plan: input.plan !== undefined ? input.plan : null,
+    parent_id: input.parentId !== undefined ? input.parentId : null,
     expected_version: input.expectedVersion ?? null,
-    labels: input.labels ?? null,
+    labels: input.labels !== undefined ? input.labels : null,
+    clear_plan: clearPlan,
   });
 
   if (error) {

@@ -78,8 +78,117 @@ describe("TaskDetailModal Component", () => {
         description: "Updated description text",
         priority: 1,
         labels: [],
+        plan: null,
+        clearPlan: true,
         expectedVersion: openTask.version,
       });
+    });
+  });
+
+  it("allows setting and saving a Date-only plan", async () => {
+    const handleSave = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={handleSave}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    const dateInput = screen.getByLabelText(/plan date/i);
+    fireEvent.change(dateInput, { target: { value: "2026-08-25" } });
+
+    const saveButton = screen.getByRole("button", { name: /save changes/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(handleSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: openTask.id,
+          plan: { date: "2026-08-25" },
+          clearPlan: false,
+        }),
+      );
+    });
+  });
+
+  it("allows setting and saving a Floating timed plan", async () => {
+    const handleSave = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={true}
+        effectiveDefault="instant"
+        onClose={vi.fn()}
+        onSave={handleSave}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    const dateInput = screen.getByLabelText(/plan date/i);
+    fireEvent.change(dateInput, { target: { value: "2026-08-25" } });
+
+    const timeInput = screen.getByLabelText(/task plan time/i);
+    fireEvent.change(timeInput, { target: { value: "15:00" } });
+
+    const typeSelect = screen.getByLabelText(/task plan type/i);
+    fireEvent.change(typeSelect, { target: { value: "floating" } });
+
+    const saveButton = screen.getByRole("button", { name: /save changes/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(handleSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: openTask.id,
+          plan: {
+            type: "floating",
+            date: "2026-08-25",
+            time: "15:00",
+          },
+          clearPlan: false,
+        }),
+      );
+    });
+  });
+
+  it("allows clearing an existing plan to move task back to Inbox", async () => {
+    const handleSave = vi.fn().mockResolvedValue(undefined);
+    const plannedTask: Task = {
+      ...openTask,
+      plan: { date: "2026-08-20" },
+    };
+
+    render(
+      <TaskDetailModal
+        task={plannedTask}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={handleSave}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    const clearDateBtn = screen.getByRole("button", {
+      name: /clear date \(move to inbox\)/i,
+    });
+    fireEvent.click(clearDateBtn);
+
+    const saveButton = screen.getByRole("button", { name: /save changes/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(handleSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: plannedTask.id,
+          plan: null,
+          clearPlan: true,
+        }),
+      );
     });
   });
 
@@ -189,17 +298,19 @@ describe("TaskDetailModal Component", () => {
     fireEvent.click(saveButton);
 
     await waitFor(() => {
-      expect(handleSave).toHaveBeenCalledWith({
-        id: taskWithLabel.id,
-        title: taskWithLabel.title,
-        description: taskWithLabel.description,
-        priority: taskWithLabel.priority,
-        expectedVersion: taskWithLabel.version,
-        labels: [
-          "22222222-2222-2222-2222-222222222222",
-          "33333333-3333-3333-3333-333333333333",
-        ],
-      });
+      expect(handleSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: taskWithLabel.id,
+          title: taskWithLabel.title,
+          description: taskWithLabel.description,
+          priority: taskWithLabel.priority,
+          expectedVersion: taskWithLabel.version,
+          labels: [
+            "22222222-2222-2222-2222-222222222222",
+            "33333333-3333-3333-3333-333333333333",
+          ],
+        }),
+      );
     });
   });
 

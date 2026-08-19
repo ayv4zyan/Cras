@@ -9,6 +9,8 @@ import {
   MessageSquare,
   ListTree,
   Plus,
+  Calendar,
+  Clock,
 } from "lucide-react";
 import {
   PRIORITY_OPTIONS,
@@ -18,12 +20,19 @@ import {
   type Comment,
 } from "../contracts/task";
 import type { UpdateTaskParams } from "../services/taskService";
+import {
+  createPlanFromInputs,
+  formatPlanDisplay,
+  getDeviceLocalDate,
+  type TimedPlanType,
+} from "../services/temporalService";
 
 export interface TaskDetailModalProps {
   readonly task: Task | null;
   readonly availableLabels?: readonly Label[];
   readonly comments?: readonly Comment[];
   readonly subtasks?: readonly Task[];
+  readonly effectiveDefault?: TimedPlanType;
   readonly isOpen: boolean;
   readonly onClose: () => void;
   readonly onSave: (params: UpdateTaskParams) => Promise<void> | void;
@@ -45,6 +54,7 @@ export function TaskDetailModal({
   availableLabels = [],
   comments = [],
   subtasks = [],
+  effectiveDefault = "instant",
   isOpen,
   onClose,
   onSave,
@@ -58,6 +68,9 @@ export function TaskDetailModal({
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<Priority>(4);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
+  const [planDate, setPlanDate] = useState<string>("");
+  const [planTime, setPlanTime] = useState<string>("");
+  const [planType, setPlanType] = useState<TimedPlanType>(effectiveDefault);
   const [newCommentContent, setNewCommentContent] = useState("");
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -75,8 +88,34 @@ export function TaskDetailModal({
       setNewCommentContent("");
       setNewSubtaskTitle("");
       setError(null);
+
+      if (task.plan) {
+        if ("type" in task.plan) {
+          if (task.plan.type === "floating") {
+            setPlanDate(task.plan.date);
+            const parts = task.plan.time.split(":");
+            setPlanTime(`${parts[0]}:${parts[1]}`);
+            setPlanType("floating");
+          } else if (task.plan.type === "instant") {
+            const d = new Date(task.plan.at);
+            setPlanDate(getDeviceLocalDate(d));
+            const h = String(d.getHours()).padStart(2, "0");
+            const m = String(d.getMinutes()).padStart(2, "0");
+            setPlanTime(`${h}:${m}`);
+            setPlanType("instant");
+          }
+        } else if ("date" in task.plan) {
+          setPlanDate(task.plan.date);
+          setPlanTime("");
+          setPlanType(effectiveDefault);
+        }
+      } else {
+        setPlanDate("");
+        setPlanTime("");
+        setPlanType(effectiveDefault);
+      }
     }
-  }, [task]);
+  }, [task, effectiveDefault]);
 
   const isCompleted = task?.completedAt !== null;
   const isSubtask = task?.parentId !== null;
@@ -107,12 +146,23 @@ export function TaskDetailModal({
       setIsSaving(true);
       setError(null);
       try {
+        const computedPlan = planDate.trim()
+          ? createPlanFromInputs({
+              date: planDate,
+              time: planTime || null,
+              type: planTime ? planType : null,
+              effectiveDefault,
+            })
+          : null;
+
         await onSave({
           id: task.id,
           title: trimmedTitle,
           description: description.trim() || null,
           priority,
           labels: selectedLabels,
+          plan: computedPlan,
+          clearPlan: computedPlan === null,
           expectedVersion: task.version,
         });
         onClose();
@@ -129,6 +179,10 @@ export function TaskDetailModal({
       description,
       priority,
       selectedLabels,
+      planDate,
+      planTime,
+      planType,
+      effectiveDefault,
       onSave,
       onClose,
     ],
@@ -199,6 +253,8 @@ export function TaskDetailModal({
   if (!isOpen || !task) {
     return null;
   }
+
+  const existingPlanDisplay = formatPlanDisplay(task.plan);
 
   return (
     <div
@@ -303,6 +359,105 @@ export function TaskDetailModal({
               className="w-full rounded-md border border-border/80 bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed resize-none"
               placeholder="Add optional description..."
             />
+          </div>
+
+          {/* Plan Date & Time Section */}
+          <div className="space-y-2 pt-2 border-t border-border/60">
+            <div className="flex items-center justify-between">
+              <label
+                htmlFor="task-plan-date"
+                className="flex items-center space-x-1.5 text-xs font-medium text-muted-foreground"
+              >
+                <Calendar className="h-3.5 w-3.5" />
+                <span>Plan Date & Time</span>
+              </label>
+
+              {!isCompleted && planDate && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlanDate("");
+                    setPlanTime("");
+                  }}
+                  className="text-xs text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                >
+                  Clear date (Move to Inbox)
+                </button>
+              )}
+            </div>
+
+            {isCompleted ? (
+              <div className="text-xs text-muted-foreground">
+                {existingPlanDisplay ? (
+                  <span className="inline-flex items-center space-x-1 px-2 py-1 rounded-md bg-secondary text-secondary-foreground border border-border/60">
+                    <Clock className="h-3.5 w-3.5" />
+                    <span>
+                      {existingPlanDisplay.dateLabel}
+                      {existingPlanDisplay.timeLabel &&
+                        ` · ${existingPlanDisplay.timeLabel}`}
+                      {existingPlanDisplay.typeLabel &&
+                        ` (${existingPlanDisplay.typeLabel})`}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="italic">No plan date (Inbox)</span>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    id="task-plan-date"
+                    type="date"
+                    value={planDate}
+                    onChange={(e) => setPlanDate(e.target.value)}
+                    disabled={isSaving}
+                    className="rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
+                  />
+
+                  {planDate && (
+                    <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-1">
+                        <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                        <input
+                          type="time"
+                          value={planTime}
+                          onChange={(e) => setPlanTime(e.target.value)}
+                          disabled={isSaving}
+                          aria-label="Task Plan Time"
+                          className="rounded-md border border-border/80 bg-background px-2.5 py-1.5 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
+                        />
+                      </div>
+
+                      {planTime && (
+                        <select
+                          value={planType}
+                          onChange={(e) =>
+                            setPlanType(e.target.value as TimedPlanType)
+                          }
+                          disabled={isSaving}
+                          aria-label="Task Plan Type"
+                          className="rounded-md border border-border/80 bg-background px-2.5 py-1.5 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring cursor-pointer"
+                        >
+                          <option value="instant">Instant (UTC moment)</option>
+                          <option value="floating">
+                            Floating (Wall clock)
+                          </option>
+                        </select>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {planTime && (
+                  <p className="text-[11px] text-muted-foreground/80">
+                    {planType === "instant"
+                      ? "Instant: exact moment on Earth stored in UTC; adjusts to viewing device timezone."
+                      : "Floating: exact clock time on calendar date, the same face in every city."}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -499,7 +654,7 @@ export function TaskDetailModal({
           </div>
         )}
 
-        {/* Comments Section (Distinct from Description) */}
+        {/* Comments Section */}
         <div className="space-y-3 pt-4 border-t border-border/60">
           <div className="flex items-center space-x-1.5 text-xs font-semibold text-foreground">
             <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />

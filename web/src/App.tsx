@@ -14,6 +14,8 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { useAuth } from "./contexts/useAuth";
 import { SignInScreen } from "./components/SignInScreen";
 import { InboxView } from "./components/InboxView";
+import { TodayView } from "./components/TodayView";
+import { UpcomingView } from "./components/UpcomingView";
 import { CompletedView } from "./components/CompletedView";
 import { TaskDetailModal } from "./components/TaskDetailModal";
 import { LabelManagerModal } from "./components/LabelManagerModal";
@@ -26,6 +28,8 @@ import {
   filterInboxTasks,
   filterCompletedTasks,
   filterSubtasks,
+  filterTodayTasks,
+  filterUpcomingTasks,
   type CreateTaskParams,
   type UpdateTaskParams,
 } from "./services/taskService";
@@ -38,6 +42,11 @@ import {
   type UpdateLabelParams,
 } from "./services/labelService";
 import { fetchComments, createComment } from "./services/commentService";
+import {
+  fetchEffectiveTimedPlanType,
+  getCachedEffectiveTimedPlanType,
+} from "./services/settingsService";
+import type { TimedPlanType } from "./services/temporalService";
 import type { Priority, Task, Label, Comment } from "./contracts/task";
 import { supabase } from "./config/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -69,6 +78,8 @@ export function CrasApp({
   const [tasks, setTasks] = useState<Task[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
+  const [effectiveTimedPlanType, setEffectiveTimedPlanType] =
+    useState<TimedPlanType>(getCachedEffectiveTimedPlanType());
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isLabelManagerOpen, setIsLabelManagerOpen] = useState(false);
@@ -85,14 +96,19 @@ export function CrasApp({
     setIsTasksLoading(true);
     setErrorMessage(null);
     try {
-      const [allTasks, allLabels, allComments] = await Promise.all([
-        fetchTasks(client),
-        fetchLabels(client).catch(() => [] as Label[]),
-        fetchComments(client).catch(() => [] as Comment[]),
-      ]);
+      const [allTasks, allLabels, allComments, effectiveType] =
+        await Promise.all([
+          fetchTasks(client),
+          fetchLabels(client).catch(() => [] as Label[]),
+          fetchComments(client).catch(() => [] as Comment[]),
+          fetchEffectiveTimedPlanType(client).catch(() =>
+            getCachedEffectiveTimedPlanType(),
+          ),
+        ]);
       setTasks(allTasks);
       setLabels(allLabels);
       setComments(allComments);
+      setEffectiveTimedPlanType(effectiveType);
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Failed to load data",
@@ -256,6 +272,12 @@ export function CrasApp({
 
   const inboxTasks = filterInboxTasks(tasks);
   const completedTasks = filterCompletedTasks(tasks);
+  const todayTasks = filterTodayTasks(tasks);
+  const upcomingResult = filterUpcomingTasks(tasks);
+  const totalUpcomingCount =
+    upcomingResult.overdue.length +
+    upcomingResult.groups.reduce((acc, g) => acc + g.tasks.length, 0);
+
   const selectedTaskComments = selectedTask
     ? comments.filter((c) => c.taskId === selectedTask.id)
     : [];
@@ -275,13 +297,14 @@ export function CrasApp({
       label: "Today",
       icon: Calendar,
       iconClassName: "text-emerald-600 dark:text-emerald-400",
-      badge: 0,
+      badge: todayTasks.length,
     },
     {
       id: "upcoming",
       label: "Upcoming",
       icon: CalendarDays,
       iconClassName: "text-blue-600 dark:text-blue-400",
+      badge: totalUpcomingCount > 0 ? totalUpcomingCount : undefined,
     },
     {
       id: "completed",
@@ -437,7 +460,24 @@ export function CrasApp({
             onSelectTask={handleSelectTask}
             isLoading={isTasksLoading}
           />
-        ) : activeView === "completed" ? (
+        ) : activeView === "today" ? (
+          <TodayView
+            tasks={tasks}
+            labels={labels}
+            onCreateTask={handleCreateTask}
+            onCompleteTask={handleCompleteTask}
+            onSelectTask={handleSelectTask}
+            isLoading={isTasksLoading}
+          />
+        ) : activeView === "upcoming" ? (
+          <UpcomingView
+            tasks={tasks}
+            labels={labels}
+            onCompleteTask={handleCompleteTask}
+            onSelectTask={handleSelectTask}
+            isLoading={isTasksLoading}
+          />
+        ) : (
           <CompletedView
             tasks={completedTasks}
             labels={labels}
@@ -445,30 +485,6 @@ export function CrasApp({
             onSelectTask={handleSelectTask}
             isLoading={isTasksLoading}
           />
-        ) : (
-          <div className="flex-1 flex flex-col">
-            <header className="h-14 border-b border-border/70 flex items-center justify-between px-8 bg-background/50 backdrop-blur-xs">
-              <div className="flex items-center space-x-2">
-                <h2 className="text-lg font-semibold capitalize tracking-tight">
-                  {activeView}
-                </h2>
-              </div>
-            </header>
-
-            <div className="flex-1 flex items-center justify-center p-8">
-              <div className="max-w-md w-full text-center space-y-4">
-                <div className="space-y-1.5">
-                  <h3 className="text-base font-medium tracking-tight">
-                    {activeView === "today" && "No tasks for Today"}
-                    {activeView === "upcoming" && "No upcoming tasks"}
-                  </h3>
-                  <p className="text-sm text-muted-foreground">
-                    Your task space is clear.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
         )}
       </main>
 
@@ -478,6 +494,7 @@ export function CrasApp({
         availableLabels={labels}
         comments={selectedTaskComments}
         subtasks={selectedTaskSubtasks}
+        effectiveDefault={effectiveTimedPlanType}
         isOpen={isDetailModalOpen}
         onClose={handleCloseDetailModal}
         onSave={handleUpdateTask}

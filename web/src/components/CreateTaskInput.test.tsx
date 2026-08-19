@@ -132,4 +132,66 @@ describe("CreateTaskInput Component", () => {
       }),
     );
   });
+
+  it("submits planned task with Date-only when date is picked", async () => {
+    const handleCreate = vi.fn().mockResolvedValue(undefined);
+    render(<CreateTaskInput onCreateTask={handleCreate} />);
+
+    const expandBtn = screen.getByRole("button", { name: /add details/i });
+    fireEvent.click(expandBtn);
+
+    const titleInput = screen.getByPlaceholderText(/create a task in inbox/i);
+    const dateInput = screen.getByLabelText(/plan date/i);
+    const submitBtn = screen.getByRole("button", { name: /create task/i });
+
+    fireEvent.change(titleInput, { target: { value: "Date Only Task" } });
+    fireEvent.change(dateInput, { target: { value: "2026-08-20" } });
+    fireEvent.click(submitBtn);
+
+    expect(handleCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Date Only Task",
+        plan: { date: "2026-08-20" },
+      }),
+    );
+  });
+
+  it("submits Floating planned task when time and Floating type are selected", async () => {
+    const handleCreate = vi.fn().mockResolvedValue(undefined);
+    render(
+      <CreateTaskInput
+        onCreateTask={handleCreate}
+        effectiveDefault="instant"
+      />,
+    );
+
+    const expandBtn = screen.getByRole("button", { name: /add details/i });
+    fireEvent.click(expandBtn);
+
+    const titleInput = screen.getByPlaceholderText(/create a task in inbox/i);
+    const dateInput = screen.getByLabelText(/plan date/i);
+
+    fireEvent.change(titleInput, { target: { value: "Floating Task" } });
+    fireEvent.change(dateInput, { target: { value: "2026-08-20" } });
+
+    const timeInput = screen.getByLabelText(/plan time/i);
+    fireEvent.change(timeInput, { target: { value: "14:00" } });
+
+    const typeSelect = screen.getByLabelText(/plan type/i);
+    fireEvent.change(typeSelect, { target: { value: "floating" } });
+
+    const submitBtn = screen.getByRole("button", { name: /create task/i });
+    fireEvent.click(submitBtn);
+
+    expect(handleCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Floating Task",
+        plan: {
+          type: "floating",
+          date: "2026-08-20",
+          time: "14:00",
+        },
+      }),
+    );
+  });
 });

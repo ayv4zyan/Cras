@@ -2,16 +2,18 @@ package com.cras.app.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CalendarToday
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -29,78 +31,43 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.cras.app.auth.SharedPreferencesSessionStore
-import com.cras.app.auth.SupabaseAuthService
-import com.cras.app.config.getPublicSupabaseConfig
-import com.cras.app.data.SupabaseCommentService
-import com.cras.app.data.SupabaseLabelService
-import com.cras.app.data.SupabaseTaskService
-import com.cras.app.domain.filterSubtasks
 import com.cras.app.ui.auth.SignInScreen
+import com.cras.app.domain.filterSubtasks
 import com.cras.app.ui.completed.CompletedScreen
 import com.cras.app.ui.detail.TaskDetailDialog
 import com.cras.app.ui.inbox.AuthUiState
 import com.cras.app.ui.inbox.InboxScreen
 import com.cras.app.ui.inbox.InboxViewModel
 import com.cras.app.ui.labels.LabelManagerDialog
+import com.cras.app.ui.today.TodayScreen
+import com.cras.app.ui.upcoming.UpcomingScreen
 
 enum class AppView(
     val title: String,
-    val emptyMessage: String,
     val icon: ImageVector,
-    val emptyIcon: ImageVector
+    val emptyIcon: ImageVector,
+    val emptyMessage: String
 ) {
-    INBOX(
-        title = "Inbox",
-        emptyMessage = "No tasks in Inbox",
-        icon = Icons.Default.Inbox,
-        emptyIcon = Icons.AutoMirrored.Filled.List
-    ),
-    TODAY(
-        title = "Today",
-        emptyMessage = "No tasks for Today",
-        icon = Icons.Default.CalendarToday,
-        emptyIcon = Icons.Default.CalendarToday
-    ),
-    UPCOMING(
-        title = "Upcoming",
-        emptyMessage = "No upcoming tasks",
-        icon = Icons.Default.CalendarMonth,
-        emptyIcon = Icons.Default.CalendarMonth
-    ),
-    COMPLETED(
-        title = "Completed",
-        emptyMessage = "No completed tasks yet",
-        icon = Icons.Default.CheckCircle,
-        emptyIcon = Icons.Default.CheckCircle
-    )
+    INBOX("Inbox", Icons.Default.Inbox, Icons.Default.Inbox, "No tasks in Inbox"),
+    TODAY("Today", Icons.Default.CalendarToday, Icons.Default.CalendarToday, "No tasks for Today"),
+    UPCOMING("Upcoming", Icons.Default.CalendarMonth, Icons.Default.CalendarMonth, "No upcoming tasks"),
+    COMPLETED("Completed", Icons.Default.CheckCircleOutline, Icons.Default.CheckCircleOutline, "No completed tasks")
 }
 
 @Composable
 fun CrasApp(
-    viewModel: InboxViewModel = run {
-        val context = LocalContext.current
-        viewModel {
-            val config = getPublicSupabaseConfig()
-            val prefs = context.getSharedPreferences("cras_session_prefs", android.content.Context.MODE_PRIVATE)
-            val sessionStore = SharedPreferencesSessionStore(prefs)
-            val authService = SupabaseAuthService(config, sessionStore)
-            val taskService = SupabaseTaskService(config)
-            val labelService = SupabaseLabelService(config)
-            val commentService = SupabaseCommentService(config)
-            InboxViewModel(authService, taskService, labelService, commentService)
-        }
-    },
+    viewModel: InboxViewModel,
     onGoogleSignInRequested: (() -> Unit)? = null
 ) {
     val authState by viewModel.authState.collectAsState()
     val inboxState by viewModel.inboxState.collectAsState()
+    val todayState by viewModel.todayState.collectAsState()
+    val upcomingState by viewModel.upcomingState.collectAsState()
     val completedState by viewModel.completedState.collectAsState()
+    val effectiveTimedPlanType by viewModel.effectiveTimedPlanType.collectAsState()
     val labels by viewModel.labels.collectAsState()
     val comments by viewModel.comments.collectAsState()
     val allTasks by viewModel.allTasks.collectAsState()
@@ -162,11 +129,52 @@ fun CrasApp(
                                 session = state.session,
                                 inboxState = inboxState,
                                 labels = labels,
+                                effectiveDefault = effectiveTimedPlanType,
                                 isCreatingTask = isCreatingTask,
                                 createTaskError = createTaskError,
-                                onCreateTask = { title, description, priority, taskLabels ->
-                                    viewModel.createTask(title, description, priority, taskLabels)
+                                onCreateTask = { title, description, priority, taskLabels, plan ->
+                                    viewModel.createTask(title, description, priority, taskLabels, plan)
                                 },
+                                onCompleteTask = { taskId ->
+                                    viewModel.completeTask(taskId)
+                                },
+                                onSelectTask = { task ->
+                                    viewModel.selectTask(task)
+                                },
+                                onOpenLabelManager = { isLabelManagerOpen = true },
+                                onRefresh = { viewModel.loadTasks() },
+                                onSignOut = { viewModel.signOut() }
+                            )
+                        }
+
+                        AppView.TODAY -> {
+                            TodayScreen(
+                                session = state.session,
+                                todayState = todayState,
+                                labels = labels,
+                                effectiveDefault = effectiveTimedPlanType,
+                                isCreatingTask = isCreatingTask,
+                                createTaskError = createTaskError,
+                                onCreateTask = { title, description, priority, taskLabels, plan ->
+                                    viewModel.createTask(title, description, priority, taskLabels, plan)
+                                },
+                                onCompleteTask = { taskId ->
+                                    viewModel.completeTask(taskId)
+                                },
+                                onSelectTask = { task ->
+                                    viewModel.selectTask(task)
+                                },
+                                onOpenLabelManager = { isLabelManagerOpen = true },
+                                onRefresh = { viewModel.loadTasks() },
+                                onSignOut = { viewModel.signOut() }
+                            )
+                        }
+
+                        AppView.UPCOMING -> {
+                            UpcomingScreen(
+                                session = state.session,
+                                upcomingState = upcomingState,
+                                labels = labels,
                                 onCompleteTask = { taskId ->
                                     viewModel.completeTask(taskId)
                                 },
@@ -195,39 +203,6 @@ fun CrasApp(
                                 onSignOut = { viewModel.signOut() }
                             )
                         }
-
-                        else -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(24.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Icon(
-                                        imageVector = currentView.emptyIcon,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(56.dp),
-                                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                                    )
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    Text(
-                                        text = currentView.emptyMessage,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = "Your task space is clear.",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                        }
                     }
 
                     if (selectedTask != null) {
@@ -240,6 +215,7 @@ fun CrasApp(
                             availableLabels = labels,
                             comments = taskComments,
                             subtasks = taskSubtasks,
+                            effectiveDefault = effectiveTimedPlanType,
                             onDismiss = { viewModel.selectTask(null) },
                             onSave = { params, onSuccess, onError ->
                                 viewModel.updateTask(params, onSuccess, onError)

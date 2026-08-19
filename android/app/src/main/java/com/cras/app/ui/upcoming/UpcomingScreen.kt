@@ -1,4 +1,4 @@
-package com.cras.app.ui.inbox
+package com.cras.app.ui.upcoming
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,8 +18,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sell
@@ -42,61 +42,50 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.cras.app.auth.OperatorSession
-import com.cras.app.domain.TimedPlanType
 import com.cras.app.domain.formatPlanDisplay
-import com.cras.app.domain.isTaskOverdue
 import com.cras.app.models.Label
-import com.cras.app.models.Plan
 import com.cras.app.models.Task
+import com.cras.app.ui.inbox.UpcomingUiState
 import com.cras.app.ui.labels.TaskLabelBadges
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InboxScreen(
+fun UpcomingScreen(
     session: OperatorSession,
-    inboxState: InboxUiState,
+    upcomingState: UpcomingUiState,
     labels: List<Label> = emptyList(),
-    effectiveDefault: TimedPlanType = TimedPlanType.INSTANT,
-    isCreatingTask: Boolean = false,
-    createTaskError: String? = null,
-    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>, plan: Plan?) -> Unit,
     onCompleteTask: (String) -> Unit,
     onSelectTask: (Task) -> Unit,
     onOpenLabelManager: () -> Unit = {},
     onRefresh: () -> Unit,
     onSignOut: () -> Unit
 ) {
+    val totalCount = if (upcomingState is UpcomingUiState.Success) {
+        upcomingState.overdue.size + upcomingState.groups.sumOf { it.tasks.size }
+    } else 0
+
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
             title = {
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Inbox",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (inboxState is InboxUiState.Success) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                shape = MaterialTheme.shapes.small,
-                                color = MaterialTheme.colorScheme.secondaryContainer
-                            ) {
-                                Text(
-                                    text = "${inboxState.tasks.size}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Upcoming",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (totalCount > 0) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "$totalCount",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
                         }
-                    }
-                    if (session.email != null) {
-                        Text(
-                            text = session.email,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             },
@@ -121,20 +110,8 @@ fun InboxScreen(
                 .fillMaxSize()
                 .padding(horizontal = 16.dp)
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
-
-            CreateTaskInput(
-                onCreateTask = onCreateTask,
-                availableLabels = labels,
-                isSubmitting = isCreatingTask,
-                errorMessage = createTaskError,
-                effectiveDefault = effectiveDefault
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            when (inboxState) {
-                is InboxUiState.Loading -> {
+            when (upcomingState) {
+                is UpcomingUiState.Loading -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -145,7 +122,7 @@ fun InboxScreen(
                             CircularProgressIndicator(modifier = Modifier.size(36.dp))
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "Loading tasks...",
+                                text = "Loading upcoming tasks...",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -153,7 +130,7 @@ fun InboxScreen(
                     }
                 }
 
-                is InboxUiState.Empty -> {
+                is UpcomingUiState.Empty -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -166,20 +143,20 @@ fun InboxScreen(
                             modifier = Modifier.padding(32.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Inbox,
+                                imageVector = Icons.Default.CalendarMonth,
                                 contentDescription = null,
                                 modifier = Modifier.size(56.dp),
                                 tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "No tasks in Inbox",
+                                text = "No upcoming tasks",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Your task space is clear. Capture a new task.",
+                                text = "Your task space is clear. Plan a future task to see it here.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
@@ -188,7 +165,7 @@ fun InboxScreen(
                     }
                 }
 
-                is InboxUiState.Error -> {
+                is UpcomingUiState.Error -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -207,7 +184,7 @@ fun InboxScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = inboxState.message,
+                                text = upcomingState.message,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
@@ -220,19 +197,107 @@ fun InboxScreen(
                     }
                 }
 
-                is InboxUiState.Success -> {
+                is UpcomingUiState.Success -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(bottom = 80.dp)
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 80.dp)
                     ) {
-                        items(inboxState.tasks, key = { it.id }) { task ->
-                            TaskItemRow(
-                                task = task,
-                                allLabels = labels,
-                                onComplete = { onCompleteTask(task.id) },
-                                onClick = { onSelectTask(task) }
-                            )
+                        // Overdue Strip at top
+                        if (upcomingState.overdue.isNotEmpty()) {
+                            item {
+                                Surface(
+                                    shape = MaterialTheme.shapes.medium,
+                                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        MaterialTheme.colorScheme.error.copy(alpha = 0.3f)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ErrorOutline,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Text(
+                                                text = "OVERDUE (${upcomingState.overdue.size})",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            upcomingState.overdue.forEach { task ->
+                                                val planDisplay = formatPlanDisplay(task.plan)
+                                                UpcomingTaskCard(
+                                                    task = task,
+                                                    planDisplay = planDisplay,
+                                                    isOverdue = true,
+                                                    labels = labels,
+                                                    onCompleteTask = onCompleteTask,
+                                                    onSelectTask = onSelectTask
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Day Groups from today forward
+                        upcomingState.groups.forEach { group ->
+                            item {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.padding(vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = group.dateLabel.uppercase(),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = group.date,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        )
+                                        Text(
+                                            text = "(${group.tasks.size})",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        group.tasks.forEach { task ->
+                                            val planDisplay = formatPlanDisplay(task.plan)
+                                            UpcomingTaskCard(
+                                                task = task,
+                                                planDisplay = planDisplay,
+                                                isOverdue = false,
+                                                labels = labels,
+                                                onCompleteTask = onCompleteTask,
+                                                onSelectTask = onSelectTask
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -242,33 +307,22 @@ fun InboxScreen(
 }
 
 @Composable
-fun TaskItemRow(
+private fun UpcomingTaskCard(
     task: Task,
-    allLabels: List<Label> = emptyList(),
-    onComplete: () -> Unit,
-    onClick: () -> Unit
+    planDisplay: com.cras.app.domain.PlanDisplayInfo?,
+    isOverdue: Boolean,
+    labels: List<Label>,
+    onCompleteTask: (String) -> Unit,
+    onSelectTask: (Task) -> Unit
 ) {
-    val overdue = isTaskOverdue(task)
-    val planDisplay = formatPlanDisplay(task.plan)
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() },
+            .clickable { onSelectTask(task) },
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(
-            containerColor = if (overdue) {
-                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-            }
-        ),
-        border = if (overdue) {
-            androidx.compose.foundation.BorderStroke(
-                1.dp,
-                MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
-            )
-        } else null
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
     ) {
         Row(
             modifier = Modifier
@@ -277,7 +331,7 @@ fun TaskItemRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
-                onClick = onComplete,
+                onClick = { onCompleteTask(task.id) },
                 modifier = Modifier.size(24.dp)
             ) {
                 Icon(
@@ -316,21 +370,21 @@ fun TaskItemRow(
                     if (planDisplay != null) {
                         Surface(
                             shape = MaterialTheme.shapes.extraSmall,
-                            color = if (overdue) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                            color = if (isOverdue) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Icon(
-                                    imageVector = if (overdue) Icons.Default.ErrorOutline else Icons.Default.AccessTime,
+                                    imageVector = if (isOverdue) Icons.Default.ErrorOutline else Icons.Default.AccessTime,
                                     contentDescription = null,
-                                    tint = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer,
+                                    tint = if (isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer,
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 val labelText = buildString {
-                                    append(if (overdue) "${planDisplay.dateLabel} (Overdue)" else planDisplay.dateLabel)
+                                    append(if (isOverdue) "${planDisplay.dateLabel} (Overdue)" else planDisplay.dateLabel)
                                     if (planDisplay.timeLabel != null) {
                                         append(" · ${planDisplay.timeLabel}")
                                     }
@@ -341,14 +395,14 @@ fun TaskItemRow(
                                 Text(
                                     text = labelText,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer
+                                    color = if (isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer
                                 )
                             }
                         }
                     }
 
                     if (task.labels.isNotEmpty()) {
-                        TaskLabelBadges(labelIds = task.labels, allLabels = allLabels)
+                        TaskLabelBadges(labelIds = task.labels, allLabels = labels)
                     }
                 }
             }

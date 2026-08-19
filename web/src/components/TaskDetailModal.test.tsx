@@ -202,4 +202,130 @@ describe("TaskDetailModal Component", () => {
       });
     });
   });
+
+  it("renders dated comments distinct from description and allows adding comments", async () => {
+    const handleAddComment = vi.fn().mockResolvedValue(undefined);
+    const comments = [
+      {
+        id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        taskId: openTask.id,
+        content: "First remark on this task",
+        createdAt: "2026-08-18T12:00:00.000Z",
+      },
+    ];
+
+    render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={true}
+        comments={comments}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+        onAddComment={handleAddComment}
+      />,
+    );
+
+    // Verify description and comments are both visible and distinct
+    expect(
+      screen.getByDisplayValue("Document all public APIs and components"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("First remark on this task")).toBeInTheDocument();
+    expect(screen.getByText(/comments/i)).toBeInTheDocument();
+
+    const commentInput = screen.getByPlaceholderText(/add a comment/i);
+    const addCommentBtn = screen.getByRole("button", { name: /add comment/i });
+
+    fireEvent.change(commentInput, {
+      target: { value: "Second remark added by operator" },
+    });
+    fireEvent.click(addCommentBtn);
+
+    await waitFor(() => {
+      expect(handleAddComment).toHaveBeenCalledWith(
+        openTask.id,
+        "Second remark added by operator",
+      );
+    });
+  });
+
+  it("renders subtasks under top-level task and allows adding subtasks", async () => {
+    const handleCreateSubtask = vi.fn().mockResolvedValue(undefined);
+    const handleToggleSubtask = vi.fn().mockResolvedValue(undefined);
+
+    const subtasks: Task[] = [
+      {
+        ...openTask,
+        id: "550e8400-e29b-41d4-a716-446655440099",
+        title: "Subtask 1",
+        parentId: openTask.id,
+        completedAt: null,
+      },
+    ];
+
+    render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={true}
+        subtasks={subtasks}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+        onCreateSubtask={handleCreateSubtask}
+        onToggleSubtaskComplete={handleToggleSubtask}
+      />,
+    );
+
+    expect(screen.getByText("Subtask 1")).toBeInTheDocument();
+    const subtaskInput = screen.getByPlaceholderText(/add subtask/i);
+    const addSubtaskBtn = screen.getByRole("button", { name: /add subtask/i });
+
+    fireEvent.change(subtaskInput, {
+      target: { value: "Subtask 2" },
+    });
+    fireEvent.click(addSubtaskBtn);
+
+    await waitFor(() => {
+      expect(handleCreateSubtask).toHaveBeenCalledWith(
+        openTask.id,
+        "Subtask 2",
+      );
+    });
+
+    const completeSubtaskBtn = screen.getByLabelText(
+      /complete task subtask 1/i,
+    );
+    fireEvent.click(completeSubtaskBtn);
+    await waitFor(() => {
+      expect(handleToggleSubtask).toHaveBeenCalledWith(subtasks[0]);
+    });
+  });
+
+  it("forbids adding subtasks when viewing a subtask (one-level nesting only)", () => {
+    const subtask: Task = {
+      ...openTask,
+      id: "550e8400-e29b-41d4-a716-446655440099",
+      title: "I am a subtask",
+      parentId: "550e8400-e29b-41d4-a716-446655440001",
+    };
+
+    render(
+      <TaskDetailModal
+        task={subtask}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+        onCreateSubtask={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/subtask/i)).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText(/add subtask/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /add subtask/i }),
+    ).not.toBeInTheDocument();
+  });
 });

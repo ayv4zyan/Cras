@@ -34,6 +34,17 @@ export function filterInboxTasks(tasks: readonly Task[]): Task[] {
 }
 
 /**
+ * Filter subtasks that belong to a specific parent task:
+ * "A Subtask is a Task that has a parent Task."
+ */
+export function filterSubtasks(
+  tasks: readonly Task[],
+  parentId: string,
+): Task[] {
+  return tasks.filter((task) => task.parentId === parentId);
+}
+
+/**
  * Filter tasks that belong to the Completed view:
  * "The view of Tasks that have a completed-at, newest first."
  */

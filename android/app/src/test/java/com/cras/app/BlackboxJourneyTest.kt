@@ -54,6 +54,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BlackboxJourneyTest {
@@ -91,9 +92,9 @@ class BlackboxJourneyTest {
     )
 
     private lateinit var mockWebServer: MockWebServer
-    private val dbRows = mutableListOf<SimulatedDbRow>()
-    private val labelDbRows = mutableListOf<SimulatedLabelDbRow>()
-    private val commentDbRows = mutableListOf<SimulatedCommentDbRow>()
+    private val dbRows = CopyOnWriteArrayList<SimulatedDbRow>()
+    private val labelDbRows = CopyOnWriteArrayList<SimulatedLabelDbRow>()
+    private val commentDbRows = CopyOnWriteArrayList<SimulatedCommentDbRow>()
     private val testDispatcher = StandardTestDispatcher()
     private val json = Json { ignoreUnknownKeys = true }
 

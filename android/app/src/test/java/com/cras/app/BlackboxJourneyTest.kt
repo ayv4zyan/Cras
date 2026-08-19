@@ -5,9 +5,13 @@ import com.cras.app.auth.OperatorSession
 import com.cras.app.auth.SupabaseAuthService
 import com.cras.app.config.PublicSupabaseConfig
 import com.cras.app.config.getPublicSupabaseConfig
+import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
+import com.cras.app.data.SupabaseLabelService
 import com.cras.app.data.SupabaseTaskService
+import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
+import com.cras.app.models.Label
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import com.cras.app.ui.inbox.AuthUiState
@@ -16,6 +20,7 @@ import com.cras.app.ui.inbox.InboxUiState
 import com.cras.app.ui.inbox.InboxViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -25,6 +30,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -63,8 +69,18 @@ class BlackboxJourneyTest {
         val version: Int
     )
 
+    private data class SimulatedLabelDbRow(
+        val id: String,
+        val operatorId: String,
+        val name: String,
+        val color: String,
+        val createdAt: String,
+        val updatedAt: String
+    )
+
     private lateinit var mockWebServer: MockWebServer
     private val dbRows = mutableListOf<SimulatedDbRow>()
+    private val labelDbRows = mutableListOf<SimulatedLabelDbRow>()
     private val testDispatcher = StandardTestDispatcher()
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -72,11 +88,13 @@ class BlackboxJourneyTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         dbRows.clear()
+        labelDbRows.clear()
 
         mockWebServer = MockWebServer()
         mockWebServer.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.path ?: "/"
+                val method = request.method ?: "GET"
                 val authHeader = request.getHeader("Authorization")
                 val callerOperatorId = authHeader?.removePrefix("Bearer ")?.let { token ->
                     if (token.startsWith("jwt-")) token.removePrefix("jwt-") else null
@@ -106,6 +124,126 @@ class BlackboxJourneyTest {
                         }
                     """.trimIndent()
                     return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(resp)
+                }
+
+                // Labels REST endpoints
+                if (path.startsWith("/rest/v1/labels")) {
+                    if (callerOperatorId == null) {
+                        return MockResponse().setResponseCode(401).setBody("""{"code":"42501","message":"Unauthorized"}""")
+                    }
+
+                    when (method) {
+                        "GET" -> {
+                            val operatorLabels = labelDbRows
+                                .filter { it.operatorId == callerOperatorId }
+                                .sortedBy { it.createdAt }
+                                .map {
+                                    Label(
+                                        id = it.id,
+                                        name = it.name,
+                                        color = it.color,
+                                        createdAt = it.createdAt,
+                                        updatedAt = it.updatedAt
+                                    )
+                                }
+                            val respBody = json.encodeToString(
+                                kotlinx.serialization.builtins.ListSerializer(Label.serializer()),
+                                operatorLabels
+                            )
+                            return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
+                        }
+                        "POST" -> {
+                            val body = request.body.readUtf8()
+                            val reqJson = json.parseToJsonElement(body).jsonObject
+                            val name = reqJson["name"]?.jsonPrimitive?.content?.trim() ?: ""
+                            val color = reqJson["color"]?.jsonPrimitive?.content?.trim() ?: ""
+                            val id = reqJson["id"]?.jsonPrimitive?.content ?: UUID.randomUUID().toString()
+
+                            if (name.isEmpty() || color.isEmpty()) {
+                                return MockResponse().setResponseCode(400).setBody("""{"code":"23514","message":"Invalid label params"}""")
+                            }
+
+                            // Duplicate name check per operator
+                            if (labelDbRows.any { it.operatorId == callerOperatorId && it.name.equals(name, ignoreCase = true) }) {
+                                return MockResponse().setResponseCode(409).setBody("""{"code":"23505","message":"duplicate key value violates unique constraint \"uq_labels_name_operator\""}""")
+                            }
+
+                            val newLabel = SimulatedLabelDbRow(
+                                id = id,
+                                operatorId = callerOperatorId,
+                                name = name,
+                                color = color,
+                                createdAt = "2026-08-19T00:00:00Z",
+                                updatedAt = "2026-08-19T00:00:00Z"
+                            )
+                            labelDbRows.add(newLabel)
+
+                            val created = Label(
+                                id = newLabel.id,
+                                name = newLabel.name,
+                                color = newLabel.color,
+                                createdAt = newLabel.createdAt,
+                                updatedAt = newLabel.updatedAt
+                            )
+                            val respBody = json.encodeToString(
+                                kotlinx.serialization.builtins.ListSerializer(Label.serializer()),
+                                listOf(created)
+                            )
+                            return MockResponse().setResponseCode(201).setHeader("Content-Type", "application/json").setBody(respBody)
+                        }
+                        "PATCH" -> {
+                            val labelId = path.substringAfter("id=eq.", "").substringBefore("&")
+                            val index = labelDbRows.indexOfFirst { it.id == labelId && it.operatorId == callerOperatorId }
+                            if (index == -1) {
+                                return MockResponse().setResponseCode(404).setBody("""{"code":"P0002","message":"Label not found"}""")
+                            }
+
+                            val body = request.body.readUtf8()
+                            val reqJson = json.parseToJsonElement(body).jsonObject
+                            val newName = reqJson["name"]?.jsonPrimitive?.content?.trim()
+                            val newColor = reqJson["color"]?.jsonPrimitive?.content?.trim()
+
+                            if (newName != null && newName.isEmpty()) {
+                                return MockResponse().setResponseCode(400).setBody("""{"code":"23514","message":"Label name cannot be empty"}""")
+                            }
+
+                            if (newName != null && labelDbRows.any { it.operatorId == callerOperatorId && it.id != labelId && it.name.equals(newName, ignoreCase = true) }) {
+                                return MockResponse().setResponseCode(409).setBody("""{"code":"23505","message":"duplicate key value violates unique constraint \"uq_labels_name_operator\""}""")
+                            }
+
+                            val existing = labelDbRows[index]
+                            val updated = existing.copy(
+                                name = newName ?: existing.name,
+                                color = newColor ?: existing.color,
+                                updatedAt = "2026-08-19T00:15:00Z"
+                            )
+                            labelDbRows[index] = updated
+
+                            val updatedLabel = Label(
+                                id = updated.id,
+                                name = updated.name,
+                                color = updated.color,
+                                createdAt = updated.createdAt,
+                                updatedAt = updated.updatedAt
+                            )
+                            val respBody = json.encodeToString(
+                                kotlinx.serialization.builtins.ListSerializer(Label.serializer()),
+                                listOf(updatedLabel)
+                            )
+                            return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
+                        }
+                        "DELETE" -> {
+                            val labelId = path.substringAfter("id=eq.", "").substringBefore("&")
+                            labelDbRows.removeAll { it.id == labelId && it.operatorId == callerOperatorId }
+                            // Cascade remove from tasks
+                            for (i in dbRows.indices) {
+                                if (dbRows[i].operatorId == callerOperatorId && dbRows[i].labels.contains(labelId)) {
+                                    dbRows[i] = dbRows[i].copy(labels = dbRows[i].labels.filterNot { it == labelId })
+                                }
+                            }
+                            return MockResponse().setResponseCode(204)
+                        }
+                    }
                 }
 
                 // Data API: api.tasks view
@@ -152,6 +290,8 @@ class BlackboxJourneyTest {
                         return MockResponse().setResponseCode(400).setBody("""{"code":"23514","message":"Task title cannot be empty"}""")
                     }
 
+                    val parsedLabels = reqJson["labels"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+
                     val newRow = SimulatedDbRow(
                         id = UUID.randomUUID().toString(),
                         operatorId = callerOperatorId,
@@ -159,7 +299,7 @@ class BlackboxJourneyTest {
                         description = reqJson["description"]?.jsonPrimitive?.content,
                         priority = reqJson["priority"]?.jsonPrimitive?.content?.toIntOrNull() ?: 4,
                         plan = null,
-                        labels = emptyList(),
+                        labels = parsedLabels,
                         parentId = null,
                         completedAt = null,
                         createdAt = "2026-08-19T00:00:00Z",
@@ -221,10 +361,17 @@ class BlackboxJourneyTest {
                         return MockResponse().setResponseCode(400).setBody("""{"code":"23514","message":"Priority must be between 1 and 4"}""")
                     }
 
+                    val newLabels = if (reqJson.containsKey("labels")) {
+                        reqJson["labels"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+                    } else {
+                        existing.labels
+                    }
+
                     val updatedRow = existing.copy(
                         title = newTitle?.trim() ?: existing.title,
                         description = if (reqJson.containsKey("description")) reqJson["description"]?.jsonPrimitive?.content else existing.description,
                         priority = newPriority ?: existing.priority,
+                        labels = newLabels,
                         updatedAt = "2026-08-19T00:10:00Z",
                         version = existing.version + 1
                     )
@@ -349,7 +496,8 @@ class BlackboxJourneyTest {
         val config = PublicSupabaseConfig(url = baseUrl, publishableKey = "sb_publishable_anon")
         val authService = SupabaseAuthService(config, sessionStore, OkHttpClient())
         val taskService = SupabaseTaskService(config, OkHttpClient())
-        return InboxViewModel(authService, taskService)
+        val labelService = SupabaseLabelService(config, OkHttpClient())
+        return InboxViewModel(authService, taskService, labelService)
     }
 
     @Test
@@ -684,13 +832,240 @@ class BlackboxJourneyTest {
     }
 
     @Test
-    fun `proves Criterion 5 & 6 - Operator isolation between two Operators and unauthenticated callers`() = runTest {
-        // Alice creates a task
+    fun `proves Issue 44 AC 1 & 2 - Android can create, rename, recolor, and remove Labels with duplicate name error handling`() = runTest {
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        // 1. Create label
+        var createdUrgent: Label? = null
+        viewModel.createLabel("Urgent", "#ef4444", onSuccess = { createdUrgent = it })
+        advanceUntilIdle()
+
+        assertNotNull(createdUrgent)
+        assertEquals("Urgent", createdUrgent!!.name)
+        assertEquals("#ef4444", createdUrgent!!.color)
+        assertEquals(1, viewModel.labels.value.size)
+
+        // 2. Create another label
+        var createdBackend: Label? = null
+        viewModel.createLabel("Backend", "#3b82f6", onSuccess = { createdBackend = it })
+        advanceUntilIdle()
+
+        assertNotNull(createdBackend)
+        assertEquals(2, viewModel.labels.value.size)
+
+        // 3. Duplicate name error - clear recoverable error
+        var duplicateError: String? = null
+        viewModel.createLabel("urgent", "#10b981", onError = { duplicateError = it })
+        advanceUntilIdle()
+
+        assertNotNull(duplicateError)
+        assertEquals("A label with this name already exists", duplicateError)
+        assertEquals(2, viewModel.labels.value.size)
+
+        // 4. Rename and recolor label
+        var updatedUrgent: Label? = null
+        viewModel.updateLabel(
+            id = createdUrgent!!.id,
+            name = "Critical",
+            color = "#f97316",
+            onSuccess = { updatedUrgent = it }
+        )
+        advanceUntilIdle()
+
+        assertNotNull(updatedUrgent)
+        assertEquals("Critical", updatedUrgent!!.name)
+        assertEquals("#f97316", updatedUrgent!!.color)
+        assertEquals(createdUrgent!!.id, updatedUrgent!!.id) // Stable UUID identity
+
+        // 5. Remove label
+        var removed = false
+        viewModel.deleteLabel(createdBackend!!.id, onSuccess = { removed = true })
+        advanceUntilIdle()
+
+        assertTrue(removed)
+        assertEquals(1, viewModel.labels.value.size)
+        assertEquals("Critical", viewModel.labels.value[0].name)
+    }
+
+    @Test
+    fun `proves Issue 44 AC 3 - Label identity and Task associations remain stable across rename and other label deletion`() = runTest {
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        // Create 2 labels
+        var labelUrgent: Label? = null
+        var labelDev: Label? = null
+        viewModel.createLabel("Urgent", "#ef4444", onSuccess = { labelUrgent = it })
+        viewModel.createLabel("Dev", "#10b981", onSuccess = { labelDev = it })
+        advanceUntilIdle()
+
+        assertNotNull(labelUrgent)
+        assertNotNull(labelDev)
+
+        // Create Task with both labels
+        viewModel.createTask(
+            title = "Fix production regression",
+            priority = 1,
+            labels = listOf(labelUrgent!!.id, labelDev!!.id)
+        )
+        advanceUntilIdle()
+
+        val initialTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(2, initialTask.labels.size)
+        assertTrue(initialTask.labels.contains(labelUrgent!!.id))
+        assertTrue(initialTask.labels.contains(labelDev!!.id))
+
+        // Rename Urgent to Blocker
+        viewModel.updateLabel(
+            id = labelUrgent!!.id,
+            name = "Blocker",
+            color = "#ef4444"
+        )
+        advanceUntilIdle()
+
+        // Task association remains stable: task still points to labelUrgent.id!
+        val taskAfterRename = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(2, taskAfterRename.labels.size)
+        assertTrue(taskAfterRename.labels.contains(labelUrgent!!.id))
+
+        // Label name in canonical label list is now "Blocker" with same id
+        val renamedLabel = viewModel.labels.value.find { it.id == labelUrgent!!.id }!!
+        assertEquals("Blocker", renamedLabel.name)
+
+        // Delete "Dev" label -> associations to "Dev" are cascaded, "Blocker" remains
+        viewModel.deleteLabel(labelDev!!.id)
+        advanceUntilIdle()
+
+        val taskAfterDelete = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(1, taskAfterDelete.labels.size)
+        assertEquals(labelUrgent!!.id, taskAfterDelete.labels[0])
+    }
+
+    @Test
+    fun `proves Issue 44 AC 4 - Compose UI state assigns and unassigns multiple labels and renders across Inbox and Completed`() = runTest {
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        // Create labels
+        var labelA: Label? = null
+        var labelB: Label? = null
+        var labelC: Label? = null
+        viewModel.createLabel("Label A", "#ef4444", onSuccess = { labelA = it })
+        viewModel.createLabel("Label B", "#3b82f6", onSuccess = { labelB = it })
+        viewModel.createLabel("Label C", "#10b981", onSuccess = { labelC = it })
+        advanceUntilIdle()
+
+        // 1. Create task with Label A and Label B
+        viewModel.createTask(
+            title = "Task with labels",
+            labels = listOf(labelA!!.id, labelB!!.id)
+        )
+        advanceUntilIdle()
+
+        val task = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(listOf(labelA!!.id, labelB!!.id), task.labels)
+
+        // 2. Edit task: unassign Label A, assign Label C -> [Label B, Label C]
+        viewModel.updateTask(
+            UpdateTaskParams(
+                id = task.id,
+                labels = listOf(labelB!!.id, labelC!!.id),
+                expectedVersion = task.version
+            )
+        )
+        advanceUntilIdle()
+
+        val updatedTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(listOf(labelB!!.id, labelC!!.id), updatedTask.labels)
+
+        // 3. Complete task -> Completed view renders canonical labels [Label B, Label C]
+        viewModel.completeTask(updatedTask.id)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+        val completedTask = (viewModel.completedState.value as CompletedUiState.Success).tasks[0]
+        assertEquals(listOf(labelB!!.id, labelC!!.id), completedTask.labels)
+
+        // 4. Uncomplete task -> Restored to inbox with intact label associations
+        viewModel.uncompleteTask(completedTask.id)
+        advanceUntilIdle()
+
+        val restoredTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(listOf(labelB!!.id, labelC!!.id), restoredTask.labels)
+    }
+
+    @Test
+    fun `proves Issue 44 AC 5 - Cross-client convergence after remote updates and later refetch`() = runTest {
+        val aliceId = "550e8400-e29b-41d4-a716-446655440001"
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        viewModel.createLabel("Web Label", "#a855f7")
+        viewModel.createTask("Web Synchronized Task")
+        advanceUntilIdle()
+
+        val initialLabel = viewModel.labels.value[0]
+        val initialTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(0, initialTask.labels.size)
+
+        // Simulate web client creating a new label and associating it to the task in database
+        val remoteLabelId = UUID.randomUUID().toString()
+        labelDbRows.add(
+            SimulatedLabelDbRow(
+                id = remoteLabelId,
+                operatorId = aliceId,
+                name = "Web Created Label",
+                color = "#14b8a6",
+                createdAt = "2026-08-19T02:00:00Z",
+                updatedAt = "2026-08-19T02:00:00Z"
+            )
+        )
+
+        // Remote web client associates both labels to the task
+        val taskIndex = dbRows.indexOfFirst { it.id == initialTask.id }
+        dbRows[taskIndex] = dbRows[taskIndex].copy(
+            labels = listOf(initialLabel.id, remoteLabelId),
+            version = initialTask.version + 1,
+            updatedAt = "2026-08-19T02:05:00Z"
+        )
+
+        // Android client refetches
+        viewModel.loadTasks()
+        advanceUntilIdle()
+
+        // Android converges to the canonical state
+        val convergedLabels = viewModel.labels.value
+        assertEquals(2, convergedLabels.size)
+        assertTrue(convergedLabels.any { it.id == remoteLabelId && it.name == "Web Created Label" })
+
+        val convergedTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(2, convergedTask.labels.size)
+        assertTrue(convergedTask.labels.contains(initialLabel.id))
+        assertTrue(convergedTask.labels.contains(remoteLabelId))
+    }
+
+    @Test
+    fun `proves Criterion 5 & 6 & Issue 44 AC - Operator isolation between two Operators for labels and tasks`() = runTest {
+        // Alice creates a task with a private label
         val aliceViewModel = createViewModel()
         advanceUntilIdle()
         aliceViewModel.signInWithGoogleIdToken("google-token-alice")
         advanceUntilIdle()
-        aliceViewModel.createTask("Alice Confidential Strategy")
+
+        var aliceLabel: Label? = null
+        aliceViewModel.createLabel("Alice Secret Label", "#ef4444", onSuccess = { aliceLabel = it })
+        advanceUntilIdle()
+
+        aliceViewModel.createTask("Alice Confidential Strategy", labels = listOf(aliceLabel!!.id))
         advanceUntilIdle()
 
         // Bob signs in
@@ -699,11 +1074,20 @@ class BlackboxJourneyTest {
         bobViewModel.signInWithGoogleIdToken("google-token-bob")
         advanceUntilIdle()
 
-        val bobState = bobViewModel.inboxState.value
-        // Bob must NOT see Alice's task
-        assertTrue(bobState is InboxUiState.Empty)
+        // Bob must NOT see Alice's task or Alice's labels
+        assertTrue(bobViewModel.inboxState.value is InboxUiState.Empty)
+        assertEquals(0, bobViewModel.labels.value.size)
 
-        bobViewModel.createTask("Bob Project Review")
+        // Bob can create a label with the SAME name as Alice in his own isolated task space
+        var bobLabel: Label? = null
+        bobViewModel.createLabel("Alice Secret Label", "#3b82f6", onSuccess = { bobLabel = it })
+        advanceUntilIdle()
+
+        assertNotNull(bobLabel)
+        assertNotEquals(aliceLabel!!.id, bobLabel!!.id) // Distinct UUIDs
+        assertEquals("#3b82f6", bobLabel!!.color) // Bob's distinct color
+
+        bobViewModel.createTask("Bob Project Review", labels = listOf(bobLabel!!.id))
         advanceUntilIdle()
 
         val bobSuccess = bobViewModel.inboxState.value
@@ -711,6 +1095,7 @@ class BlackboxJourneyTest {
         val bobTasks = (bobSuccess as InboxUiState.Success).tasks
         assertEquals(1, bobTasks.size)
         assertEquals("Bob Project Review", bobTasks[0].title)
+        assertEquals(listOf(bobLabel!!.id), bobTasks[0].labels)
 
         // Unauthenticated direct call
         val unauthedSession = OperatorSession(
@@ -721,10 +1106,17 @@ class BlackboxJourneyTest {
         val baseUrl = mockWebServer.url("/").toString().removeSuffix("/")
         val config = PublicSupabaseConfig(url = baseUrl, publishableKey = "anon")
         val taskService = SupabaseTaskService(config, OkHttpClient())
+        val labelService = SupabaseLabelService(config, OkHttpClient())
 
         assertThrows(Exception::class.java) {
             kotlinx.coroutines.runBlocking {
                 taskService.fetchTasks(unauthedSession)
+            }
+        }
+
+        assertThrows(Exception::class.java) {
+            kotlinx.coroutines.runBlocking {
+                labelService.fetchLabels(unauthedSession)
             }
         }
     }

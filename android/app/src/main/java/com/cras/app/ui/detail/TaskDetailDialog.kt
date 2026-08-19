@@ -45,14 +45,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Sell
 import com.cras.app.data.UpdateTaskParams
 import com.cras.app.domain.isCompleted
+import com.cras.app.models.Label
 import com.cras.app.models.Task
 import com.cras.app.models.TaskPriorities
+import com.cras.app.ui.labels.parseHexColor
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TaskDetailDialog(
     task: Task?,
+    availableLabels: List<Label> = emptyList(),
     onDismiss: () -> Unit,
     onSave: (UpdateTaskParams, onSuccess: () -> Unit, onError: (String) -> Unit) -> Unit,
     onComplete: (String, completedAt: String?, onSuccess: () -> Unit, onError: (String) -> Unit) -> Unit,
@@ -63,6 +71,7 @@ fun TaskDetailDialog(
     var title by remember(task.id) { mutableStateOf(task.title) }
     var description by remember(task.id) { mutableStateOf(task.description ?: "") }
     var priority by remember(task.id) { mutableIntStateOf(task.priority) }
+    var selectedLabels by remember(task.id, task.labels) { mutableStateOf(task.labels) }
     var isSaving by remember { mutableStateOf(false) }
     var isTogglingCompletion by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -73,6 +82,7 @@ fun TaskDetailDialog(
         title = task.title
         description = task.description ?: ""
         priority = task.priority
+        selectedLabels = task.labels
         errorMessage = null
     }
 
@@ -305,6 +315,95 @@ fun TaskDetailDialog(
                     }
                 }
 
+                // Labels Selection Section
+                if (availableLabels.isNotEmpty()) {
+                    val labelsToShow = if (isTaskCompleted) {
+                        availableLabels.filter { selectedLabels.contains(it.id) }
+                    } else {
+                        availableLabels
+                    }
+
+                    if (labelsToShow.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Sell,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Labels",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            labelsToShow.forEach { label ->
+                                val isSelected = selectedLabels.contains(label.id)
+                                val labelColor = parseHexColor(label.color)
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                    },
+                                    border = if (isSelected) {
+                                        androidx.compose.foundation.BorderStroke(
+                                            1.5.dp,
+                                            MaterialTheme.colorScheme.primary
+                                        )
+                                    } else {
+                                        androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable(enabled = !isTaskCompleted && !isSaving) {
+                                            selectedLabels = if (isSelected) {
+                                                selectedLabels.filterNot { it == label.id }
+                                            } else {
+                                                selectedLabels + label.id
+                                            }
+                                        }
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(labelColor)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = label.name,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = if (isSelected) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (errorMessage != null) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
@@ -345,6 +444,7 @@ fun TaskDetailDialog(
                                         title = trimmedTitle,
                                         description = description.trim(),
                                         priority = priority,
+                                        labels = selectedLabels,
                                         expectedVersion = task.version
                                     ),
                                     {

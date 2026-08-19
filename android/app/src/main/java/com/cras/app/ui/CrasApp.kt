@@ -37,6 +37,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cras.app.auth.SharedPreferencesSessionStore
 import com.cras.app.auth.SupabaseAuthService
 import com.cras.app.config.getPublicSupabaseConfig
+import com.cras.app.data.SupabaseLabelService
 import com.cras.app.data.SupabaseTaskService
 import com.cras.app.ui.auth.SignInScreen
 import com.cras.app.ui.completed.CompletedScreen
@@ -44,6 +45,7 @@ import com.cras.app.ui.detail.TaskDetailDialog
 import com.cras.app.ui.inbox.AuthUiState
 import com.cras.app.ui.inbox.InboxScreen
 import com.cras.app.ui.inbox.InboxViewModel
+import com.cras.app.ui.labels.LabelManagerDialog
 
 enum class AppView(
     val title: String,
@@ -87,7 +89,8 @@ fun CrasApp(
             val sessionStore = SharedPreferencesSessionStore(prefs)
             val authService = SupabaseAuthService(config, sessionStore)
             val taskService = SupabaseTaskService(config)
-            InboxViewModel(authService, taskService)
+            val labelService = SupabaseLabelService(config)
+            InboxViewModel(authService, taskService, labelService)
         }
     },
     onGoogleSignInRequested: (() -> Unit)? = null
@@ -95,11 +98,13 @@ fun CrasApp(
     val authState by viewModel.authState.collectAsState()
     val inboxState by viewModel.inboxState.collectAsState()
     val completedState by viewModel.completedState.collectAsState()
+    val labels by viewModel.labels.collectAsState()
     val selectedTask by viewModel.selectedTask.collectAsState()
     val isCreatingTask by viewModel.isCreatingTask.collectAsState()
     val createTaskError by viewModel.createTaskError.collectAsState()
 
     var currentView by remember { mutableStateOf(AppView.INBOX) }
+    var isLabelManagerOpen by remember { mutableStateOf(false) }
 
     when (val state = authState) {
         is AuthUiState.Loading -> {
@@ -151,10 +156,11 @@ fun CrasApp(
                             InboxScreen(
                                 session = state.session,
                                 inboxState = inboxState,
+                                labels = labels,
                                 isCreatingTask = isCreatingTask,
                                 createTaskError = createTaskError,
-                                onCreateTask = { title, description, priority ->
-                                    viewModel.createTask(title, description, priority)
+                                onCreateTask = { title, description, priority, taskLabels ->
+                                    viewModel.createTask(title, description, priority, taskLabels)
                                 },
                                 onCompleteTask = { taskId ->
                                     viewModel.completeTask(taskId)
@@ -162,6 +168,7 @@ fun CrasApp(
                                 onSelectTask = { task ->
                                     viewModel.selectTask(task)
                                 },
+                                onOpenLabelManager = { isLabelManagerOpen = true },
                                 onRefresh = { viewModel.loadTasks() },
                                 onSignOut = { viewModel.signOut() }
                             )
@@ -171,12 +178,14 @@ fun CrasApp(
                             CompletedScreen(
                                 session = state.session,
                                 completedState = completedState,
+                                labels = labels,
                                 onUncompleteTask = { taskId ->
                                     viewModel.uncompleteTask(taskId)
                                 },
                                 onSelectTask = { task ->
                                     viewModel.selectTask(task)
                                 },
+                                onOpenLabelManager = { isLabelManagerOpen = true },
                                 onRefresh = { viewModel.loadTasks() },
                                 onSignOut = { viewModel.signOut() }
                             )
@@ -219,6 +228,7 @@ fun CrasApp(
                     if (selectedTask != null) {
                         TaskDetailDialog(
                             task = selectedTask,
+                            availableLabels = labels,
                             onDismiss = { viewModel.selectTask(null) },
                             onSave = { params, onSuccess, onError ->
                                 viewModel.updateTask(params, onSuccess, onError)
@@ -228,6 +238,22 @@ fun CrasApp(
                             },
                             onUncomplete = { taskId, onSuccess, onError ->
                                 viewModel.uncompleteTask(taskId, onSuccess, onError)
+                            }
+                        )
+                    }
+
+                    if (isLabelManagerOpen) {
+                        LabelManagerDialog(
+                            labels = labels,
+                            onDismiss = { isLabelManagerOpen = false },
+                            onCreateLabel = { name, color, onSuccess, onError ->
+                                viewModel.createLabel(name, color, onSuccess, onError)
+                            },
+                            onUpdateLabel = { id, name, color, onSuccess, onError ->
+                                viewModel.updateLabel(id, name, color, onSuccess, onError)
+                            },
+                            onDeleteLabel = { id, onSuccess, onError ->
+                                viewModel.deleteLabel(id, onSuccess, onError)
                             }
                         )
                     }

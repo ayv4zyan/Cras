@@ -37,18 +37,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.material.icons.filled.Sell
 import androidx.compose.ui.unit.dp
 import com.cras.app.auth.OperatorSession
+import com.cras.app.models.Label
 import com.cras.app.models.Task
 import com.cras.app.ui.inbox.CompletedUiState
+import com.cras.app.ui.labels.TaskLabelBadges
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CompletedScreen(
     session: OperatorSession,
     completedState: CompletedUiState,
+    labels: List<Label> = emptyList(),
     onUncompleteTask: (String) -> Unit,
     onSelectTask: (Task) -> Unit,
+    onOpenLabelManager: () -> Unit = {},
     onRefresh: () -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -87,6 +92,9 @@ fun CompletedScreen(
                 }
             },
             actions = {
+                IconButton(onClick = onOpenLabelManager) {
+                    Icon(Icons.Default.Sell, contentDescription = "Manage labels")
+                }
                 IconButton(onClick = onRefresh) {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                 }
@@ -200,6 +208,7 @@ fun CompletedScreen(
                         items(completedState.tasks, key = { it.id }) { task ->
                             CompletedTaskItemRow(
                                 task = task,
+                                allLabels = labels,
                                 onUncomplete = { onUncompleteTask(task.id) },
                                 onClick = { onSelectTask(task) }
                             )
@@ -214,6 +223,7 @@ fun CompletedScreen(
 @Composable
 fun CompletedTaskItemRow(
     task: Task,
+    allLabels: List<Label> = emptyList(),
     onUncomplete: () -> Unit,
     onClick: () -> Unit
 ) {
@@ -262,6 +272,10 @@ fun CompletedTaskItemRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         maxLines = 1
                     )
+                }
+                if (task.labels.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    TaskLabelBadges(labelIds = task.labels, allLabels = allLabels)
                 }
             }
 

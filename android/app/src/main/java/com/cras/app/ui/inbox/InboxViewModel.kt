@@ -4,11 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.cras.app.auth.AuthService
 import com.cras.app.auth.OperatorSession
+import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
+import com.cras.app.data.LabelService
 import com.cras.app.data.TaskService
+import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
 import com.cras.app.domain.filterCompletedTasks
 import com.cras.app.domain.filterInboxTasks
+import com.cras.app.models.Label
 import com.cras.app.models.Task
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,7 +41,8 @@ sealed interface CompletedUiState {
 
 class InboxViewModel(
     private val authService: AuthService,
-    private val taskService: TaskService
+    private val taskService: TaskService,
+    private val labelService: LabelService
 ) : ViewModel() {
 
     private val _authState = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
@@ -49,6 +54,9 @@ class InboxViewModel(
     private val _completedState = MutableStateFlow<CompletedUiState>(CompletedUiState.Loading)
     val completedState: StateFlow<CompletedUiState> = _completedState.asStateFlow()
 
+    private val _labels = MutableStateFlow<List<Label>>(emptyList())
+    val labels: StateFlow<List<Label>> = _labels.asStateFlow()
+
     private val _selectedTask = MutableStateFlow<Task?>(null)
     val selectedTask: StateFlow<Task?> = _selectedTask.asStateFlow()
 
@@ -57,6 +65,12 @@ class InboxViewModel(
 
     private val _createTaskError = MutableStateFlow<String?>(null)
     val createTaskError: StateFlow<String?> = _createTaskError.asStateFlow()
+
+    private val _isCreatingLabel = MutableStateFlow(false)
+    val isCreatingLabel: StateFlow<Boolean> = _isCreatingLabel.asStateFlow()
+
+    private val _createLabelError = MutableStateFlow<String?>(null)
+    val createLabelError: StateFlow<String?> = _createLabelError.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -68,6 +82,7 @@ class InboxViewModel(
                     _authState.value = AuthUiState.Unauthenticated()
                     _inboxState.value = InboxUiState.Empty
                     _completedState.value = CompletedUiState.Empty
+                    _labels.value = emptyList()
                     _selectedTask.value = null
                 }
             }
@@ -113,6 +128,9 @@ class InboxViewModel(
         _completedState.value = CompletedUiState.Loading
         try {
             val allTasks = taskService.fetchTasks(session)
+            val allLabels = labelService.fetchLabels(session)
+            _labels.value = allLabels
+
             val inboxTasks = filterInboxTasks(allTasks)
             val completedTasks = filterCompletedTasks(allTasks)
 
@@ -140,7 +158,98 @@ class InboxViewModel(
         }
     }
 
-    fun createTask(title: String, description: String? = null, priority: Int = 4) {
+    fun createLabel(
+        name: String,
+        color: String,
+        onSuccess: (Label) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated) {
+            onError("Not authenticated")
+            return
+        }
+
+        viewModelScope.launch {
+            _isCreatingLabel.value = true
+            _createLabelError.value = null
+            try {
+                val created = labelService.createLabel(
+                    session = currentAuth.session,
+                    params = CreateLabelParams(name = name, color = color)
+                )
+                _labels.value = _labels.value + created
+                onSuccess(created)
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "Failed to create label"
+                _createLabelError.value = errorMsg
+                onError(errorMsg)
+            } finally {
+                _isCreatingLabel.value = false
+            }
+        }
+    }
+
+    fun updateLabel(
+        id: String,
+        name: String? = null,
+        color: String? = null,
+        onSuccess: (Label) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated) {
+            onError("Not authenticated")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val updated = labelService.updateLabel(
+                    session = currentAuth.session,
+                    params = UpdateLabelParams(id = id, name = name, color = color)
+                )
+                _labels.value = _labels.value.map { if (it.id == id) updated else it }
+                // Reload tasks to reflect updated label states
+                loadTasksInternal(currentAuth.session)
+                onSuccess(updated)
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "Failed to update label"
+                onError(errorMsg)
+            }
+        }
+    }
+
+    fun deleteLabel(
+        id: String,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated) {
+            onError("Not authenticated")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                labelService.deleteLabel(currentAuth.session, id)
+                _labels.value = _labels.value.filterNot { it.id == id }
+                loadTasksInternal(currentAuth.session)
+                onSuccess()
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "Failed to delete label"
+                onError(errorMsg)
+            }
+        }
+    }
+
+    fun createTask(
+        title: String,
+        description: String? = null,
+        priority: Int = 4,
+        labels: List<String> = emptyList()
+    ) {
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
 
@@ -156,7 +265,8 @@ class InboxViewModel(
                     params = CreateTaskParams(
                         title = trimmed,
                         description = description?.trim()?.ifEmpty { null },
-                        priority = priority
+                        priority = priority,
+                        labels = labels
                     )
                 )
                 loadTasksInternal(currentAuth.session)

@@ -37,12 +37,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Sell
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.cras.app.models.Label
 import com.cras.app.models.TaskPriorities
+import com.cras.app.ui.labels.parseHexColor
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CreateTaskInput(
-    onCreateTask: (title: String, description: String?, priority: Int) -> Unit,
+    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>) -> Unit,
+    availableLabels: List<Label> = emptyList(),
     isSubmitting: Boolean = false,
     errorMessage: String? = null,
     modifier: Modifier = Modifier
@@ -50,16 +60,18 @@ fun CreateTaskInput(
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var priority by remember { mutableIntStateOf(4) }
+    var selectedLabels by remember { mutableStateOf(emptyList<String>()) }
     var isExpanded by remember { mutableStateOf(false) }
 
     val submit = {
         val trimmedTitle = title.trim()
         if (trimmedTitle.isNotEmpty() && !isSubmitting) {
             val desc = description.trim().ifEmpty { null }
-            onCreateTask(trimmedTitle, desc, priority)
+            onCreateTask(trimmedTitle, desc, priority, selectedLabels)
             title = ""
             description = ""
             priority = 4
+            selectedLabels = emptyList()
             isExpanded = false
         }
     }
@@ -171,6 +183,66 @@ fun CreateTaskInput(
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                 color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                    }
+                }
+            }
+
+            if (availableLabels.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Labels:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        availableLabels.forEach { label ->
+                            val isSelected = selectedLabels.contains(label.id)
+                            val labelColor = parseHexColor(label.color)
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                border = if (isSelected) {
+                                    androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                                } else null,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable(enabled = !isSubmitting) {
+                                        selectedLabels = if (isSelected) {
+                                            selectedLabels.filterNot { it == label.id }
+                                        } else {
+                                            selectedLabels + label.id
+                                        }
+                                    }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(labelColor)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = label.name,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     }
                 }

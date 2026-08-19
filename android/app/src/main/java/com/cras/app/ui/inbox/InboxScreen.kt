@@ -37,20 +37,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.material.icons.filled.Sell
 import androidx.compose.ui.unit.dp
 import com.cras.app.auth.OperatorSession
+import com.cras.app.models.Label
 import com.cras.app.models.Task
+import com.cras.app.ui.labels.TaskLabelBadges
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InboxScreen(
     session: OperatorSession,
     inboxState: InboxUiState,
+    labels: List<Label> = emptyList(),
     isCreatingTask: Boolean,
     createTaskError: String?,
-    onCreateTask: (title: String, description: String?, priority: Int) -> Unit,
+    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>) -> Unit,
     onCompleteTask: (String) -> Unit,
     onSelectTask: (Task) -> Unit,
+    onOpenLabelManager: () -> Unit = {},
     onRefresh: () -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -89,6 +94,9 @@ fun InboxScreen(
                 }
             },
             actions = {
+                IconButton(onClick = onOpenLabelManager) {
+                    Icon(Icons.Default.Sell, contentDescription = "Manage labels")
+                }
                 IconButton(onClick = onRefresh) {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                 }
@@ -110,6 +118,7 @@ fun InboxScreen(
 
             CreateTaskInput(
                 onCreateTask = onCreateTask,
+                availableLabels = labels,
                 isSubmitting = isCreatingTask,
                 errorMessage = createTaskError
             )
@@ -212,6 +221,7 @@ fun InboxScreen(
                         items(inboxState.tasks, key = { it.id }) { task ->
                             TaskItemRow(
                                 task = task,
+                                allLabels = labels,
                                 onComplete = { onCompleteTask(task.id) },
                                 onClick = { onSelectTask(task) }
                             )
@@ -226,6 +236,7 @@ fun InboxScreen(
 @Composable
 fun TaskItemRow(
     task: Task,
+    allLabels: List<Label> = emptyList(),
     onComplete: () -> Unit,
     onClick: () -> Unit
 ) {
@@ -272,6 +283,10 @@ fun TaskItemRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
                     )
+                }
+                if (task.labels.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    TaskLabelBadges(labelIds = task.labels, allLabels = allLabels)
                 }
             }
 

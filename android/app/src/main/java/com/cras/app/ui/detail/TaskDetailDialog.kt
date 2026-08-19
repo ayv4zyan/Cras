@@ -795,7 +795,7 @@ fun TaskDetailDialog(
                 }
 
                 // Add Comment form
-                if (onAddComment != null) {
+                if (!isTaskCompleted && onAddComment != null) {
                     Spacer(modifier = Modifier.height(12.dp))
                     Column(modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(

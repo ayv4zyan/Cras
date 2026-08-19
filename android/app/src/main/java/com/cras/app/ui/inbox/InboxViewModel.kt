@@ -141,14 +141,10 @@ class InboxViewModel(
         try {
             val allTasksList = taskService.fetchTasks(session)
             val allLabels = labelService.fetchLabels(session)
-            val allComments = try {
-                commentService.fetchComments(session)
-            } catch (_: Exception) {
-                emptyList()
-            }
+            val commentsResult = runCatching { commentService.fetchComments(session) }
             _allTasks.value = allTasksList
             _labels.value = allLabels
-            _comments.value = allComments
+            commentsResult.onSuccess { _comments.value = it }
 
             val inboxTasks = filterInboxTasks(allTasksList)
             val completedTasks = filterCompletedTasks(allTasksList)

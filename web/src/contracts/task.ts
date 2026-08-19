@@ -114,4 +114,3 @@ export const parseComment = Schema.decodeUnknownSync(CommentSchema, {
 export const parseLabel = Schema.decodeUnknownSync(LabelSchema, {
   onExcessProperty: "error",
 });
-

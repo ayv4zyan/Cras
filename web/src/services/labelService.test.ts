@@ -126,7 +126,8 @@ describe("Label Domain Service Seam", () => {
               single: vi.fn().mockResolvedValue({
                 data: null,
                 error: {
-                  message: 'duplicate key value violates unique constraint "uq_labels_name_operator"',
+                  message:
+                    'duplicate key value violates unique constraint "uq_labels_name_operator"',
                   code: "23505",
                 },
               }),
@@ -195,7 +196,8 @@ describe("Label Domain Service Seam", () => {
                 single: vi.fn().mockResolvedValue({
                   data: null,
                   error: {
-                    message: 'duplicate key value violates unique constraint "uq_labels_name_operator"',
+                    message:
+                      'duplicate key value violates unique constraint "uq_labels_name_operator"',
                     code: "23505",
                   },
                 }),

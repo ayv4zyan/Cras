@@ -183,9 +183,7 @@ export function CrasApp({
   const handleUpdateLabel = useCallback(
     async (params: UpdateLabelParams) => {
       const updated = await updateLabel(client, params);
-      setLabels((prev) =>
-        prev.map((l) => (l.id === updated.id ? updated : l)),
-      );
+      setLabels((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
     },
     [client],
   );

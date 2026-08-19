@@ -65,11 +65,13 @@ describe("LabelManagerModal Component", () => {
   });
 
   it("displays error when attempting to create a label with duplicate name", async () => {
-    const onCreateLabel = vi.fn().mockImplementation(async ({ name }: { name: string }) => {
-      if (name.toLowerCase() === "urgent") {
-        throw new Error("A label with this name already exists");
-      }
-    });
+    const onCreateLabel = vi
+      .fn()
+      .mockImplementation(async ({ name }: { name: string }) => {
+        if (name.toLowerCase() === "urgent") {
+          throw new Error("A label with this name already exists");
+        }
+      });
 
     render(
       <LabelManagerModal

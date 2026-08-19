@@ -151,7 +151,10 @@ export function LabelManagerModal({
         </div>
 
         {/* Create Label Form */}
-        <form onSubmit={handleCreate} className="space-y-3 p-3 rounded-lg bg-secondary/30 border border-border/60">
+        <form
+          onSubmit={handleCreate}
+          className="space-y-3 p-3 rounded-lg bg-secondary/30 border border-border/60"
+        >
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             Create new label
           </h3>

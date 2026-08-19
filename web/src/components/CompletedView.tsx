@@ -85,10 +85,7 @@ export function CompletedView({
                         {task.description}
                       </p>
                     )}
-                    <TaskLabelBadges
-                      labelIds={task.labels}
-                      labels={labels}
-                    />
+                    <TaskLabelBadges labelIds={task.labels} labels={labels} />
                   </div>
                 </div>
 

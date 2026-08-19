@@ -100,99 +100,36 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
               }),
             };
           }),
-          insert: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
-            return {
-              select: vi.fn().mockReturnValue({
-                single: vi.fn().mockImplementation(async () => {
-                  if (!currentUser) {
-                    return {
-                      data: null,
-                      error: { message: "Unauthorized", code: "42501" },
-                    };
-                  }
-                  const name = (payload.name as string).trim();
-                  const color = (payload.color as string).trim();
-                  if (!name) {
-                    return {
-                      data: null,
-                      error: {
-                        message: "Label name cannot be empty",
-                        code: "23514",
-                      },
-                    };
-                  }
-                  // Check unique constraint: (name, operator_id)
-                  const exists = dbLabels.some(
-                    (l) =>
-                      l.operator_id === currentUser.id &&
-                      l.name.toLowerCase() === name.toLowerCase(),
-                  );
-                  if (exists) {
-                    return {
-                      data: null,
-                      error: {
-                        message:
-                          'duplicate key value violates unique constraint "uq_labels_name_operator"',
-                        code: "23505",
-                      },
-                    };
-                  }
-                  const now = new Date().toISOString();
-                  const newLabel: DbLabelRow = {
-                    id: (payload.id as string) || crypto.randomUUID(),
-                    operator_id: currentUser.id,
-                    name,
-                    color,
-                    created_at: now,
-                    updated_at: now,
-                  };
-                  dbLabels.push(newLabel);
-                  return { data: newLabel, error: null };
-                }),
-              }),
-            };
-          }),
-          update: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
-            return {
-              eq: vi.fn().mockImplementation((col: string, val: string) => {
-                const runUpdate = async () => {
-                  if (!currentUser) {
-                    return {
-                      data: null,
-                      error: { message: "Unauthorized", code: "42501" },
-                    };
-                  }
-                  const index = dbLabels.findIndex(
-                    (l) => l.id === val && l.operator_id === currentUser.id,
-                  );
-                  if (index === -1) {
-                    return {
-                      data: null,
-                      error: {
-                        message: "Label not found or unauthorized",
-                        code: "P0002",
-                      },
-                    };
-                  }
-                  const existing = dbLabels[index];
-                  const newName =
-                    payload.name !== undefined
-                      ? (payload.name as string).trim()
-                      : existing.name;
-                  const newColor =
-                    payload.color !== undefined
-                      ? (payload.color as string).trim()
-                      : existing.color;
-
-                  // Check unique constraint on rename
-                  if (newName.toLowerCase() !== existing.name.toLowerCase()) {
-                    const duplicate = dbLabels.some(
+          insert: vi
+            .fn()
+            .mockImplementation((payload: Record<string, unknown>) => {
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockImplementation(async () => {
+                    if (!currentUser) {
+                      return {
+                        data: null,
+                        error: { message: "Unauthorized", code: "42501" },
+                      };
+                    }
+                    const name = (payload.name as string).trim();
+                    const color = (payload.color as string).trim();
+                    if (!name) {
+                      return {
+                        data: null,
+                        error: {
+                          message: "Label name cannot be empty",
+                          code: "23514",
+                        },
+                      };
+                    }
+                    // Check unique constraint: (name, operator_id)
+                    const exists = dbLabels.some(
                       (l) =>
-                        l.id !== val &&
                         l.operator_id === currentUser.id &&
-                        l.name.toLowerCase() === newName.toLowerCase(),
+                        l.name.toLowerCase() === name.toLowerCase(),
                     );
-                    if (duplicate) {
+                    if (exists) {
                       return {
                         data: null,
                         error: {
@@ -202,28 +139,97 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                         },
                       };
                     }
-                  }
-
-                  const updated: DbLabelRow = {
-                    ...existing,
-                    name: newName,
-                    color: newColor,
-                    updated_at: new Date().toISOString(),
-                  };
-                  dbLabels[index] = updated;
-                  return { data: updated, error: null };
-                };
-
-                return {
-                  then: (resolve: (v: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
-                    runUpdate().then(resolve, reject),
-                  select: vi.fn().mockReturnValue({
-                    single: vi.fn().mockImplementation(runUpdate),
+                    const now = new Date().toISOString();
+                    const newLabel: DbLabelRow = {
+                      id: (payload.id as string) || crypto.randomUUID(),
+                      operator_id: currentUser.id,
+                      name,
+                      color,
+                      created_at: now,
+                      updated_at: now,
+                    };
+                    dbLabels.push(newLabel);
+                    return { data: newLabel, error: null };
                   }),
-                };
-              }),
-            };
-          }),
+                }),
+              };
+            }),
+          update: vi
+            .fn()
+            .mockImplementation((payload: Record<string, unknown>) => {
+              return {
+                eq: vi.fn().mockImplementation((col: string, val: string) => {
+                  const runUpdate = async () => {
+                    if (!currentUser) {
+                      return {
+                        data: null,
+                        error: { message: "Unauthorized", code: "42501" },
+                      };
+                    }
+                    const index = dbLabels.findIndex(
+                      (l) => l.id === val && l.operator_id === currentUser.id,
+                    );
+                    if (index === -1) {
+                      return {
+                        data: null,
+                        error: {
+                          message: "Label not found or unauthorized",
+                          code: "P0002",
+                        },
+                      };
+                    }
+                    const existing = dbLabels[index];
+                    const newName =
+                      payload.name !== undefined
+                        ? (payload.name as string).trim()
+                        : existing.name;
+                    const newColor =
+                      payload.color !== undefined
+                        ? (payload.color as string).trim()
+                        : existing.color;
+
+                    // Check unique constraint on rename
+                    if (newName.toLowerCase() !== existing.name.toLowerCase()) {
+                      const duplicate = dbLabels.some(
+                        (l) =>
+                          l.id !== val &&
+                          l.operator_id === currentUser.id &&
+                          l.name.toLowerCase() === newName.toLowerCase(),
+                      );
+                      if (duplicate) {
+                        return {
+                          data: null,
+                          error: {
+                            message:
+                              'duplicate key value violates unique constraint "uq_labels_name_operator"',
+                            code: "23505",
+                          },
+                        };
+                      }
+                    }
+
+                    const updated: DbLabelRow = {
+                      ...existing,
+                      name: newName,
+                      color: newColor,
+                      updated_at: new Date().toISOString(),
+                    };
+                    dbLabels[index] = updated;
+                    return { data: updated, error: null };
+                  };
+
+                  return {
+                    then: (
+                      resolve: (v: unknown) => unknown,
+                      reject?: (reason: unknown) => unknown,
+                    ) => runUpdate().then(resolve, reject),
+                    select: vi.fn().mockReturnValue({
+                      single: vi.fn().mockImplementation(runUpdate),
+                    }),
+                  };
+                }),
+              };
+            }),
           delete: vi.fn().mockImplementation(() => {
             return {
               eq: vi.fn().mockImplementation((col: string, val: string) => {
@@ -240,13 +246,17 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                   // Cascade delete from task_labels
                   dbTaskLabels = dbTaskLabels.filter(
                     (tl) =>
-                      !(tl.label_id === val && tl.operator_id === currentUser.id),
+                      !(
+                        tl.label_id === val && tl.operator_id === currentUser.id
+                      ),
                   );
                   return { data: null, error: null };
                 };
                 return {
-                  then: (resolve: (v: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
-                    runDelete().then(resolve, reject),
+                  then: (
+                    resolve: (v: unknown) => unknown,
+                    reject?: (reason: unknown) => unknown,
+                  ) => runDelete().then(resolve, reject),
                 };
               }),
             };
@@ -485,8 +495,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 dbTaskLabels = dbTaskLabels.filter(
                   (tl) =>
                     !(
-                      tl.task_id === taskId &&
-                      tl.operator_id === currentUser.id
+                      tl.task_id === taskId && tl.operator_id === currentUser.id
                     ),
                 );
                 // Insert new associations
@@ -502,8 +511,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
               const currentLabelIds = dbTaskLabels
                 .filter(
                   (tl) =>
-                    tl.task_id === taskId &&
-                    tl.operator_id === currentUser.id,
+                    tl.task_id === taskId && tl.operator_id === currentUser.id,
                 )
                 .map((tl) => tl.label_id);
 
@@ -556,8 +564,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
               const currentLabelIds = dbTaskLabels
                 .filter(
                   (tl) =>
-                    tl.task_id === taskId &&
-                    tl.operator_id === currentUser.id,
+                    tl.task_id === taskId && tl.operator_id === currentUser.id,
                 )
                 .map((tl) => tl.label_id);
 
@@ -608,8 +615,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
               const currentLabelIds = dbTaskLabels
                 .filter(
                   (tl) =>
-                    tl.task_id === taskId &&
-                    tl.operator_id === currentUser.id,
+                    tl.task_id === taskId && tl.operator_id === currentUser.id,
                 )
                 .map((tl) => tl.label_id);
 
@@ -1162,9 +1168,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     fireEvent.click(deleteTempBtn);
 
     await waitFor(() => {
-      expect(
-        within(modal).queryByText("Temporary"),
-      ).not.toBeInTheDocument();
+      expect(within(modal).queryByText("Temporary")).not.toBeInTheDocument();
     });
 
     expect(dbLabels.some((l) => l.name === "Temporary")).toBe(false);
@@ -1203,7 +1207,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     });
 
     // Open Label Manager
-    fireEvent.click(screen.getByRole("button", { name: /add or manage labels/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /add or manage labels/i }),
+    );
     const modal = screen.getByRole("dialog", { name: /manage labels/i });
 
     // 1. Attempt to create duplicate label "Work"
@@ -1316,7 +1322,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     expect(within(taskItem).getByText("Urgent")).toBeInTheDocument();
 
     // 2. Open Label Manager and Rename "Backend" to "Infrastructure"
-    fireEvent.click(screen.getByRole("button", { name: /add or manage labels/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /add or manage labels/i }),
+    );
     const labelModal = screen.getByRole("dialog", { name: /manage labels/i });
 
     const editBackendBtn = within(labelModal).getByRole("button", {
@@ -1352,7 +1360,8 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     fireEvent.click(taskItem);
     const detailModal = screen.getByRole("dialog", { name: /task details/i });
 
-    const frontendCheckboxInModal = within(detailModal).getByLabelText("Frontend");
+    const frontendCheckboxInModal =
+      within(detailModal).getByLabelText("Frontend");
     expect(frontendCheckboxInModal).not.toBeChecked();
     fireEvent.click(frontendCheckboxInModal);
 
@@ -1413,7 +1422,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
       labels: [op1LabelId],
     });
     const forgedCreateResult = await forgedCreatePromise;
-    expect(forgedCreateResult.error?.message).toContain("foreign key constraint");
+    expect(forgedCreateResult.error?.message).toContain(
+      "foreign key constraint",
+    );
 
     // 3. Bob creates his own task, then tries to update it with Alice's label ID -> Rejected
     const bobTaskPromise = clientOp2.schema("api").rpc("create_task", {
@@ -1428,7 +1439,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
       labels: [op1LabelId],
     });
     const forgedUpdateResult = await forgedUpdatePromise;
-    expect(forgedUpdateResult.error?.message).toContain("foreign key constraint");
+    expect(forgedUpdateResult.error?.message).toContain(
+      "foreign key constraint",
+    );
 
     // 4. Bob tries to update or delete Alice's label directly -> Rejected / not found
     const forgedLabelUpdate = await clientOp2

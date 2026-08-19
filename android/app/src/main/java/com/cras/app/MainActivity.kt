@@ -11,6 +11,7 @@ import com.cras.app.auth.GoogleSignInResult
 import com.cras.app.auth.SharedPreferencesSessionStore
 import com.cras.app.auth.SupabaseAuthService
 import com.cras.app.config.getPublicSupabaseConfig
+import com.cras.app.data.SupabaseCommentService
 import com.cras.app.data.SupabaseLabelService
 import com.cras.app.data.SupabaseTaskService
 import com.cras.app.ui.CrasApp
@@ -38,8 +39,9 @@ class MainActivity : ComponentActivity() {
         val authService = SupabaseAuthService(config, sessionStore)
         val taskService = SupabaseTaskService(config)
         val labelService = SupabaseLabelService(config)
+        val commentService = SupabaseCommentService(config)
 
-        inboxViewModel = InboxViewModel(authService, taskService, labelService)
+        inboxViewModel = InboxViewModel(authService, taskService, labelService, commentService)
         googleAuthManager = GoogleAuthManager(this)
 
         setContent {

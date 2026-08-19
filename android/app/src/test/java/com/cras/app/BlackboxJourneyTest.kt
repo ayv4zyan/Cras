@@ -11,6 +11,10 @@ import com.cras.app.data.SupabaseLabelService
 import com.cras.app.data.SupabaseTaskService
 import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
+import com.cras.app.data.CreateCommentParams
+import com.cras.app.data.SupabaseCommentService
+import com.cras.app.domain.filterSubtasks
+import com.cras.app.models.Comment
 import com.cras.app.models.Label
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
@@ -50,6 +54,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BlackboxJourneyTest {
@@ -69,6 +74,14 @@ class BlackboxJourneyTest {
         val version: Int
     )
 
+    private data class SimulatedCommentDbRow(
+        val id: String,
+        val operatorId: String,
+        val taskId: String,
+        val content: String,
+        val createdAt: String
+    )
+
     private data class SimulatedLabelDbRow(
         val id: String,
         val operatorId: String,
@@ -79,8 +92,9 @@ class BlackboxJourneyTest {
     )
 
     private lateinit var mockWebServer: MockWebServer
-    private val dbRows = mutableListOf<SimulatedDbRow>()
-    private val labelDbRows = mutableListOf<SimulatedLabelDbRow>()
+    private val dbRows = CopyOnWriteArrayList<SimulatedDbRow>()
+    private val labelDbRows = CopyOnWriteArrayList<SimulatedLabelDbRow>()
+    private val commentDbRows = CopyOnWriteArrayList<SimulatedCommentDbRow>()
     private val testDispatcher = StandardTestDispatcher()
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -89,6 +103,7 @@ class BlackboxJourneyTest {
         Dispatchers.setMain(testDispatcher)
         dbRows.clear()
         labelDbRows.clear()
+        commentDbRows.clear()
 
         mockWebServer = MockWebServer()
         mockWebServer.dispatcher = object : Dispatcher() {
@@ -246,6 +261,78 @@ class BlackboxJourneyTest {
                     }
                 }
 
+                // Comments REST endpoints
+                if (path.startsWith("/rest/v1/comments")) {
+                    if (callerOperatorId == null) {
+                        return MockResponse().setResponseCode(401).setBody("""{"code":"42501","message":"Unauthorized"}""")
+                    }
+
+                    when (method) {
+                        "GET" -> {
+                            val taskIdFilter = if (path.contains("taskId=eq.")) {
+                                path.substringAfter("taskId=eq.", "").substringBefore("&").takeIf { it.isNotEmpty() }
+                            } else null
+
+                            val operatorComments = commentDbRows
+                                .filter { it.operatorId == callerOperatorId && (taskIdFilter == null || it.taskId == taskIdFilter) }
+                                .sortedBy { it.createdAt }
+                                .map {
+                                    Comment(
+                                        id = it.id,
+                                        taskId = it.taskId,
+                                        content = it.content,
+                                        createdAt = it.createdAt
+                                    )
+                                }
+                            val respBody = json.encodeToString(
+                                kotlinx.serialization.builtins.ListSerializer(Comment.serializer()),
+                                operatorComments
+                            )
+                            return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
+                        }
+                    }
+                }
+
+                // Data API: api.create_comment RPC
+                if (path.startsWith("/rest/v1/rpc/create_comment")) {
+                    if (callerOperatorId == null) {
+                        return MockResponse().setResponseCode(401).setBody("""{"code":"42501","message":"Unauthorized"}""")
+                    }
+
+                    val body = request.body.readUtf8()
+                    val reqJson = json.parseToJsonElement(body).jsonObject
+                    val taskId = reqJson["task_id"]?.jsonPrimitive?.content ?: ""
+                    val commentContent = reqJson["content"]?.jsonPrimitive?.content ?: ""
+
+                    if (commentContent.trim().isEmpty()) {
+                        return MockResponse().setResponseCode(400).setBody("""{"code":"23514","message":"Comment content cannot be empty"}""")
+                    }
+
+                    val taskExists = dbRows.any { it.id == taskId && it.operatorId == callerOperatorId }
+                    if (!taskExists) {
+                        return MockResponse().setResponseCode(404).setBody("""{"code":"P0002","message":"Task not found or unauthorized"}""")
+                    }
+
+                    val commentId = reqJson["id"]?.jsonPrimitive?.content ?: UUID.randomUUID().toString()
+                    val newComment = SimulatedCommentDbRow(
+                        id = commentId,
+                        operatorId = callerOperatorId,
+                        taskId = taskId,
+                        content = commentContent.trim(),
+                        createdAt = "2026-08-19T10:00:00Z"
+                    )
+                    commentDbRows.add(newComment)
+
+                    val comment = Comment(
+                        id = newComment.id,
+                        taskId = newComment.taskId,
+                        content = newComment.content,
+                        createdAt = newComment.createdAt
+                    )
+                    val respBody = json.encodeToString(Comment.serializer(), comment)
+                    return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
+                }
+
                 // Data API: api.tasks view
                 if (path.startsWith("/rest/v1/tasks")) {
                     if (callerOperatorId == null) {
@@ -291,6 +378,17 @@ class BlackboxJourneyTest {
                     }
 
                     val parsedLabels = reqJson["labels"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+                    val parentId = reqJson["parent_id"]?.jsonPrimitive?.content
+
+                    if (parentId != null) {
+                        val parent = dbRows.find { it.id == parentId && it.operatorId == callerOperatorId }
+                        if (parent == null) {
+                            return MockResponse().setResponseCode(404).setBody("""{"code":"P0002","message":"Parent task not found or unauthorized"}""")
+                        }
+                        if (parent.parentId != null) {
+                            return MockResponse().setResponseCode(400).setBody("""{"code":"P0001","message":"Subtasks cannot have children (one-level nesting only)"}""")
+                        }
+                    }
 
                     val newRow = SimulatedDbRow(
                         id = UUID.randomUUID().toString(),
@@ -300,7 +398,7 @@ class BlackboxJourneyTest {
                         priority = reqJson["priority"]?.jsonPrimitive?.content?.toIntOrNull() ?: 4,
                         plan = null,
                         labels = parsedLabels,
-                        parentId = null,
+                        parentId = parentId,
                         completedAt = null,
                         createdAt = "2026-08-19T00:00:00Z",
                         updatedAt = "2026-08-19T00:00:00Z",
@@ -497,7 +595,8 @@ class BlackboxJourneyTest {
         val authService = SupabaseAuthService(config, sessionStore, OkHttpClient())
         val taskService = SupabaseTaskService(config, OkHttpClient())
         val labelService = SupabaseLabelService(config, OkHttpClient())
-        return InboxViewModel(authService, taskService, labelService)
+        val commentService = SupabaseCommentService(config, OkHttpClient())
+        return InboxViewModel(authService, taskService, labelService, commentService)
     }
 
     @Test
@@ -1107,6 +1206,7 @@ class BlackboxJourneyTest {
         val config = PublicSupabaseConfig(url = baseUrl, publishableKey = "anon")
         val taskService = SupabaseTaskService(config, OkHttpClient())
         val labelService = SupabaseLabelService(config, OkHttpClient())
+        val commentService = SupabaseCommentService(config, OkHttpClient())
 
         assertThrows(Exception::class.java) {
             kotlinx.coroutines.runBlocking {
@@ -1119,5 +1219,172 @@ class BlackboxJourneyTest {
                 labelService.fetchLabels(unauthedSession)
             }
         }
+
+        assertThrows(Exception::class.java) {
+            kotlinx.coroutines.runBlocking {
+                commentService.fetchComments(unauthedSession)
+            }
+        }
+    }
+
+    @Test
+    fun `proves Issue 46 AC 1 - Android can add and render dated Comments separately from Description`() = runTest {
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        // 1. Create a top-level task with Description
+        viewModel.createTask(
+            title = "Production Incident Triage",
+            description = "Initial incident details in description field"
+        )
+        advanceUntilIdle()
+
+        val task = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals("Production Incident Triage", task.title)
+        assertEquals("Initial incident details in description field", task.description)
+
+        // 2. Add first dated comment
+        var comment1: Comment? = null
+        viewModel.createComment(
+            taskId = task.id,
+            content = "Identified latency spike in DB read replica",
+            onSuccess = { comment1 = it }
+        )
+        advanceUntilIdle()
+
+        assertNotNull(comment1)
+        assertEquals(task.id, comment1!!.taskId)
+        assertEquals("Identified latency spike in DB read replica", comment1!!.content)
+        assertNotNull(comment1!!.createdAt)
+
+        // 3. Add second dated comment
+        var comment2: Comment? = null
+        viewModel.createComment(
+            taskId = task.id,
+            content = "Restarted pool manager; latencies normalized",
+            onSuccess = { comment2 = it }
+        )
+        advanceUntilIdle()
+
+        assertNotNull(comment2)
+
+        // 4. Verify comments flow and separation from Description
+        val taskComments = viewModel.comments.value.filter { it.taskId == task.id }
+        assertEquals(2, taskComments.size)
+        assertEquals("Identified latency spike in DB read replica", taskComments[0].content)
+        assertEquals("Restarted pool manager; latencies normalized", taskComments[1].content)
+
+        // Description is unaffected and distinct
+        val refreshedTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals("Initial incident details in description field", refreshedTask.description)
+
+        // 5. Empty comment content is rejected
+        var emptyCommentError: String? = null
+        viewModel.createComment(
+            taskId = task.id,
+            content = "   ",
+            onError = { emptyCommentError = it }
+        )
+        advanceUntilIdle()
+
+        assertNotNull(emptyCommentError)
+        assertEquals("Comment content cannot be empty", emptyCommentError)
+    }
+
+    @Test
+    fun `proves Issue 46 AC 2, 3, 4 - Android can create and open a Subtask beneath a top-level Task, prevents deeper nesting, and excludes Subtasks from Inbox`() = runTest {
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        viewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        // 1. Create top-level Task
+        viewModel.createTask("Release Sprint 1")
+        advanceUntilIdle()
+
+        val parentTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals(1, (viewModel.inboxState.value as InboxUiState.Success).tasks.size)
+
+        // 2. Create subtask beneath the top-level task
+        var subtask1: Task? = null
+        viewModel.createSubtask(
+            parentId = parentTask.id,
+            title = "Update changelog",
+            onSuccess = { subtask1 = it }
+        )
+        advanceUntilIdle()
+
+        assertNotNull(subtask1)
+        assertEquals("Update changelog", subtask1!!.title)
+        assertEquals(parentTask.id, subtask1!!.parentId)
+
+        // 3. Subtasks do NOT appear as top-level Inbox rows (AC 4)
+        val inboxTasks = (viewModel.inboxState.value as InboxUiState.Success).tasks
+        assertEquals(1, inboxTasks.size)
+        assertEquals(parentTask.id, inboxTasks[0].id)
+        assertNull(inboxTasks[0].parentId)
+
+        // 4. Subtasks are accessible under the parent task
+        val parentSubtasks = filterSubtasks(viewModel.allTasks.value, parentTask.id)
+        assertEquals(1, parentSubtasks.size)
+        assertEquals(subtask1!!.id, parentSubtasks[0].id)
+        assertEquals("Update changelog", parentSubtasks[0].title)
+
+        // 5. Attempt deeper nesting beneath the subtask (level 2) is prevented/reported (AC 3)
+        var nestedError: String? = null
+        viewModel.createSubtask(
+            parentId = subtask1!!.id,
+            title = "Invalid level-2 nested task",
+            onError = { nestedError = it }
+        )
+        advanceUntilIdle()
+
+        assertNotNull(nestedError)
+        assertTrue(nestedError!!.contains("Subtasks cannot have children (one-level nesting only)"))
+    }
+
+    @Test
+    fun `proves Issue 46 AC 5 - Android tests exercise valid and rejected hierarchy behavior and operator isolation`() = runTest {
+        val aliceViewModel = createViewModel()
+        advanceUntilIdle()
+        aliceViewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        aliceViewModel.createTask("Alice Task")
+        advanceUntilIdle()
+        val aliceTask = (aliceViewModel.inboxState.value as InboxUiState.Success).tasks[0]
+
+        var aliceSubtask: Task? = null
+        aliceViewModel.createSubtask(aliceTask.id, "Alice Subtask", onSuccess = { aliceSubtask = it })
+        advanceUntilIdle()
+        assertNotNull(aliceSubtask)
+
+        var aliceComment: Comment? = null
+        aliceViewModel.createComment(aliceTask.id, "Alice confidential remark", onSuccess = { aliceComment = it })
+        advanceUntilIdle()
+        assertNotNull(aliceComment)
+
+        // Bob signs in
+        val bobViewModel = createViewModel()
+        advanceUntilIdle()
+        bobViewModel.signInWithGoogleIdToken("google-token-bob")
+        advanceUntilIdle()
+
+        // Bob cannot see Alice's tasks, subtasks, or comments
+        assertTrue(bobViewModel.inboxState.value is InboxUiState.Empty)
+        assertEquals(0, bobViewModel.comments.value.size)
+
+        // Bob cannot attach a subtask or comment to Alice's task
+        var bobSubtaskError: String? = null
+        bobViewModel.createSubtask(aliceTask.id, "Bob hijacking attempt", onError = { bobSubtaskError = it })
+        advanceUntilIdle()
+        assertNotNull(bobSubtaskError)
+
+        var bobCommentError: String? = null
+        bobViewModel.createComment(aliceTask.id, "Bob snooping remark", onError = { bobCommentError = it })
+        advanceUntilIdle()
+        assertNotNull(bobCommentError)
     }
 }

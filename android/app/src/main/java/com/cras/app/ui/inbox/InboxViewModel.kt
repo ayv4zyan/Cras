@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.cras.app.auth.AuthService
 import com.cras.app.auth.OperatorSession
+import com.cras.app.data.CommentService
+import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
 import com.cras.app.data.LabelService
@@ -12,6 +14,7 @@ import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
 import com.cras.app.domain.filterCompletedTasks
 import com.cras.app.domain.filterInboxTasks
+import com.cras.app.models.Comment
 import com.cras.app.models.Label
 import com.cras.app.models.Task
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,11 +45,15 @@ sealed interface CompletedUiState {
 class InboxViewModel(
     private val authService: AuthService,
     private val taskService: TaskService,
-    private val labelService: LabelService
+    private val labelService: LabelService,
+    private val commentService: CommentService
 ) : ViewModel() {
 
     private val _authState = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
     val authState: StateFlow<AuthUiState> = _authState.asStateFlow()
+
+    private val _allTasks = MutableStateFlow<List<Task>>(emptyList())
+    val allTasks: StateFlow<List<Task>> = _allTasks.asStateFlow()
 
     private val _inboxState = MutableStateFlow<InboxUiState>(InboxUiState.Loading)
     val inboxState: StateFlow<InboxUiState> = _inboxState.asStateFlow()
@@ -56,6 +63,9 @@ class InboxViewModel(
 
     private val _labels = MutableStateFlow<List<Label>>(emptyList())
     val labels: StateFlow<List<Label>> = _labels.asStateFlow()
+
+    private val _comments = MutableStateFlow<List<Comment>>(emptyList())
+    val comments: StateFlow<List<Comment>> = _comments.asStateFlow()
 
     private val _selectedTask = MutableStateFlow<Task?>(null)
     val selectedTask: StateFlow<Task?> = _selectedTask.asStateFlow()
@@ -80,9 +90,11 @@ class InboxViewModel(
                     loadTasksInternal(session)
                 } else {
                     _authState.value = AuthUiState.Unauthenticated()
+                    _allTasks.value = emptyList()
                     _inboxState.value = InboxUiState.Empty
                     _completedState.value = CompletedUiState.Empty
                     _labels.value = emptyList()
+                    _comments.value = emptyList()
                     _selectedTask.value = null
                 }
             }
@@ -127,12 +139,19 @@ class InboxViewModel(
         _inboxState.value = InboxUiState.Loading
         _completedState.value = CompletedUiState.Loading
         try {
-            val allTasks = taskService.fetchTasks(session)
+            val allTasksList = taskService.fetchTasks(session)
             val allLabels = labelService.fetchLabels(session)
+            val allComments = try {
+                commentService.fetchComments(session)
+            } catch (_: Exception) {
+                emptyList()
+            }
+            _allTasks.value = allTasksList
             _labels.value = allLabels
+            _comments.value = allComments
 
-            val inboxTasks = filterInboxTasks(allTasks)
-            val completedTasks = filterCompletedTasks(allTasks)
+            val inboxTasks = filterInboxTasks(allTasksList)
+            val completedTasks = filterCompletedTasks(allTasksList)
 
             _inboxState.value = if (inboxTasks.isEmpty()) {
                 InboxUiState.Empty
@@ -149,7 +168,7 @@ class InboxViewModel(
             // Refresh selectedTask if it's currently selected
             val currentSelected = _selectedTask.value
             if (currentSelected != null) {
-                _selectedTask.value = allTasks.find { it.id == currentSelected.id }
+                _selectedTask.value = allTasksList.find { it.id == currentSelected.id }
             }
         } catch (e: Exception) {
             val errorMsg = e.message ?: "Failed to load tasks"
@@ -210,7 +229,6 @@ class InboxViewModel(
                     params = UpdateLabelParams(id = id, name = name, color = color)
                 )
                 _labels.value = _labels.value.map { if (it.id == id) updated else it }
-                // Reload tasks to reflect updated label states
                 loadTasksInternal(currentAuth.session)
                 onSuccess(updated)
             } catch (e: Exception) {
@@ -239,6 +257,82 @@ class InboxViewModel(
                 onSuccess()
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to delete label"
+                onError(errorMsg)
+            }
+        }
+    }
+
+    fun createComment(
+        taskId: String,
+        content: String,
+        onSuccess: (Comment) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val trimmedContent = content.trim()
+        if (trimmedContent.isEmpty()) {
+            onError("Comment content cannot be empty")
+            return
+        }
+
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated) {
+            onError("Not authenticated")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val created = commentService.createComment(
+                    session = currentAuth.session,
+                    params = CreateCommentParams(taskId = taskId, content = trimmedContent)
+                )
+                _comments.value = _comments.value + created
+                onSuccess(created)
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "Failed to create comment"
+                onError(errorMsg)
+            }
+        }
+    }
+
+    fun createSubtask(
+        parentId: String,
+        title: String,
+        onSuccess: (Task) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val trimmedTitle = title.trim()
+        if (trimmedTitle.isEmpty()) {
+            onError("Task title cannot be empty")
+            return
+        }
+
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated) {
+            onError("Not authenticated")
+            return
+        }
+
+        // Prevent deeper nesting at ViewModel layer
+        val parentTask = _allTasks.value.find { it.id == parentId }
+        if (parentTask != null && parentTask.parentId != null) {
+            onError("Subtasks cannot have children (one-level nesting only)")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val created = taskService.createTask(
+                    session = currentAuth.session,
+                    params = CreateTaskParams(
+                        title = trimmedTitle,
+                        parentId = parentId
+                    )
+                )
+                loadTasksInternal(currentAuth.session)
+                onSuccess(created)
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "Failed to create subtask"
                 onError(errorMsg)
             }
         }
@@ -297,7 +391,6 @@ class InboxViewModel(
                 onSuccess()
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to update task"
-                // On error (e.g. stale version or completed rejection), reload to recover state
                 loadTasksInternal(currentAuth.session)
                 onError(errorMsg)
             }

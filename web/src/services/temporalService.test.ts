@@ -91,11 +91,14 @@ describe("Temporal Service Seam", () => {
         effectiveDefault: "floating",
       });
 
-      expect(plan?.type).toBe("instant");
-      if (plan && plan.type === "instant") {
-        expect(plan.at).toMatch(
-          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/,
-        );
+      expect(plan).not.toBeNull();
+      if (plan && "type" in plan) {
+        expect(plan.type).toBe("instant");
+        if (plan.type === "instant") {
+          expect(plan.at).toMatch(
+            /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/,
+          );
+        }
       }
     });
 
@@ -107,7 +110,10 @@ describe("Temporal Service Seam", () => {
         effectiveDefault: "instant",
       });
 
-      expect(plan?.type).toBe("instant");
+      expect(plan).not.toBeNull();
+      if (plan && "type" in plan) {
+        expect(plan.type).toBe("instant");
+      }
     });
 
     it("uses effective default ('floating') when no explicit type is provided", () => {

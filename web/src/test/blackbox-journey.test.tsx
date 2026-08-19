@@ -15,6 +15,7 @@ import type {
   Plan,
   Comment as TaskCommentContract,
 } from "../contracts/task";
+import { getDeviceLocalDate } from "../services/temporalService";
 
 describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, #43, & #45)", () => {
   // In-memory simulated Postgres database for black-box testing
@@ -623,7 +624,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 plan:
                   params.clear_plan === true
                     ? null
-                    : params.plan !== undefined
+                    : params.plan !== undefined && params.plan !== null
                       ? (params.plan as Plan)
                       : existing.plan,
                 parent_id:
@@ -1998,9 +1999,20 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
 
     const client = createMockSupabaseForOperator(operator);
 
-    const todayStr = "2026-08-19";
-    const yesterdayStr = "2026-08-18";
-    const futureStr = "2026-08-25";
+    const now = new Date();
+    const todayStr = getDeviceLocalDate(now);
+    const yesterdayDate = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - 1,
+    );
+    const yesterdayStr = getDeviceLocalDate(yesterdayDate);
+    const futureDate = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 6,
+    );
+    const futureStr = getDeviceLocalDate(futureDate);
 
     // 1. Pre-seed tasks: 1 inbox task, 1 today task, 1 overdue task, 1 upcoming task
     await client.schema("api").rpc("create_task", {

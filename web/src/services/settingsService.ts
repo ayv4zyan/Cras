@@ -184,5 +184,7 @@ export async function updateOperatorTimedPlanType(
 
   if (type) {
     setCachedEffectiveTimedPlanType(type);
+  } else {
+    await fetchEffectiveTimedPlanType(client);
   }
 }

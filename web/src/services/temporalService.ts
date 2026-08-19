@@ -135,6 +135,10 @@ export function createPlanFromInputs(params: CreatePlanParams): Plan {
   }
 
   // Instant: resolve local date & time to UTC ISO string
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+    return { date: rawDate };
+  }
+
   const [yearStr, monthStr, dayStr] = rawDate.split("-");
   const parsedYear = Number.parseInt(yearStr, 10);
   const parsedMonth = Number.parseInt(monthStr, 10) - 1;

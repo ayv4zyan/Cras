@@ -109,8 +109,8 @@ BEGIN
         FOR SELECT
         TO authenticated
         USING (
-            realtime.topic() = 'operator:' || auth.uid()::text
-            AND realtime.extension() = 'broadcast'
+            topic = 'operator:' || auth.uid()::text
+            AND extension = 'broadcast'
         );
     END IF;
 END;

@@ -150,16 +150,20 @@ class InboxViewModelTest {
         var shouldFail = false
         var failureMessage = "Network error"
         var onFetchTaskById: (suspend (String) -> Unit)? = null
+        var onFetchTasks: (suspend () -> Unit)? = null
 
         override suspend fun fetchTasks(session: OperatorSession): List<Task> {
             if (shouldFail) throw RuntimeException(failureMessage)
-            return tasksInDb.toList()
+            val tasks = tasksInDb.toList()
+            onFetchTasks?.invoke()
+            return tasks
         }
 
         override suspend fun fetchTaskById(session: OperatorSession, taskId: String): Task? {
             if (shouldFail) throw RuntimeException(failureMessage)
+            val task = tasksInDb.find { it.id == taskId }
             onFetchTaskById?.invoke(taskId)
-            return tasksInDb.find { it.id == taskId }
+            return task
         }
 
         override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
@@ -1506,5 +1510,132 @@ class InboxViewModelTest {
         advanceUntilIdle()
         assertNull(viewModel.selectedTask.value)
         assertTrue(viewModel.comments.value.isEmpty())
+    }
+
+    @Test
+    fun `realtime delete invalidation during reload fetch is processed after reload so task remains absent`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        viewModel.createTask("Task A")
+        advanceUntilIdle()
+
+        val taskA = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+
+        val fetchStarted = CompletableDeferred<Unit>()
+        val allowFetchToComplete = CompletableDeferred<Unit>()
+
+        taskService.onFetchTasks = {
+            fetchStarted.complete(Unit)
+            allowFetchToComplete.await()
+        }
+
+        // Trigger canonical reload
+        viewModel.loadTasks()
+
+        // Wait until reload fetch has captured tasks and suspended
+        fetchStarted.await()
+
+        // Remote client deletes task from DB
+        taskService.tasksInDb.removeIf { it.id == taskA.id }
+
+        // Realtime delete broadcast arrives while reload fetch is in flight
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = taskA.id,
+                operation = "deleted"
+            )
+        )
+
+        // Allow suspended reload fetch to complete
+        allowFetchToComplete.complete(Unit)
+        advanceUntilIdle()
+
+        // Verify task remains absent and was not re-added by the delayed reload snapshot
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+        assertNull(viewModel.selectedTask.value)
+    }
+
+    @Test
+    fun `bounded coalescing queue merges invalidations and triggers canonical reload on overflow`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        viewModel.createTask("Task A")
+        advanceUntilIdle()
+
+        val taskA = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        val fetchStarted = CompletableDeferred<Unit>()
+        val allowFetchToComplete = CompletableDeferred<Unit>()
+
+        taskService.onFetchTaskById = { taskId ->
+            if (taskId == taskA.id) {
+                fetchStarted.complete(Unit)
+                allowFetchToComplete.await()
+            }
+        }
+
+        // First invalidation to keep worker busy
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = taskA.id,
+                operation = "updated"
+            )
+        )
+        fetchStarted.await()
+
+        // Enqueue duplicate invalidations for the same task - these should coalesce
+        val taskIdB = UUID.randomUUID().toString()
+        val taskB = Task(id = taskIdB, title = "Task B", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+        taskService.tasksInDb.add(taskB)
+
+        realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = taskIdB, operation = "updated"))
+        realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = taskIdB, operation = "updated"))
+
+        // Enqueue 70 distinct invalidations to trigger queue overflow and canonical reload
+        for (i in 1..70) {
+            val overflowId = UUID.randomUUID().toString()
+            val overflowTask = Task(id = overflowId, title = "Overflow Task $i", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+            taskService.tasksInDb.add(overflowTask)
+            realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = overflowId, operation = "created"))
+        }
+
+        // Allow worker to finish first fetch and process the coalesced canonical reload
+        allowFetchToComplete.complete(Unit)
+        advanceUntilIdle()
+
+        // All tasks in DB should now be present due to canonical reload
+        val currentTasks = (viewModel.inboxState.value as InboxUiState.Success).tasks
+        assertEquals(72, currentTasks.size)
     }
 }

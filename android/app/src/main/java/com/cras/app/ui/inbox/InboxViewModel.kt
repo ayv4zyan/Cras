@@ -29,13 +29,28 @@ import com.cras.app.models.Task
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
+
+private sealed interface QueueItem {
+    val session: OperatorSession
+
+    data class Invalidation(
+        override val session: OperatorSession,
+        val payload: InvalidationPayload
+    ) : QueueItem
+
+    data class Reload(
+        override val session: OperatorSession
+    ) : QueueItem
+}
 
 sealed interface AuthUiState {
     object Loading : AuthUiState
@@ -128,33 +143,46 @@ class InboxViewModel(
     val createLabelError: StateFlow<String?> = _createLabelError.asStateFlow()
 
     private var realtimeSubscription: RealtimeSubscription? = null
-    private var loadJob: Job? = null
-    private val invalidationChannel = Channel<Pair<OperatorSession, InvalidationPayload>>(Channel.UNLIMITED)
+    private val queue = ArrayDeque<QueueItem>()
+    private val queueSignal = Channel<Unit>(Channel.CONFLATED)
+    private val workerJob: Job
 
     init {
-        viewModelScope.launch {
-            for ((session, payload) in invalidationChannel) {
-                try {
-                    handleInvalidationEventInternal(session, payload)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    // Guard loop against unexpected non-cancellation errors
+        workerJob = viewModelScope.launch {
+            while (isActive) {
+                val nextItem = synchronized(queue) {
+                    if (queue.isNotEmpty()) queue.removeFirst() else null
+                }
+                if (nextItem != null) {
+                    try {
+                        processQueueItem(nextItem)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Guard loop against unexpected non-cancellation errors
+                    }
+                } else {
+                    try {
+                        queueSignal.receive()
+                    } catch (_: ClosedReceiveChannelException) {
+                        break
+                    }
                 }
             }
         }
 
         viewModelScope.launch {
             authService.currentSession.collect { session ->
-                loadJob?.cancel()
-                loadJob = null
+                synchronized(queue) {
+                    queue.clear()
+                }
                 realtimeSubscription?.unsubscribe()
                 realtimeSubscription = null
 
                 if (session != null) {
                     _authState.value = AuthUiState.Authenticated(session)
-                    loadJob = viewModelScope.launch {
-                        loadTasksInternal(session)
+                    triggerLoadTasks(session)
+                    viewModelScope.launch {
                         loadSettingsInternal(session)
                     }
 
@@ -197,7 +225,11 @@ class InboxViewModel(
         super.onCleared()
         realtimeSubscription?.unsubscribe()
         realtimeSubscription = null
-        invalidationChannel.close()
+        synchronized(queue) {
+            queue.clear()
+        }
+        queueSignal.close()
+        workerJob.cancel()
     }
 
     fun selectTask(task: Task?) {
@@ -218,8 +250,9 @@ class InboxViewModel(
     }
 
     fun signOut() {
-        loadJob?.cancel()
-        loadJob = null
+        synchronized(queue) {
+            queue.clear()
+        }
         realtimeSubscription?.unsubscribe()
         realtimeSubscription = null
         viewModelScope.launch {
@@ -230,19 +263,15 @@ class InboxViewModel(
     fun loadTasks() {
         val currentAuth = _authState.value
         if (currentAuth is AuthUiState.Authenticated) {
-            loadJob?.cancel()
-            loadJob = viewModelScope.launch {
-                loadTasksInternal(currentAuth.session)
+            triggerLoadTasks(currentAuth.session)
+            viewModelScope.launch {
                 loadSettingsInternal(currentAuth.session)
             }
         }
     }
 
     private fun triggerLoadTasks(session: OperatorSession) {
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            loadTasksInternal(session)
-        }
+        enqueueReload(session)
     }
 
     private fun recalculateViews(tasks: List<Task>) {
@@ -335,7 +364,64 @@ class InboxViewModel(
     }
 
     private fun handleInvalidationEvent(session: OperatorSession, event: InvalidationPayload) {
-        invalidationChannel.trySend(session to event)
+        enqueueInvalidation(session, event)
+    }
+
+    private suspend fun processQueueItem(item: QueueItem) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != item.session) {
+            return
+        }
+
+        when (item) {
+            is QueueItem.Invalidation -> {
+                handleInvalidationEventInternal(item.session, item.payload)
+            }
+            is QueueItem.Reload -> {
+                loadTasksInternal(item.session)
+            }
+        }
+    }
+
+    private fun enqueueInvalidation(session: OperatorSession, payload: InvalidationPayload) {
+        synchronized(queue) {
+            val hasPendingReload = queue.any { it is QueueItem.Reload && it.session == session }
+            if (hasPendingReload) {
+                return
+            }
+
+            val existingIndex = queue.indexOfFirst { item ->
+                item is QueueItem.Invalidation &&
+                    item.session == session &&
+                    item.payload.resource == payload.resource &&
+                    (item.payload.resource == "label" || item.payload.id == payload.id)
+            }
+
+            if (existingIndex != -1) {
+                queue[existingIndex] = QueueItem.Invalidation(session, payload)
+            } else {
+                if (queue.size >= MAX_QUEUE_CAPACITY) {
+                    queue.removeAll { it.session == session }
+                    queue.addLast(QueueItem.Reload(session))
+                } else {
+                    queue.addLast(QueueItem.Invalidation(session, payload))
+                }
+            }
+        }
+        queueSignal.trySend(Unit)
+    }
+
+    private fun enqueueReload(session: OperatorSession) {
+        synchronized(queue) {
+            val alreadyHasReload = queue.any { it is QueueItem.Reload && it.session == session }
+            if (!alreadyHasReload) {
+                if (queue.size >= MAX_QUEUE_CAPACITY) {
+                    queue.removeAll { it.session == session }
+                }
+                queue.addLast(QueueItem.Reload(session))
+            }
+        }
+        queueSignal.trySend(Unit)
     }
 
     private suspend fun handleInvalidationEventInternal(session: OperatorSession, event: InvalidationPayload) {
@@ -784,5 +870,9 @@ class InboxViewModel(
                 onError(e.message ?: "Failed to update default timed plan type")
             }
         }
+    }
+
+    companion object {
+        private const val MAX_QUEUE_CAPACITY = 64
     }
 }

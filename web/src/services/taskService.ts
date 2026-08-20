@@ -151,15 +151,20 @@ export async function updateTask(
 
 /**
  * Completes a task via the api.complete_task RPC, recording a completion timestamp.
+ * Supports expectedVersion for optimistic version CAS.
  */
 export async function completeTask(
   client: SupabaseClient,
   taskId: string,
   completedAt?: string,
+  expectedVersion?: number,
 ): Promise<Task> {
   const { data, error } = await client.schema("api").rpc("complete_task", {
     id: taskId,
     ...(completedAt !== undefined ? { completed_at: completedAt } : {}),
+    ...(expectedVersion !== undefined
+      ? { expected_version: expectedVersion }
+      : {}),
   });
 
   if (error) {
@@ -173,13 +178,18 @@ export async function completeTask(
 
 /**
  * Uncompletes a task via the api.uncomplete_task RPC, removing completedAt.
+ * Supports expectedVersion for optimistic version CAS.
  */
 export async function uncompleteTask(
   client: SupabaseClient,
   taskId: string,
+  expectedVersion?: number,
 ): Promise<Task> {
   const { data, error } = await client.schema("api").rpc("uncomplete_task", {
     id: taskId,
+    ...(expectedVersion !== undefined
+      ? { expected_version: expectedVersion }
+      : {}),
   });
 
   if (error) {
@@ -189,4 +199,59 @@ export async function uncompleteTask(
   }
 
   return parseTask(data);
+}
+
+/**
+ * Fetches a single canonical task by id from the api.tasks view.
+ * Returns null if not found or unauthorized.
+ */
+export async function fetchTaskById(
+  client: SupabaseClient,
+  taskId: string,
+): Promise<Task | null> {
+  const { data, error } = await client
+    .schema("api")
+    .from("tasks")
+    .select("*")
+    .eq("id", taskId)
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116" || error.message?.includes("No rows")) {
+      return null;
+    }
+    throw new Error(
+      `Failed to fetch task ${taskId}: ${error.message} (${error.code})`,
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return parseTask(data);
+}
+
+/**
+ * Checks whether an error is a version compare-and-swap conflict error.
+ */
+export function isVersionConflictError(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof Error) {
+    return (
+      error.message.includes("version conflict") ||
+      error.message.includes("Task version conflict")
+    );
+  }
+  if (typeof error === "object") {
+    const errObj = error as Record<string, unknown>;
+    const msg = typeof errObj.message === "string" ? errObj.message : "";
+    const code = typeof errObj.code === "string" ? errObj.code : "";
+    return (
+      msg.includes("version conflict") ||
+      msg.includes("Task version conflict") ||
+      (code === "P0003" && msg.includes("version"))
+    );
+  }
+  return false;
 }

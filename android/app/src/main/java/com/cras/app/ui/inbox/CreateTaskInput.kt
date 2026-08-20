@@ -81,8 +81,12 @@ fun CreateTaskInput(
     var isTypeMenuExpanded by remember { mutableStateOf(false) }
 
     val todayDate = remember { getDeviceLocalDate() }
-    val tomorrowDate = remember {
-        LocalDate.now().plusDays(1).toString()
+    val tomorrowDate = remember(todayDate) {
+        try {
+            LocalDate.parse(todayDate).plusDays(1).toString()
+        } catch (_: Exception) {
+            LocalDate.now().plusDays(1).toString()
+        }
     }
 
     val submit = {

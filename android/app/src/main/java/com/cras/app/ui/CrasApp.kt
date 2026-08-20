@@ -51,14 +51,12 @@ import kotlinx.coroutines.launch
 
 enum class AppView(
     val title: String,
-    val icon: ImageVector,
-    val emptyIcon: ImageVector,
-    val emptyMessage: String
+    val icon: ImageVector
 ) {
-    INBOX("Inbox", Icons.Default.Inbox, Icons.Default.Inbox, "No tasks in Inbox"),
-    TODAY("Today", Icons.Default.CalendarToday, Icons.Default.CalendarToday, "No tasks for Today"),
-    UPCOMING("Upcoming", Icons.Default.CalendarMonth, Icons.Default.CalendarMonth, "No upcoming tasks"),
-    COMPLETED("Completed", Icons.Default.CheckCircleOutline, Icons.Default.CheckCircleOutline, "No completed tasks")
+    INBOX("Inbox", Icons.Default.Inbox),
+    TODAY("Today", Icons.Default.CalendarToday),
+    UPCOMING("Upcoming", Icons.Default.CalendarMonth),
+    COMPLETED("Completed", Icons.Default.CheckCircleOutline)
 }
 
 @Composable

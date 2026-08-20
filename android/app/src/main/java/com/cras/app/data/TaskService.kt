@@ -145,8 +145,6 @@ class SupabaseTaskService(
             require(params.labels.distinct().size == params.labels.size) { "Task labels must be unique" }
         }
 
-        val clearPlan = params.clearPlan || (params.plan == null && false)
-
         val bodyObject = buildJsonObject {
             put("id", params.id)
             if (params.title != null) {

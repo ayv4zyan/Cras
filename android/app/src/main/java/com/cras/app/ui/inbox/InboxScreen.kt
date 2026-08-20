@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -248,8 +249,8 @@ fun TaskItemRow(
     onComplete: () -> Unit,
     onClick: () -> Unit
 ) {
-    val overdue = isTaskOverdue(task)
-    val planDisplay = formatPlanDisplay(task.plan)
+    val overdue = remember(task.plan) { isTaskOverdue(task) }
+    val planDisplay = remember(task.plan) { formatPlanDisplay(task.plan) }
 
     Card(
         modifier = Modifier
@@ -324,7 +325,7 @@ fun TaskItemRow(
                                 Icon(
                                     imageVector = if (overdue) Icons.Default.ErrorOutline else Icons.Default.AccessTime,
                                     contentDescription = null,
-                                    tint = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer,
+                                    tint = if (overdue) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -340,7 +341,7 @@ fun TaskItemRow(
                                 Text(
                                     text = labelText,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer
+                                    color = if (overdue) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
                                 )
                             }
                         }

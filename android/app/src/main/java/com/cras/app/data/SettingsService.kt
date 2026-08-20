@@ -96,12 +96,13 @@ class SupabaseSettingsService(
 
     private fun executeRequest(request: Request, operationName: String): String {
         val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
-
-        if (!response.isSuccessful) {
-            throw IOException("Failed to $operationName: ${response.code} $responseBody")
+        return response.use { resp ->
+            val responseBody = resp.body?.string() ?: ""
+            if (!resp.isSuccessful) {
+                throw IOException("Failed to $operationName: ${resp.code} $responseBody")
+            }
+            responseBody
         }
-        return responseBody
     }
 
     override suspend fun fetchOperatorSettings(session: OperatorSession): OperatorSettings? {

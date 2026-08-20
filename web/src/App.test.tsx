@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import App, { CrasApp } from "./App";
 import { AuthProvider } from "./contexts/AuthContext";
 import type { SupabaseClient, Session, User } from "@supabase/supabase-js";
@@ -79,6 +79,83 @@ describe("Web Client Seam - App Surface", () => {
       ).toBeInTheDocument();
       expect(screen.getByText(/no tasks in inbox/i)).toBeInTheDocument();
       expect(screen.getByText(/your task space is clear/i)).toBeInTheDocument();
+    });
+  });
+
+  it("navigates across Today, Upcoming, and Completed views displaying matching headings and empty states", async () => {
+    const mockUser: User = {
+      id: "operator-1-uuid",
+      email: "operator@example.com",
+    } as User;
+
+    const mockClient = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({
+          data: {
+            session: { user: mockUser, access_token: "token-1" } as Session,
+          },
+          error: null,
+        }),
+        onAuthStateChange: vi.fn().mockReturnValue({
+          data: { subscription: { unsubscribe: vi.fn() } },
+        }),
+        signInWithOAuth: vi.fn(),
+        signOut: vi.fn(),
+      },
+      schema: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      }),
+    } as unknown as SupabaseClient;
+
+    render(
+      <AuthProvider client={mockClient}>
+        <CrasApp client={mockClient} />
+      </AuthProvider>,
+    );
+
+    // 1. Initial Inbox view
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { level: 2, name: /inbox/i }),
+      ).toBeInTheDocument();
+    });
+
+    // 2. Select Today view
+    const todayNavBtn = screen.getByRole("button", { name: /^today/i });
+    act(() => {
+      todayNavBtn.click();
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { level: 2, name: /^today/i }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/no tasks for today/i)).toBeInTheDocument();
+    });
+
+    // 3. Select Upcoming view
+    const upcomingNavBtn = screen.getByRole("button", { name: /^upcoming/i });
+    act(() => {
+      upcomingNavBtn.click();
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { level: 2, name: /^upcoming/i }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/no upcoming tasks/i)).toBeInTheDocument();
+    });
+
+    // 4. Select Completed view
+    const completedNavBtn = screen.getByRole("button", { name: /^completed/i });
+    act(() => {
+      completedNavBtn.click();
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { level: 2, name: /^completed/i }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/no completed tasks yet/i)).toBeInTheDocument();
     });
   });
 });

@@ -10,6 +10,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -78,8 +79,9 @@ object PlanSerializer : KSerializer<Plan> {
         val allowedInstantKeys = setOf("type", "at")
         val allowedDateOnlyKeys = setOf("date")
 
-        val hasType = element.containsKey("type")
-        val typePrimitive = element["type"]?.jsonPrimitive?.content
+        val typePrimitive = (element["type"] as? JsonPrimitive)
+            ?.takeUnless { it is JsonNull }
+            ?.content
 
         return when {
             typePrimitive == "floating" -> {
@@ -102,7 +104,7 @@ object PlanSerializer : KSerializer<Plan> {
                     ?: throw SerializationException("Instant plan requires 'at'")
                 Plan.Instant(at = at)
             }
-            !hasType -> {
+            typePrimitive == null -> {
                 val unknownKeys = element.keys - allowedDateOnlyKeys
                 if (unknownKeys.isNotEmpty()) {
                     throw SerializationException("Date-only plan contains unexpected keys: $unknownKeys")
@@ -140,12 +142,12 @@ object PlanSerializer : KSerializer<Plan> {
 data class Task(
     val id: String,
     val title: String,
-    val description: String? = null,
+    val description: String?,
     val priority: Int,
-    val plan: Plan? = null,
+    val plan: Plan?,
     val labels: List<String> = emptyList(),
-    val parentId: String? = null,
-    val completedAt: String? = null,
+    val parentId: String?,
+    val completedAt: String?,
     val createdAt: String,
     val updatedAt: String,
     val version: Int

@@ -24,7 +24,7 @@ export const InstantPlanSchema = Schema.Struct({
 });
 
 export const PlanSchema = Schema.NullOr(
-  Schema.Union(DateOnlyPlanSchema, FloatingPlanSchema, InstantPlanSchema),
+  Schema.Union(FloatingPlanSchema, InstantPlanSchema, DateOnlyPlanSchema),
 );
 
 export type Plan = Schema.Schema.Type<typeof PlanSchema>;

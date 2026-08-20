@@ -160,7 +160,8 @@ describe("Web Client Seam - App Surface", () => {
   });
 
   it("resets task state and selection on account switch and sign out", async () => {
-    let authCallback: ((event: string, session: Session | null) => void) | null = null;
+    let authCallback:
+      ((event: string, session: Session | null) => void) | null = null;
     const userA: User = {
       id: "operator-a-uuid",
       email: "alice@example.com",
@@ -200,7 +201,9 @@ describe("Web Client Seam - App Surface", () => {
         from: vi.fn().mockImplementation((table: string) => {
           if (table === "tasks") {
             return {
-              select: vi.fn().mockResolvedValue({ data: mockTasksA, error: null }),
+              select: vi
+                .fn()
+                .mockResolvedValue({ data: mockTasksA, error: null }),
             };
           }
           return {

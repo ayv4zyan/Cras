@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import {
   subscribeToInvalidations,
   parseInvalidationPayload,
-  type InvalidationPayload,
 } from "./realtimeService";
 import type { SupabaseClient, RealtimeChannel } from "@supabase/supabase-js";
 
@@ -97,8 +96,8 @@ describe("Realtime Invalidation Service Seam", () => {
 
   describe("subscribeToInvalidations", () => {
     it("subscribes to the operator-authorized channel and routes broadcast invalidation events", () => {
-      let broadcastCallback: ((event: { payload: unknown }) => void) | null =
-        null;
+      let broadcastCallback:
+        ((event: { payload: unknown }) => void) | undefined;
 
       const mockChannel = {
         on: vi
@@ -129,17 +128,16 @@ describe("Realtime Invalidation Service Seam", () => {
         removeChannel: vi.fn().mockResolvedValue("ok"),
       } as unknown as SupabaseClient;
 
-      const receivedEvents: InvalidationPayload[] = [];
-      const onInvalidate = vi.fn((e: InvalidationPayload) => {
-        receivedEvents.push(e);
+      const receivedEvents: unknown[] = [];
+      const onInvalidate = vi.fn((event) => {
+        receivedEvents.push(event);
       });
-      const onReconnect = vi.fn();
 
       const subscription = subscribeToInvalidations({
         client: mockClient,
         operatorId: "operator-1-uuid",
         onInvalidate,
-        onReconnect,
+        onReconnect: vi.fn(),
       });
 
       expect(mockClient.channel).toHaveBeenCalledWith(
@@ -154,13 +152,15 @@ describe("Realtime Invalidation Service Seam", () => {
       expect(mockChannel.subscribe).toHaveBeenCalled();
 
       // Trigger a task invalidation event
-      broadcastCallback?.({
-        payload: {
-          resource: "task",
-          id: "550e8400-e29b-41d4-a716-446655440001",
-          operation: "updated",
-        },
-      });
+      if (broadcastCallback) {
+        broadcastCallback({
+          payload: {
+            resource: "task",
+            id: "550e8400-e29b-41d4-a716-446655440001",
+            operation: "updated",
+          },
+        });
+      }
 
       expect(onInvalidate).toHaveBeenCalledTimes(1);
       expect(receivedEvents[0]).toEqual({
@@ -172,12 +172,12 @@ describe("Realtime Invalidation Service Seam", () => {
       });
 
       // Cleanup
-      subscription.unsubscribe();
+      void subscription.unsubscribe();
       expect(mockClient.removeChannel).toHaveBeenCalledWith(mockChannel);
     });
 
     it("triggers onReconnect callback after reconnecting from a disconnected state", () => {
-      let statusCallback: ((status: string) => void) | null = null;
+      let statusCallback: ((status: string) => void) | undefined;
 
       const mockChannel = {
         on: vi.fn().mockReturnThis(),
@@ -210,11 +210,15 @@ describe("Realtime Invalidation Service Seam", () => {
       expect(onReconnect).not.toHaveBeenCalled();
 
       // Channel disconnects
-      statusCallback?.("CLOSED");
+      if (statusCallback) {
+        statusCallback("CLOSED");
+      }
       expect(onReconnect).not.toHaveBeenCalled();
 
       // Channel reconnects
-      statusCallback?.("SUBSCRIBED");
+      if (statusCallback) {
+        statusCallback("SUBSCRIBED");
+      }
       expect(onReconnect).toHaveBeenCalledTimes(1);
     });
   });

@@ -126,12 +126,14 @@ export function subscribeToInvalidations({
     });
 
   return {
-    unsubscribe: () => {
+    unsubscribe: async () => {
       if (typeof client.removeChannel === "function") {
-        return client.removeChannel(channel);
+        await client.removeChannel(channel);
+        return;
       }
       if (typeof channel.unsubscribe === "function") {
-        return channel.unsubscribe();
+        await channel.unsubscribe();
+        return;
       }
     },
   };

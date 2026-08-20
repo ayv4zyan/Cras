@@ -371,10 +371,11 @@ class InboxViewModel(
                         }
                         recalculateViews(_allTasks.value)
 
+                        val previousSelected = _selectedTask.value
                         _selectedTask.update { currentSelected ->
                             if (currentSelected?.id == event.id) null else currentSelected
                         }
-                        if (_selectedTask.value == null) {
+                        if (previousSelected != null && _selectedTask.value == null) {
                             _comments.value = emptyList()
                         }
                     }

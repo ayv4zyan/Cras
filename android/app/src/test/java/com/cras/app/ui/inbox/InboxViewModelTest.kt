@@ -1452,4 +1452,59 @@ class InboxViewModelTest {
         assertEquals("Task state is unavailable. Refresh and try again.", errorMsg)
         assertFalse(updateCalled)
     }
+
+    @Test
+    fun `realtime delete invalidation preserves comments when no task is selected or when unrelated task is deleted`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val taskId1 = UUID.randomUUID().toString()
+        val task1 = Task(id = taskId1, title = "Task 1", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+        val taskId2 = UUID.randomUUID().toString()
+        val task2 = Task(id = taskId2, title = "Task 2", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+        taskService.tasksInDb.addAll(listOf(task1, task2))
+
+        val commentId = UUID.randomUUID().toString()
+        commentService.commentsInDb.add(Comment(id = commentId, taskId = taskId1, content = "Comment on Task 1", createdAt = "2026-08-19T10:00:00Z"))
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        // Initially no task selected, comments loaded from initial fetch
+        assertEquals(1, viewModel.comments.value.size)
+        assertNull(viewModel.selectedTask.value)
+
+        // Realtime delete for task2 when no task is selected does not clear comments
+        realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = taskId2, operation = "deleted"))
+        advanceUntilIdle()
+        assertEquals(1, viewModel.comments.value.size)
+
+        // Select task1
+        viewModel.selectTask(task1)
+        advanceUntilIdle()
+        assertEquals(taskId1, viewModel.selectedTask.value?.id)
+
+        // Realtime delete for unrelated task does not clear comments
+        realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = UUID.randomUUID().toString(), operation = "deleted"))
+        advanceUntilIdle()
+        assertEquals(1, viewModel.comments.value.size)
+        assertEquals(taskId1, viewModel.selectedTask.value?.id)
+
+        // Realtime delete for the selected task (taskId1) clears selection and comments
+        realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = taskId1, operation = "deleted"))
+        advanceUntilIdle()
+        assertNull(viewModel.selectedTask.value)
+        assertTrue(viewModel.comments.value.isEmpty())
+    }
 }

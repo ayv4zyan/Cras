@@ -128,13 +128,14 @@ export function CrasApp({
     }
   }, [user, loadData]);
 
+  const selectedTaskId = selectedTask?.id;
   useEffect(() => {
-    if (!selectedTask) {
+    if (!selectedTaskId) {
       setComments([]);
       return;
     }
     let isCancelled = false;
-    fetchComments(client, selectedTask.id)
+    fetchComments(client, selectedTaskId)
       .then((taskComments) => {
         if (!isCancelled) {
           setComments(taskComments);
@@ -153,7 +154,7 @@ export function CrasApp({
     return () => {
       isCancelled = true;
     };
-  }, [client, selectedTask?.id]);
+  }, [client, selectedTaskId]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));

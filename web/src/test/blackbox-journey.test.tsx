@@ -355,14 +355,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                         }),
                       order: vi
                         .fn()
-                        .mockImplementation(
-                          (
-                            _col: string,
-                            _options?: { ascending?: boolean },
-                          ) => {
-                            return makeChain(filterFn);
-                          },
-                        ),
+                        .mockImplementation(() => {
+                          return makeChain(filterFn);
+                        }),
                       then: (
                         resolve: (v: unknown) => unknown,
                         reject?: (reason: unknown) => unknown,

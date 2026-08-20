@@ -21,10 +21,12 @@ import { TaskDetailModal } from "./components/TaskDetailModal";
 import { LabelManagerModal } from "./components/LabelManagerModal";
 import {
   fetchTasks,
+  fetchTaskById,
   createTask,
   updateTask,
   completeTask,
   uncompleteTask,
+  isVersionConflictError,
   filterInboxTasks,
   filterCompletedTasks,
   filterSubtasks,
@@ -46,6 +48,7 @@ import {
   fetchEffectiveTimedPlanType,
   getCachedEffectiveTimedPlanType,
 } from "./services/settingsService";
+import { subscribeToInvalidations } from "./services/realtimeService";
 import type { TimedPlanType } from "./services/temporalService";
 import type { Priority, Task, Label, Comment } from "./contracts/task";
 import { supabase } from "./config/supabase";
@@ -89,6 +92,10 @@ export function AuthenticatedApp({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const userId = user.id;
+  const selectedTaskRef = React.useRef(selectedTask);
+  useEffect(() => {
+    selectedTaskRef.current = selectedTask;
+  }, [selectedTask]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -142,6 +149,139 @@ export function AuthenticatedApp({
     };
   }, [userId, client]);
 
+  const applyTaskUpdate = useCallback((updated: Task) => {
+    setTasks((prev) => {
+      const exists = prev.some((t) => t.id === updated.id);
+      if (!exists) {
+        return [updated, ...prev];
+      }
+      return prev.map((t) => {
+        if (t.id === updated.id) {
+          return t.version > updated.version ? t : updated;
+        }
+        return t;
+      });
+    });
+    setSelectedTask((prev) => {
+      if (prev?.id === updated.id) {
+        return prev.version > updated.version ? prev : updated;
+      }
+      return prev;
+    });
+  }, []);
+
+  const reconcileFreshTasks = useCallback((freshTasks: Task[]) => {
+    setTasks((prev) => {
+      const prevMap = new Map(prev.map((t) => [t.id, t]));
+      return freshTasks.map((fresh) => {
+        const existing = prevMap.get(fresh.id);
+        return existing && existing.version > fresh.version ? existing : fresh;
+      });
+    });
+
+    const currentSelected = selectedTaskRef.current;
+    if (currentSelected) {
+      const freshSelected = freshTasks.find((t) => t.id === currentSelected.id);
+      if (freshSelected) {
+        setSelectedTask((prev) =>
+          prev &&
+          prev.id === freshSelected.id &&
+          prev.version > freshSelected.version
+            ? prev
+            : freshSelected,
+        );
+      } else {
+        setSelectedTask(null);
+        setComments([]);
+        setIsDetailModalOpen(false);
+      }
+    }
+  }, []);
+
+  // Realtime subscription for Operator domain invalidations
+  useEffect(() => {
+    if (!userId) return;
+
+    const subscription = subscribeToInvalidations({
+      client,
+      operatorId: userId,
+      onInvalidate: (event) => {
+        if (event.resource === "task") {
+          if (event.operation === "updated") {
+            fetchTaskById(client, event.id)
+              .then((freshTask) => {
+                if (freshTask) {
+                  applyTaskUpdate(freshTask);
+                } else {
+                  fetchTasks(client)
+                    .then(reconcileFreshTasks)
+                    .catch(() => {});
+                }
+              })
+              .catch(() => {
+                fetchTasks(client)
+                  .then(reconcileFreshTasks)
+                  .catch(() => {});
+              });
+          } else {
+            fetchTasks(client)
+              .then(reconcileFreshTasks)
+              .catch(() => {});
+          }
+        } else if (event.resource === "label") {
+          fetchLabels(client)
+            .then((freshLabels) => {
+              setLabels(freshLabels);
+            })
+            .catch(() => {});
+        } else if (event.resource === "comment") {
+          const currentSelected = selectedTaskRef.current;
+          if (
+            currentSelected &&
+            (event.taskId === currentSelected.id ||
+              event.id === currentSelected.id)
+          ) {
+            fetchComments(client, currentSelected.id)
+              .then((freshComments) => {
+                setComments(freshComments);
+              })
+              .catch(() => {});
+          }
+        }
+      },
+      onReconnect: () => {
+        Promise.all([
+          fetchTasks(client).catch(() => null),
+          fetchLabels(client).catch(() => null),
+        ])
+          .then(([freshTasks, freshLabels]) => {
+            if (freshTasks !== null) {
+              reconcileFreshTasks(freshTasks);
+              const currentSelected = selectedTaskRef.current;
+              if (
+                currentSelected &&
+                freshTasks.some((t) => t.id === currentSelected.id)
+              ) {
+                fetchComments(client, currentSelected.id)
+                  .then((freshComments) => {
+                    setComments(freshComments);
+                  })
+                  .catch(() => {});
+              }
+            }
+            if (freshLabels !== null) {
+              setLabels(freshLabels);
+            }
+          })
+          .catch(() => {});
+      },
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [client, userId, applyTaskUpdate, reconcileFreshTasks]);
+
   const selectedTaskId = selectedTask?.id;
   useEffect(() => {
     if (!selectedTaskId) {
@@ -170,10 +310,37 @@ export function AuthenticatedApp({
     };
   }, [client, selectedTaskId]);
 
-  const applyTaskUpdate = useCallback((updated: Task) => {
-    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-    setSelectedTask((prev) => (prev?.id === updated.id ? updated : prev));
-  }, []);
+  const handleVersionConflict = useCallback(
+    async (taskId: string) => {
+      const [freshTasks, freshTask] = await Promise.all([
+        fetchTasks(client).catch(() => null),
+        fetchTaskById(client, taskId).catch(() => null),
+      ]);
+      if (freshTasks !== null) {
+        reconcileFreshTasks(freshTasks);
+      }
+      if (freshTask) {
+        applyTaskUpdate(freshTask);
+      } else if (freshTasks !== null) {
+        const matching = freshTasks.find((t) => t.id === taskId);
+        if (matching) {
+          applyTaskUpdate(matching);
+        } else {
+          const currentSelected = selectedTaskRef.current;
+          if (currentSelected?.id === taskId) {
+            setSelectedTask(null);
+            setComments([]);
+            setIsDetailModalOpen(false);
+          }
+        }
+      }
+      const conflictMsg =
+        "Task version conflict: modified in another session. Refetched latest state.";
+      setErrorMessage(conflictMsg);
+      return new Error(conflictMsg);
+    },
+    [client, applyTaskUpdate, reconcileFreshTasks],
+  );
 
   const handleCreateTask = useCallback(
     async (
@@ -195,42 +362,61 @@ export function AuthenticatedApp({
   const handleUpdateTask = useCallback(
     async (params: UpdateTaskParams) => {
       setErrorMessage(null);
-      const updated = await updateTask(client, params);
-      applyTaskUpdate(updated);
+      try {
+        const updated = await updateTask(client, params);
+        applyTaskUpdate(updated);
+      } catch (err) {
+        if (isVersionConflictError(err)) {
+          const conflictErr = await handleVersionConflict(params.id);
+          throw conflictErr;
+        }
+        const msg =
+          err instanceof Error ? err.message : "Failed to update task";
+        setErrorMessage(msg);
+        throw err;
+      }
     },
-    [client, applyTaskUpdate],
+    [client, applyTaskUpdate, handleVersionConflict],
   );
 
   const handleCompleteTask = useCallback(
     async (task: Task) => {
       setErrorMessage(null);
       try {
-        const completed = await completeTask(client, task.id);
+        const completed = await completeTask(client, task.id, task.version);
         applyTaskUpdate(completed);
       } catch (err) {
+        if (isVersionConflictError(err)) {
+          const conflictErr = await handleVersionConflict(task.id);
+          throw conflictErr;
+        }
         const msg =
           err instanceof Error ? err.message : "Failed to complete task";
         setErrorMessage(msg);
         throw err;
       }
     },
-    [client, applyTaskUpdate],
+    [client, applyTaskUpdate, handleVersionConflict],
   );
 
   const handleUncompleteTask = useCallback(
     async (task: Task) => {
       setErrorMessage(null);
       try {
-        const uncompleted = await uncompleteTask(client, task.id);
+        const uncompleted = await uncompleteTask(client, task.id, task.version);
         applyTaskUpdate(uncompleted);
       } catch (err) {
+        if (isVersionConflictError(err)) {
+          const conflictErr = await handleVersionConflict(task.id);
+          throw conflictErr;
+        }
         const msg =
           err instanceof Error ? err.message : "Failed to uncomplete task";
         setErrorMessage(msg);
         throw err;
       }
     },
-    [client, applyTaskUpdate],
+    [client, applyTaskUpdate, handleVersionConflict],
   );
 
   const handleSelectTask = useCallback((task: Task) => {

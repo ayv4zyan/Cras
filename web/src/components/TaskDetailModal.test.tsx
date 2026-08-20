@@ -530,6 +530,71 @@ describe("TaskDetailModal Component", () => {
     });
   });
 
+  it("displays conflict error when save rejects with version conflict", async () => {
+    const handleSave = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("Task version conflict: expected 1, found 2"),
+      );
+
+    render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={handleSave}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    const saveButton = screen.getByRole("button", { name: /save changes/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/task version conflict: expected 1, found 2/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("updates form inputs and renders latest state when task prop updates due to concurrent invalidation", () => {
+    const { rerender } = render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText(/task title/i)).toHaveValue(
+      "Write documentation",
+    );
+
+    const updatedTaskFromOtherSession: Task = {
+      ...openTask,
+      title: "Write documentation and tutorials",
+      priority: 1,
+      version: 2,
+    };
+
+    rerender(
+      <TaskDetailModal
+        task={updatedTaskFromOtherSession}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText(/task title/i)).toHaveValue(
+      "Write documentation and tutorials",
+    );
+    expect(screen.getByLabelText(/task priority/i)).toHaveValue("1");
+  });
+
   it("closes modal on Escape key press", () => {
     const handleClose = vi.fn();
     render(

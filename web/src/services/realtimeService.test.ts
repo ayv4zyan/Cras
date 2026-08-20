@@ -1,0 +1,454 @@
+import { describe, it, expect, vi } from "vitest";
+import {
+  subscribeToInvalidations,
+  parseInvalidationPayload,
+} from "./realtimeService";
+import type { SupabaseClient, RealtimeChannel } from "@supabase/supabase-js";
+
+describe("Realtime Invalidation Service Seam", () => {
+  describe("parseInvalidationPayload", () => {
+    it("parses valid task invalidation payload revealing only resource, id, operation, and optional parentId", () => {
+      const payload = {
+        resource: "task",
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        operation: "created",
+        parentId: "550e8400-e29b-41d4-a716-446655440000",
+      };
+
+      const parsed = parseInvalidationPayload(payload);
+      expect(parsed).toEqual({
+        resource: "task",
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        operation: "created",
+        parentId: "550e8400-e29b-41d4-a716-446655440000",
+        taskId: null,
+      });
+    });
+
+    it("parses valid comment invalidation payload with necessary parent taskId", () => {
+      const payload = {
+        resource: "comment",
+        id: "550e8400-e29b-41d4-a716-446655440021",
+        operation: "created",
+        taskId: "550e8400-e29b-41d4-a716-446655440001",
+      };
+
+      const parsed = parseInvalidationPayload(payload);
+      expect(parsed).toEqual({
+        resource: "comment",
+        id: "550e8400-e29b-41d4-a716-446655440021",
+        operation: "created",
+        parentId: null,
+        taskId: "550e8400-e29b-41d4-a716-446655440001",
+      });
+    });
+
+    it("parses valid label invalidation payload", () => {
+      const payload = {
+        resource: "label",
+        id: "550e8400-e29b-41d4-a716-446655440011",
+        operation: "updated",
+      };
+
+      const parsed = parseInvalidationPayload(payload);
+      expect(parsed).toEqual({
+        resource: "label",
+        id: "550e8400-e29b-41d4-a716-446655440011",
+        operation: "updated",
+        parentId: null,
+        taskId: null,
+      });
+    });
+
+    it("strips extraneous sensitive fields (e.g. title, notes, email) from event payload", () => {
+      const payloadWithLeak = {
+        resource: "task",
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        operation: "updated",
+        title: "Secret Task Title",
+        description: "Confidential Notes",
+        email: "operator@example.com",
+      };
+
+      const parsed = parseInvalidationPayload(payloadWithLeak);
+      expect(parsed).toEqual({
+        resource: "task",
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        operation: "updated",
+        parentId: null,
+        taskId: null,
+      });
+      expect(parsed).not.toHaveProperty("title");
+      expect(parsed).not.toHaveProperty("description");
+      expect(parsed).not.toHaveProperty("email");
+    });
+
+    it("returns null for invalid or non-object payloads", () => {
+      expect(parseInvalidationPayload(null)).toBeNull();
+      expect(parseInvalidationPayload(undefined)).toBeNull();
+      expect(parseInvalidationPayload("invalid string")).toBeNull();
+      expect(
+        parseInvalidationPayload({ resource: "unknown", id: "123" }),
+      ).toBeNull();
+      expect(parseInvalidationPayload({ resource: "task" })).toBeNull();
+    });
+  });
+
+  describe("subscribeToInvalidations", () => {
+    it("subscribes to the operator-authorized channel and routes broadcast invalidation events", async () => {
+      let broadcastCallback:
+        ((event: { payload: unknown }) => void) | undefined;
+
+      const mockChannel = {
+        on: vi
+          .fn()
+          .mockImplementation(
+            (
+              type: string,
+              filter: Record<string, unknown>,
+              cb: (e: { payload: unknown }) => void,
+            ) => {
+              if (type === "broadcast" && filter.event === "invalidate") {
+                broadcastCallback = cb;
+              }
+              return mockChannel;
+            },
+          ),
+        subscribe: vi
+          .fn()
+          .mockImplementation((cb: (status: string) => void) => {
+            cb("SUBSCRIBED");
+            return mockChannel;
+          }),
+        unsubscribe: vi.fn().mockResolvedValue("ok"),
+      } as unknown as RealtimeChannel;
+
+      const mockClient = {
+        channel: vi.fn().mockReturnValue(mockChannel),
+        removeChannel: vi.fn().mockResolvedValue("ok"),
+      } as unknown as SupabaseClient;
+
+      const receivedEvents: unknown[] = [];
+      const onInvalidate = vi.fn((event) => {
+        receivedEvents.push(event);
+      });
+
+      const subscription = subscribeToInvalidations({
+        client: mockClient,
+        operatorId: "operator-1-uuid",
+        onInvalidate,
+        onReconnect: vi.fn(),
+      });
+
+      expect(mockClient.channel).toHaveBeenCalledWith(
+        "operator:operator-1-uuid",
+        {
+          config: {
+            private: true,
+          },
+        },
+      );
+      expect(mockChannel.on).toHaveBeenCalled();
+      expect(mockChannel.subscribe).toHaveBeenCalled();
+
+      // Trigger a task invalidation event
+      if (broadcastCallback) {
+        broadcastCallback({
+          payload: {
+            resource: "task",
+            id: "550e8400-e29b-41d4-a716-446655440001",
+            operation: "updated",
+          },
+        });
+      }
+
+      expect(onInvalidate).toHaveBeenCalledTimes(1);
+      expect(receivedEvents[0]).toEqual({
+        resource: "task",
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        operation: "updated",
+        parentId: null,
+        taskId: null,
+      });
+
+      // Cleanup
+      await subscription.unsubscribe();
+      expect(mockClient.removeChannel).toHaveBeenCalledWith(mockChannel);
+    });
+
+    it("triggers onReconnect callback after reconnecting from a disconnected state", () => {
+      let statusCallback: ((status: string) => void) | undefined;
+
+      const mockChannel = {
+        on: vi.fn().mockReturnThis(),
+        subscribe: vi
+          .fn()
+          .mockImplementation((cb: (status: string) => void) => {
+            statusCallback = cb;
+            cb("SUBSCRIBED");
+            return mockChannel;
+          }),
+        unsubscribe: vi.fn().mockResolvedValue("ok"),
+      } as unknown as RealtimeChannel;
+
+      const mockClient = {
+        channel: vi.fn().mockReturnValue(mockChannel),
+        removeChannel: vi.fn().mockResolvedValue("ok"),
+      } as unknown as SupabaseClient;
+
+      const onInvalidate = vi.fn();
+      const onReconnect = vi.fn();
+
+      subscribeToInvalidations({
+        client: mockClient,
+        operatorId: "operator-1-uuid",
+        onInvalidate,
+        onReconnect,
+      });
+
+      // Initial subscription does not trigger onReconnect
+      expect(onReconnect).not.toHaveBeenCalled();
+
+      // Channel disconnects
+      if (statusCallback) {
+        statusCallback("CLOSED");
+      }
+      expect(onReconnect).not.toHaveBeenCalled();
+
+      // Channel reconnects
+      if (statusCallback) {
+        statusCallback("SUBSCRIBED");
+      }
+      expect(onReconnect).toHaveBeenCalledTimes(1);
+
+      // Channel errors and reconnects
+      if (statusCallback) {
+        statusCallback("CHANNEL_ERROR");
+      }
+      if (statusCallback) {
+        statusCallback("SUBSCRIBED");
+      }
+      expect(onReconnect).toHaveBeenCalledTimes(2);
+
+      // Channel times out and reconnects
+      if (statusCallback) {
+        statusCallback("TIMED_OUT");
+      }
+      if (statusCallback) {
+        statusCallback("SUBSCRIBED");
+      }
+      expect(onReconnect).toHaveBeenCalledTimes(3);
+    });
+
+    it("serializes delayed cleanup before creating replacement subscription on same topic", async () => {
+      let resolveRemoveChannel!: () => void;
+      const removeChannelPromise = new Promise<string>((resolve) => {
+        resolveRemoveChannel = () => resolve("ok");
+      });
+
+      const mockChannel1 = {
+        on: vi.fn().mockReturnThis(),
+        subscribe: vi
+          .fn()
+          .mockImplementation((cb: (status: string) => void) => {
+            cb("SUBSCRIBED");
+            return mockChannel1;
+          }),
+        unsubscribe: vi.fn().mockResolvedValue("ok"),
+      } as unknown as RealtimeChannel;
+
+      let sub2BroadcastCallback:
+        ((event: { payload: unknown }) => void) | undefined;
+      const mockChannel2 = {
+        on: vi
+          .fn()
+          .mockImplementation(
+            (
+              type: string,
+              filter: Record<string, unknown>,
+              cb: (e: { payload: unknown }) => void,
+            ) => {
+              if (type === "broadcast" && filter.event === "invalidate") {
+                sub2BroadcastCallback = cb;
+              }
+              return mockChannel2;
+            },
+          ),
+        subscribe: vi
+          .fn()
+          .mockImplementation((cb: (status: string) => void) => {
+            cb("SUBSCRIBED");
+            return mockChannel2;
+          }),
+        unsubscribe: vi.fn().mockResolvedValue("ok"),
+      } as unknown as RealtimeChannel;
+
+      let channelCallCount = 0;
+      const mockClient = {
+        channel: vi.fn().mockImplementation(() => {
+          channelCallCount++;
+          return channelCallCount === 1 ? mockChannel1 : mockChannel2;
+        }),
+        removeChannel: vi.fn().mockImplementation((ch) => {
+          if (ch === mockChannel1) {
+            return removeChannelPromise;
+          }
+          return Promise.resolve("ok");
+        }),
+      } as unknown as SupabaseClient;
+
+      // 1. First subscription creates channel 1
+      const sub1 = subscribeToInvalidations({
+        client: mockClient,
+        operatorId: "operator-delayed-uuid",
+        onInvalidate: vi.fn(),
+      });
+      expect(mockClient.channel).toHaveBeenCalledTimes(1);
+
+      // 2. Unsubscribe sub1 - cleanup is delayed and pending
+      const unsub1Promise = sub1.unsubscribe();
+      expect(mockClient.removeChannel).toHaveBeenCalledWith(mockChannel1);
+
+      // 3. Immediately start replacement subscription sub2 on the same topic
+      const sub2Invalidate = vi.fn();
+      const sub2 = subscribeToInvalidations({
+        client: mockClient,
+        operatorId: "operator-delayed-uuid",
+        onInvalidate: sub2Invalidate,
+      });
+
+      // Channel 2 should NOT be created yet while channel 1 teardown is pending
+      expect(mockClient.channel).toHaveBeenCalledTimes(1);
+
+      // 4. Complete channel 1 teardown
+      resolveRemoveChannel();
+      await unsub1Promise;
+
+      // Wait a tick for sub2 to resume initialization
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Now channel 2 should be created
+      expect(mockClient.channel).toHaveBeenCalledTimes(2);
+
+      // Trigger event on channel 2
+      if (sub2BroadcastCallback) {
+        sub2BroadcastCallback({
+          payload: {
+            resource: "task",
+            id: "550e8400-e29b-41d4-a716-446655440001",
+            operation: "updated",
+          },
+        });
+      }
+      expect(sub2Invalidate).toHaveBeenCalledTimes(1);
+
+      await sub2.unsubscribe();
+      expect(mockClient.removeChannel).toHaveBeenCalledWith(mockChannel2);
+    });
+
+    it("resolves unsubscribe cleanly when removeChannel rejects and permits replacement subscription", async () => {
+      let rejectRemoveChannel!: (reason?: unknown) => void;
+      const removeChannelPromise = new Promise<string>((_, reject) => {
+        rejectRemoveChannel = (err) =>
+          reject(err || new Error("Failed to remove channel"));
+      });
+
+      const mockChannel1 = {
+        on: vi.fn().mockReturnThis(),
+        subscribe: vi
+          .fn()
+          .mockImplementation((cb: (status: string) => void) => {
+            cb("SUBSCRIBED");
+            return mockChannel1;
+          }),
+        unsubscribe: vi.fn().mockResolvedValue("ok"),
+      } as unknown as RealtimeChannel;
+
+      let sub2BroadcastCallback:
+        ((event: { payload: unknown }) => void) | undefined;
+      const mockChannel2 = {
+        on: vi
+          .fn()
+          .mockImplementation(
+            (
+              type: string,
+              filter: Record<string, unknown>,
+              cb: (e: { payload: unknown }) => void,
+            ) => {
+              if (type === "broadcast" && filter.event === "invalidate") {
+                sub2BroadcastCallback = cb;
+              }
+              return mockChannel2;
+            },
+          ),
+        subscribe: vi
+          .fn()
+          .mockImplementation((cb: (status: string) => void) => {
+            cb("SUBSCRIBED");
+            return mockChannel2;
+          }),
+        unsubscribe: vi.fn().mockResolvedValue("ok"),
+      } as unknown as RealtimeChannel;
+
+      let channelCallCount = 0;
+      const mockClient = {
+        channel: vi.fn().mockImplementation(() => {
+          channelCallCount++;
+          return channelCallCount === 1 ? mockChannel1 : mockChannel2;
+        }),
+        removeChannel: vi.fn().mockImplementation((ch) => {
+          if (ch === mockChannel1) {
+            return removeChannelPromise;
+          }
+          return Promise.resolve("ok");
+        }),
+      } as unknown as SupabaseClient;
+
+      // 1. Create first subscription
+      const sub1 = subscribeToInvalidations({
+        client: mockClient,
+        operatorId: "operator-rejected-uuid",
+        onInvalidate: vi.fn(),
+      });
+      expect(mockClient.channel).toHaveBeenCalledTimes(1);
+
+      // 2. Start unsubscribe on sub1 and immediately start replacement subscription sub2
+      const unsub1Promise = sub1.unsubscribe();
+      const sub2Invalidate = vi.fn();
+      const sub2 = subscribeToInvalidations({
+        client: mockClient,
+        operatorId: "operator-rejected-uuid",
+        onInvalidate: sub2Invalidate,
+      });
+
+      // Replacement subscription waits for pending teardown
+      expect(mockClient.channel).toHaveBeenCalledTimes(1);
+
+      // 3. Reject the removeChannel promise
+      rejectRemoveChannel(new Error("Network failure during removeChannel"));
+
+      // 4. Assert unsubscribe resolves cleanly despite rejection
+      await expect(unsub1Promise).resolves.toBeUndefined();
+
+      // Wait a tick for sub2 to complete initialization
+      await new Promise((r) => setTimeout(r, 0));
+
+      // 5. Replacement subscription should still create channel 2
+      expect(mockClient.channel).toHaveBeenCalledTimes(2);
+
+      // Broadcast on channel 2 works
+      if (sub2BroadcastCallback) {
+        sub2BroadcastCallback({
+          payload: {
+            resource: "task",
+            id: "550e8400-e29b-41d4-a716-446655440002",
+            operation: "created",
+          },
+        });
+      }
+      expect(sub2Invalidate).toHaveBeenCalledTimes(1);
+
+      await expect(sub2.unsubscribe()).resolves.toBeUndefined();
+    });
+  });
+});

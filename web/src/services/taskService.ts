@@ -143,7 +143,13 @@ export async function updateTask(
   });
 
   if (error) {
-    throw new Error(`Failed to update task: ${error.message} (${error.code})`);
+    const err = new Error(
+      `Failed to update task: ${error.message} (${error.code})`,
+    );
+    if (error.code) {
+      Object.assign(err, { code: error.code });
+    }
+    throw err;
   }
 
   return parseTask(data);
@@ -151,21 +157,28 @@ export async function updateTask(
 
 /**
  * Completes a task via the api.complete_task RPC, recording a completion timestamp.
+ * Requires expectedVersion for optimistic version CAS.
  */
 export async function completeTask(
   client: SupabaseClient,
   taskId: string,
+  expectedVersion: number,
   completedAt?: string,
 ): Promise<Task> {
   const { data, error } = await client.schema("api").rpc("complete_task", {
     id: taskId,
+    expected_version: expectedVersion,
     ...(completedAt !== undefined ? { completed_at: completedAt } : {}),
   });
 
   if (error) {
-    throw new Error(
+    const err = new Error(
       `Failed to complete task: ${error.message} (${error.code})`,
     );
+    if (error.code) {
+      Object.assign(err, { code: error.code });
+    }
+    throw err;
   }
 
   return parseTask(data);
@@ -173,20 +186,84 @@ export async function completeTask(
 
 /**
  * Uncompletes a task via the api.uncomplete_task RPC, removing completedAt.
+ * Requires expectedVersion for optimistic version CAS.
  */
 export async function uncompleteTask(
   client: SupabaseClient,
   taskId: string,
+  expectedVersion: number,
 ): Promise<Task> {
   const { data, error } = await client.schema("api").rpc("uncomplete_task", {
     id: taskId,
+    expected_version: expectedVersion,
   });
 
   if (error) {
-    throw new Error(
+    const err = new Error(
       `Failed to uncomplete task: ${error.message} (${error.code})`,
     );
+    if (error.code) {
+      Object.assign(err, { code: error.code });
+    }
+    throw err;
   }
 
   return parseTask(data);
+}
+
+/**
+ * Fetches a single canonical task by id from the api.tasks view.
+ * Returns null if not found or unauthorized.
+ */
+export async function fetchTaskById(
+  client: SupabaseClient,
+  taskId: string,
+): Promise<Task | null> {
+  const { data, error } = await client
+    .schema("api")
+    .from("tasks")
+    .select("*")
+    .eq("id", taskId)
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116" || error.message?.includes("No rows")) {
+      return null;
+    }
+    const err = new Error(
+      `Failed to fetch task ${taskId}: ${error.message} (${error.code})`,
+    );
+    if (error.code) {
+      Object.assign(err, { code: error.code });
+    }
+    throw err;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return parseTask(data);
+}
+
+/**
+ * Checks whether an error is a version compare-and-swap conflict error.
+ */
+export function isVersionConflictError(error: unknown): boolean {
+  if (!error) return false;
+  if (typeof error === "object") {
+    const errObj = error as Record<string, unknown>;
+    const code = typeof errObj.code === "string" ? errObj.code : "";
+    if (code === "P0003") {
+      return true;
+    }
+    const msg = typeof errObj.message === "string" ? errObj.message : "";
+    if (msg.includes("version conflict")) {
+      return true;
+    }
+  }
+  if (error instanceof Error) {
+    return error.message.includes("version conflict");
+  }
+  return false;
 }

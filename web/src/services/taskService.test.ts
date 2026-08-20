@@ -8,6 +8,8 @@ import {
   updateTask,
   completeTask,
   uncompleteTask,
+  fetchTaskById,
+  isVersionConflictError,
 } from "./taskService";
 import type { Task } from "../contracts/task";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -490,7 +492,12 @@ describe("Task Domain Service Seam", () => {
           title: "New Title",
           expectedVersion: 1,
         }),
-      ).rejects.toThrow(/Task version conflict: expected 1, found 2/);
+      ).rejects.toMatchObject({
+        message: expect.stringMatching(
+          /Task version conflict: expected 1, found 2/,
+        ),
+        code: "P0003",
+      });
     });
 
     it("throws when RPC returns an error (e.g. editing completed task)", async () => {
@@ -516,7 +523,7 @@ describe("Task Domain Service Seam", () => {
   });
 
   describe("completeTask", () => {
-    it("calls complete_task RPC on api schema omitting completed_at when not supplied", async () => {
+    it("calls complete_task RPC on api schema with expected_version", async () => {
       const rawCompleted = {
         id: "550e8400-e29b-41d4-a716-446655440000",
         title: "Draft release notes",
@@ -540,11 +547,13 @@ describe("Task Domain Service Seam", () => {
       const task = await completeTask(
         mockClient,
         "550e8400-e29b-41d4-a716-446655440000",
+        1,
       );
 
       expect(mockSchema).toHaveBeenCalledWith("api");
       expect(mockRpc).toHaveBeenCalledWith("complete_task", {
         id: "550e8400-e29b-41d4-a716-446655440000",
+        expected_version: 1,
       });
       expect(task.completedAt).toBe("2026-08-18T20:15:00.000Z");
       expect(task.version).toBe(2);
@@ -574,16 +583,39 @@ describe("Task Domain Service Seam", () => {
       const task = await completeTask(
         mockClient,
         "550e8400-e29b-41d4-a716-446655440000",
+        1,
         "2026-08-18T20:15:00.000Z",
       );
 
       expect(mockSchema).toHaveBeenCalledWith("api");
       expect(mockRpc).toHaveBeenCalledWith("complete_task", {
         id: "550e8400-e29b-41d4-a716-446655440000",
+        expected_version: 1,
         completed_at: "2026-08-18T20:15:00.000Z",
       });
       expect(task.completedAt).toBe("2026-08-18T20:15:00.000Z");
       expect(task.version).toBe(2);
+    });
+
+    it("throws when version conflict occurs on completeTask", async () => {
+      const mockRpc = vi.fn().mockResolvedValue({
+        data: null,
+        error: {
+          message: "Task version conflict: expected 1, found 2",
+          code: "P0003",
+        },
+      });
+      const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
+      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
+
+      await expect(
+        completeTask(mockClient, "550e8400-e29b-41d4-a716-446655440000", 1),
+      ).rejects.toMatchObject({
+        message: expect.stringMatching(
+          /Task version conflict: expected 1, found 2/,
+        ),
+        code: "P0003",
+      });
     });
   });
 
@@ -612,14 +644,122 @@ describe("Task Domain Service Seam", () => {
       const task = await uncompleteTask(
         mockClient,
         "550e8400-e29b-41d4-a716-446655440000",
+        2,
       );
 
       expect(mockSchema).toHaveBeenCalledWith("api");
       expect(mockRpc).toHaveBeenCalledWith("uncomplete_task", {
         id: "550e8400-e29b-41d4-a716-446655440000",
+        expected_version: 2,
       });
       expect(task.completedAt).toBeNull();
       expect(task.version).toBe(3);
+    });
+
+    it("throws when version conflict occurs on uncompleteTask", async () => {
+      const mockRpc = vi.fn().mockResolvedValue({
+        data: null,
+        error: {
+          message: "Task version conflict: expected 2, found 3",
+          code: "P0003",
+        },
+      });
+      const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
+      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
+
+      await expect(
+        uncompleteTask(mockClient, "550e8400-e29b-41d4-a716-446655440000", 2),
+      ).rejects.toMatchObject({
+        message: expect.stringMatching(
+          /Task version conflict: expected 2, found 3/,
+        ),
+        code: "P0003",
+      });
+    });
+  });
+
+  describe("fetchTaskById", () => {
+    it("fetches a single canonical task by id", async () => {
+      const rawTask = {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Single Task",
+        description: "Details",
+        priority: 3,
+        plan: null,
+        labels: [],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-18T20:00:00.000Z",
+        updatedAt: "2026-08-18T20:00:00.000Z",
+        version: 2,
+      };
+
+      const mockSingle = vi
+        .fn()
+        .mockResolvedValue({ data: rawTask, error: null });
+      const mockEq = vi.fn().mockReturnValue({ single: mockSingle });
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+      const mockFrom = vi.fn().mockReturnValue({ select: mockSelect });
+      const mockSchema = vi.fn().mockReturnValue({ from: mockFrom });
+      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
+
+      const task = await fetchTaskById(
+        mockClient,
+        "550e8400-e29b-41d4-a716-446655440000",
+      );
+
+      expect(mockSchema).toHaveBeenCalledWith("api");
+      expect(mockFrom).toHaveBeenCalledWith("tasks");
+      expect(mockSelect).toHaveBeenCalledWith("*");
+      expect(mockEq).toHaveBeenCalledWith(
+        "id",
+        "550e8400-e29b-41d4-a716-446655440000",
+      );
+      expect(task).not.toBeNull();
+      expect(task?.id).toBe("550e8400-e29b-41d4-a716-446655440000");
+      expect(task?.version).toBe(2);
+    });
+
+    it("returns null if task not found", async () => {
+      const mockSingle = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: "No rows found", code: "PGRST116" },
+      });
+      const mockEq = vi.fn().mockReturnValue({ single: mockSingle });
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+      const mockFrom = vi.fn().mockReturnValue({ select: mockSelect });
+      const mockSchema = vi.fn().mockReturnValue({ from: mockFrom });
+      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
+
+      const task = await fetchTaskById(
+        mockClient,
+        "550e8400-e29b-41d4-a716-446655440000",
+      );
+
+      expect(task).toBeNull();
+    });
+  });
+
+  describe("isVersionConflictError", () => {
+    it("detects version conflict from error message or error object", () => {
+      expect(
+        isVersionConflictError(
+          new Error("Task version conflict: expected 1, found 2"),
+        ),
+      ).toBe(true);
+      expect(
+        isVersionConflictError({
+          message: "Task version conflict: expected 1, found 2",
+        }),
+      ).toBe(true);
+      expect(
+        isVersionConflictError({ code: "P0003", message: "version mismatch" }),
+      ).toBe(true);
+      expect(
+        isVersionConflictError(new Error("Network connection error")),
+      ).toBe(false);
+      expect(isVersionConflictError(null)).toBe(false);
+      expect(isVersionConflictError(undefined)).toBe(false);
     });
   });
 });

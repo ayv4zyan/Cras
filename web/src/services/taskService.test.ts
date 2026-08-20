@@ -323,6 +323,7 @@ describe("Task Domain Service Seam", () => {
         expected_version: 1,
         labels: ["22222222-2222-2222-2222-222222222222"],
         clear_plan: false,
+        clear_description: false,
       });
       expect(task.title).toBe("Updated Title");
       expect(task.priority).toBe(1);
@@ -366,6 +367,7 @@ describe("Task Domain Service Seam", () => {
         expected_version: null,
         labels: null,
         clear_plan: false,
+        clear_description: false,
       });
       expect(task.plan).toEqual({
         type: "floating",
@@ -410,8 +412,50 @@ describe("Task Domain Service Seam", () => {
         expected_version: null,
         labels: null,
         clear_plan: true,
+        clear_description: false,
       });
       expect(task.plan).toBeNull();
+    });
+
+    it("clears task description when description is null", async () => {
+      const rawUpdated = {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Task with Cleared Description",
+        description: null,
+        priority: 4,
+        plan: null,
+        labels: [],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-18T20:00:00.000Z",
+        updatedAt: "2026-08-18T20:10:00.000Z",
+        version: 2,
+      };
+
+      const mockRpc = vi
+        .fn()
+        .mockResolvedValue({ data: rawUpdated, error: null });
+      const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
+      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
+
+      const task = await updateTask(mockClient, {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        description: null,
+      });
+
+      expect(mockRpc).toHaveBeenCalledWith("update_task", {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        title: null,
+        description: null,
+        priority: null,
+        plan: null,
+        parent_id: null,
+        expected_version: null,
+        labels: null,
+        clear_plan: false,
+        clear_description: true,
+      });
+      expect(task.description).toBeNull();
     });
 
     it("rejects empty or whitespace-only titles when title is provided", async () => {
@@ -427,6 +471,26 @@ describe("Task Domain Service Seam", () => {
       ).rejects.toThrow(/Task title cannot be empty/);
 
       expect(mockRpc).not.toHaveBeenCalled();
+    });
+
+    it("throws when version CAS conflict occurs", async () => {
+      const mockRpc = vi.fn().mockResolvedValue({
+        data: null,
+        error: {
+          message: "Task version conflict: expected 1, found 2",
+          code: "P0003",
+        },
+      });
+      const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
+      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
+
+      await expect(
+        updateTask(mockClient, {
+          id: "550e8400-e29b-41d4-a716-446655440000",
+          title: "New Title",
+          expectedVersion: 1,
+        }),
+      ).rejects.toThrow(/Task version conflict: expected 1, found 2/);
     });
 
     it("throws when RPC returns an error (e.g. editing completed task)", async () => {
@@ -452,7 +516,41 @@ describe("Task Domain Service Seam", () => {
   });
 
   describe("completeTask", () => {
-    it("calls complete_task RPC on api schema and returns completed Task", async () => {
+    it("calls complete_task RPC on api schema omitting completed_at when not supplied", async () => {
+      const rawCompleted = {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Draft release notes",
+        description: null,
+        priority: 4,
+        plan: null,
+        labels: [],
+        parentId: null,
+        completedAt: "2026-08-18T20:15:00.000Z",
+        createdAt: "2026-08-18T20:00:00.000Z",
+        updatedAt: "2026-08-18T20:15:00.000Z",
+        version: 2,
+      };
+
+      const mockRpc = vi
+        .fn()
+        .mockResolvedValue({ data: rawCompleted, error: null });
+      const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
+      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
+
+      const task = await completeTask(
+        mockClient,
+        "550e8400-e29b-41d4-a716-446655440000",
+      );
+
+      expect(mockSchema).toHaveBeenCalledWith("api");
+      expect(mockRpc).toHaveBeenCalledWith("complete_task", {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+      });
+      expect(task.completedAt).toBe("2026-08-18T20:15:00.000Z");
+      expect(task.version).toBe(2);
+    });
+
+    it("calls complete_task RPC on api schema with explicit completed_at when supplied", async () => {
       const rawCompleted = {
         id: "550e8400-e29b-41d4-a716-446655440000",
         title: "Draft release notes",

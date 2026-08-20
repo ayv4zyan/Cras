@@ -614,9 +614,12 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                     ? (params.title as string).trim()
                     : existing.title,
                 description:
-                  params.description !== undefined
-                    ? (params.description as string | null)
-                    : existing.description,
+                  params.clear_description === true
+                    ? null
+                    : params.description !== undefined &&
+                        params.description !== null
+                      ? (params.description as string)
+                      : existing.description,
                 priority:
                   params.priority !== undefined && params.priority !== null
                     ? (params.priority as number)
@@ -628,8 +631,8 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                       ? (params.plan as Plan)
                       : existing.plan,
                 parent_id:
-                  params.parent_id !== undefined
-                    ? (params.parent_id as string | null)
+                  params.parent_id !== undefined && params.parent_id !== null
+                    ? (params.parent_id as string)
                     : existing.parent_id,
                 updated_at: now,
                 version: existing.version + 1,
@@ -943,7 +946,10 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     });
 
     // 2. Click the task item to open TaskDetailModal and edit description and priority
-    const taskItem = screen.getByTestId(`task-item-${dbTasks[0].id}`);
+    const createdRow = dbTasks.find(
+      (t) => t.title === "Refactor task pipeline" && t.operator_id === op1.id,
+    )!;
+    const taskItem = screen.getByTestId(`task-item-${createdRow.id}`);
     fireEvent.click(taskItem);
 
     const modal = screen.getByRole("dialog", { name: /task details/i });
@@ -976,9 +982,10 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     });
 
     // Verify persisted record in database
-    expect(dbTasks[0].description).toBe("Updated description for pipeline");
-    expect(dbTasks[0].priority).toBe(1);
-    expect(dbTasks[0].version).toBe(2);
+    const updatedDbRow = dbTasks.find((t) => t.id === createdRow.id)!;
+    expect(updatedDbRow.description).toBe("Updated description for pipeline");
+    expect(updatedDbRow.priority).toBe(1);
+    expect(updatedDbRow.version).toBe(2);
   });
 
   it("proves Issue #41 Criteria 2 & 3: Completing a task records completion timestamp, removes it from Inbox, and lists in Completed view newest-first", async () => {
@@ -1524,7 +1531,10 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
       expect(screen.getByText("Optimize SQL index")).toBeInTheDocument();
     });
 
-    const taskItem = screen.getByTestId(`task-item-${dbTasks[0].id}`);
+    const createdTask = dbTasks.find(
+      (t) => t.title === "Optimize SQL index" && t.operator_id === "op-1",
+    )!;
+    const taskItem = screen.getByTestId(`task-item-${createdTask.id}`);
     expect(within(taskItem).getByText("Backend")).toBeInTheDocument();
     expect(within(taskItem).getByText("Urgent")).toBeInTheDocument();
 
@@ -1586,7 +1596,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
 
     // Verify persisted relationship in mock DB
     const taskLabelsInDb = dbTaskLabels.filter(
-      (tl) => tl.task_id === dbTasks[0].id && tl.operator_id === "op-1",
+      (tl) => tl.task_id === createdTask.id && tl.operator_id === "op-1",
     );
     expect(taskLabelsInDb).toHaveLength(3);
     expect(taskLabelsInDb.map((tl) => tl.label_id)).toEqual(

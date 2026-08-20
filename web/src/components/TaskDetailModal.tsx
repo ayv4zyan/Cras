@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   X,
   CheckCircle2,
@@ -78,6 +78,7 @@ export function TaskDetailModal({
   const [isAddingComment, setIsAddingComment] = useState(false);
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (task) {
@@ -117,8 +118,59 @@ export function TaskDetailModal({
     }
   }, [task, effectiveDefault]);
 
-  const isCompleted = task?.completedAt !== null;
-  const isSubtask = task?.parentId !== null;
+  useEffect(() => {
+    if (!isOpen || !task) return;
+
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key === "Tab" && modalRef.current) {
+        const focusableElements =
+          modalRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          );
+        if (focusableElements.length === 0) return;
+        const first = focusableElements[0];
+        const last = focusableElements[focusableElements.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable && focusable.length > 0) {
+      focusable[0]?.focus();
+    } else {
+      modalRef.current?.focus();
+    }
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [isOpen, task, onClose]);
+
+  const isCompleted = Boolean(task?.completedAt);
+  const isSubtask = Boolean(task?.parentId);
 
   const toggleLabel = useCallback(
     (labelId: string) => {
@@ -258,10 +310,12 @@ export function TaskDetailModal({
 
   return (
     <div
+      ref={modalRef}
       role="dialog"
       aria-modal="true"
       aria-label="Task details"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto outline-hidden"
     >
       <div className="relative w-full max-w-xl rounded-xl border border-border bg-card p-6 shadow-xl space-y-6 text-foreground animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
         {/* Header */}

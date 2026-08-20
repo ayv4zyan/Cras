@@ -148,12 +148,12 @@ export function CreateTaskInput({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Enter" && !e.shiftKey && !isExpanded) {
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSubmit();
       }
     },
-    [handleSubmit, isExpanded],
+    [handleSubmit],
   );
 
   return (
@@ -204,6 +204,7 @@ export function CreateTaskInput({
           <div className="pt-2 border-t border-border/60 space-y-2.5 px-1 animate-in fade-in-50 duration-100">
             <div>
               <textarea
+                aria-label="Task description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Add description..."

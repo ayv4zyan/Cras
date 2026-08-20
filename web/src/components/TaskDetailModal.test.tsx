@@ -439,4 +439,44 @@ describe("TaskDetailModal Component", () => {
       screen.queryByRole("button", { name: /add subtask/i }),
     ).not.toBeInTheDocument();
   });
+
+  it("closes modal on Escape key press", () => {
+    const handleClose = vi.fn();
+    render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={true}
+        onClose={handleClose}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: "Escape", code: "Escape" });
+    expect(handleClose).toHaveBeenCalled();
+  });
+
+  it("returns null when task is null or isOpen is false", () => {
+    const { container: container1 } = render(
+      <TaskDetailModal
+        task={null}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+    expect(container1.firstChild).toBeNull();
+
+    const { container: container2 } = render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={false}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+    expect(container2.firstChild).toBeNull();
+  });
 });

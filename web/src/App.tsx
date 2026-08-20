@@ -158,8 +158,15 @@ export function CrasApp({
   const handleCompleteTask = useCallback(
     async (task: Task) => {
       setErrorMessage(null);
-      const completed = await completeTask(client, task.id);
-      applyTaskUpdate(completed);
+      try {
+        const completed = await completeTask(client, task.id);
+        applyTaskUpdate(completed);
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to complete task";
+        setErrorMessage(msg);
+        throw err;
+      }
     },
     [client, applyTaskUpdate],
   );
@@ -167,8 +174,15 @@ export function CrasApp({
   const handleUncompleteTask = useCallback(
     async (task: Task) => {
       setErrorMessage(null);
-      const uncompleted = await uncompleteTask(client, task.id);
-      applyTaskUpdate(uncompleted);
+      try {
+        const uncompleted = await uncompleteTask(client, task.id);
+        applyTaskUpdate(uncompleted);
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to uncomplete task";
+        setErrorMessage(msg);
+        throw err;
+      }
     },
     [client, applyTaskUpdate],
   );

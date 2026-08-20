@@ -49,12 +49,18 @@ import {
 import type { TimedPlanType } from "./services/temporalService";
 import type { Priority, Task, Label, Comment } from "./contracts/task";
 import { supabase } from "./config/supabase";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 
 type ViewMode = "inbox" | "today" | "upcoming" | "completed";
 
 export interface CrasAppProps {
   readonly client?: SupabaseClient;
+}
+
+export interface AuthenticatedAppProps {
+  readonly client: SupabaseClient;
+  readonly user: User;
+  readonly onSignOut: () => Promise<void>;
 }
 
 interface NavItem {
@@ -65,15 +71,11 @@ interface NavItem {
   readonly badge?: number;
 }
 
-export function CrasApp({
-  client = supabase,
-}: CrasAppProps): React.JSX.Element {
-  const {
-    user,
-    isLoading: isAuthLoading,
-    signInWithGoogle,
-    signOut,
-  } = useAuth();
+export function AuthenticatedApp({
+  client,
+  user,
+  onSignOut,
+}: AuthenticatedAppProps): React.JSX.Element {
   const [activeView, setActiveView] = useState<ViewMode>("inbox");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
@@ -86,7 +88,7 @@ export function CrasApp({
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const userId = user?.id;
+  const userId = user.id;
 
   useEffect(() => {
     let isCancelled = false;
@@ -97,11 +99,6 @@ export function CrasApp({
     setIsDetailModalOpen(false);
     setComments([]);
     setErrorMessage(null);
-
-    if (!userId) {
-      setIsTasksLoading(false);
-      return;
-    }
 
     setIsTasksLoading(true);
     Promise.all([
@@ -147,7 +144,7 @@ export function CrasApp({
 
   const selectedTaskId = selectedTask?.id;
   useEffect(() => {
-    if (!selectedTaskId || !userId) {
+    if (!selectedTaskId) {
       setComments([]);
       return;
     }
@@ -171,7 +168,7 @@ export function CrasApp({
     return () => {
       isCancelled = true;
     };
-  }, [client, selectedTaskId, userId]);
+  }, [client, selectedTaskId]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
@@ -375,26 +372,6 @@ export function CrasApp({
     ],
   );
 
-  if (isAuthLoading) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground">
-        <div className="flex flex-col items-center space-y-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary font-bold text-lg text-primary-foreground shadow-xs">
-            C
-          </div>
-          <div className="flex items-center space-x-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            <span>Restoring Operator session...</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <SignInScreen onSignInWithGoogle={signInWithGoogle} />;
-  }
-
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {/* Sidebar Navigation */}
@@ -517,7 +494,7 @@ export function CrasApp({
 
               <button
                 type="button"
-                onClick={() => signOut()}
+                onClick={() => onSignOut()}
                 aria-label="Sign out"
                 title="Sign out"
                 className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer shrink-0"
@@ -597,6 +574,46 @@ export function CrasApp({
         onDeleteLabel={handleDeleteLabel}
       />
     </div>
+  );
+}
+
+export function CrasApp({
+  client = supabase,
+}: CrasAppProps): React.JSX.Element {
+  const {
+    user,
+    isLoading: isAuthLoading,
+    signInWithGoogle,
+    signOut,
+  } = useAuth();
+
+  if (isAuthLoading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground">
+        <div className="flex flex-col items-center space-y-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary font-bold text-lg text-primary-foreground shadow-xs">
+            C
+          </div>
+          <div className="flex items-center space-x-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>Restoring Operator session...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <SignInScreen onSignInWithGoogle={signInWithGoogle} />;
+  }
+
+  return (
+    <AuthenticatedApp
+      key={user.id}
+      client={client}
+      user={user}
+      onSignOut={signOut}
+    />
   );
 }
 

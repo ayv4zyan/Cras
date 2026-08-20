@@ -162,20 +162,35 @@ describe("Web Client Seam - App Surface", () => {
   it("resets task state and selection on account switch and sign out", async () => {
     let authCallback:
       ((event: string, session: Session | null) => void) | null = null;
+    let currentSession: Session | null = null;
+
     const userA: User = {
       id: "operator-a-uuid",
       email: "alice@example.com",
     } as User;
     const sessionA = { user: userA, access_token: "token-a" } as Session;
 
+    const userB: User = {
+      id: "operator-b-uuid",
+      email: "bob@example.com",
+    } as User;
+    const sessionB = { user: userB, access_token: "token-b" } as Session;
+
+    const labelAId = "550e8400-e29b-41d4-a716-446655440011";
+    const labelBId = "550e8400-e29b-41d4-a716-446655440012";
+    const taskAId = "550e8400-e29b-41d4-a716-446655440001";
+    const taskBId = "550e8400-e29b-41d4-a716-446655440002";
+    const commentAId = "550e8400-e29b-41d4-a716-446655440021";
+    const commentBId = "550e8400-e29b-41d4-a716-446655440022";
+
     const mockTasksA = [
       {
-        id: "550e8400-e29b-41d4-a716-446655440001",
+        id: taskAId,
         title: "Alice's Secret Task",
         description: "Alice notes",
         priority: 4,
         plan: null,
-        labels: [],
+        labels: [labelAId],
         parentId: null,
         completedAt: null,
         createdAt: "2026-08-19T00:00:00Z",
@@ -184,12 +199,70 @@ describe("Web Client Seam - App Surface", () => {
       },
     ];
 
+    const mockLabelsA = [
+      {
+        id: labelAId,
+        name: "Alice Label",
+        color: "#ff0000",
+        created_at: "2026-08-19T00:00:00Z",
+        updated_at: "2026-08-19T00:00:00Z",
+      },
+    ];
+
+    const mockCommentsA = [
+      {
+        id: commentAId,
+        taskId: taskAId,
+        content: "Alice Comment Note",
+        createdAt: "2026-08-19T00:00:00Z",
+      },
+    ];
+
+    const mockTasksB = [
+      {
+        id: taskBId,
+        title: "Bob's Public Task",
+        description: "Bob notes",
+        priority: 2,
+        plan: null,
+        labels: [labelBId],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-19T00:00:00Z",
+        updatedAt: "2026-08-19T00:00:00Z",
+        version: 1,
+      },
+    ];
+
+    const mockLabelsB = [
+      {
+        id: labelBId,
+        name: "Bob Label",
+        color: "#00ff00",
+        created_at: "2026-08-19T00:00:00Z",
+        updated_at: "2026-08-19T00:00:00Z",
+      },
+    ];
+
+    const mockCommentsB = [
+      {
+        id: commentBId,
+        taskId: taskBId,
+        content: "Bob Comment Note",
+        createdAt: "2026-08-19T00:00:00Z",
+      },
+    ];
+
+    currentSession = sessionA;
+
     const mockClient = {
       auth: {
-        getSession: vi.fn().mockResolvedValue({
-          data: { session: sessionA },
-          error: null,
-        }),
+        getSession: vi.fn().mockImplementation(() =>
+          Promise.resolve({
+            data: { session: currentSession },
+            error: null,
+          }),
+        ),
         onAuthStateChange: vi.fn().mockImplementation((cb) => {
           authCallback = cb;
           return { data: { subscription: { unsubscribe: vi.fn() } } };
@@ -200,10 +273,37 @@ describe("Web Client Seam - App Surface", () => {
       schema: vi.fn().mockReturnValue({
         from: vi.fn().mockImplementation((table: string) => {
           if (table === "tasks") {
+            const isUserB = currentSession?.user?.id === userB.id;
             return {
-              select: vi
-                .fn()
-                .mockResolvedValue({ data: mockTasksA, error: null }),
+              select: vi.fn().mockResolvedValue({
+                data: isUserB ? mockTasksB : mockTasksA,
+                error: null,
+              }),
+            };
+          }
+          if (table === "comments") {
+            return {
+              select: vi.fn().mockReturnValue({
+                order: vi.fn().mockImplementation(() => ({
+                  eq: vi
+                    .fn()
+                    .mockImplementation((_col: string, taskId: string) => {
+                      if (taskId === mockTasksA[0].id) {
+                        return Promise.resolve({
+                          data: mockCommentsA,
+                          error: null,
+                        });
+                      }
+                      if (taskId === mockTasksB[0].id) {
+                        return Promise.resolve({
+                          data: mockCommentsB,
+                          error: null,
+                        });
+                      }
+                      return Promise.resolve({ data: [], error: null });
+                    }),
+                })),
+              }),
             };
           }
           return {
@@ -212,15 +312,34 @@ describe("Web Client Seam - App Surface", () => {
         }),
       }),
       from: vi.fn().mockImplementation((table: string) => {
+        if (table === "labels") {
+          const isUserB = currentSession?.user?.id === userB.id;
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: isUserB ? mockLabelsB : mockLabelsA,
+                error: null,
+              }),
+            }),
+          };
+        }
         if (table === "comments") {
           return {
             select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
               eq: vi.fn().mockResolvedValue({ data: [], error: null }),
             }),
           };
         }
         return {
           select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi
+                .fn()
+                .mockResolvedValue({ data: null, error: null }),
+            }),
             maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
           }),
         };
@@ -233,17 +352,63 @@ describe("Web Client Seam - App Surface", () => {
       </AuthProvider>,
     );
 
+    // 1. Account A data renders
     await waitFor(() => {
+      expect(screen.getByText("alice@example.com")).toBeInTheDocument();
       expect(screen.getByText("Alice's Secret Task")).toBeInTheDocument();
+      expect(screen.getAllByText("Alice Label").length).toBeGreaterThan(0);
     });
 
-    // Sign out via auth callback
+    // Open detail modal for Task A to view Alice's comments
     act(() => {
+      screen.getByText("Alice's Secret Task").click();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Alice Comment Note")).toBeInTheDocument();
+    });
+
+    // 2. Sign out via auth callback
+    act(() => {
+      currentSession = null;
       authCallback?.("SIGNED_OUT", null);
     });
 
     await waitFor(() => {
+      expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
       expect(screen.queryByText("Alice's Secret Task")).not.toBeInTheDocument();
+      expect(screen.queryAllByText("Alice Label")).toHaveLength(0);
+      expect(screen.queryByText("Alice Comment Note")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /continue with google/i }),
+      ).toBeInTheDocument();
+    });
+
+    // 3. Sign in Account B via auth callback
+    act(() => {
+      currentSession = sessionB;
+      authCallback?.("SIGNED_IN", sessionB);
+    });
+
+    // 4. Assert Account A data does not render, and Account B data renders properly
+    await waitFor(() => {
+      expect(screen.getByText("bob@example.com")).toBeInTheDocument();
+      expect(screen.getByText("Bob's Public Task")).toBeInTheDocument();
+      expect(screen.getAllByText("Bob Label").length).toBeGreaterThan(0);
+      expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
+      expect(screen.queryByText("Alice's Secret Task")).not.toBeInTheDocument();
+      expect(screen.queryAllByText("Alice Label")).toHaveLength(0);
+      expect(screen.queryByText("Alice Comment Note")).not.toBeInTheDocument();
+    });
+
+    // Open detail modal for Task B to view Bob's comments
+    act(() => {
+      screen.getByText("Bob's Public Task").click();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Bob Comment Note")).toBeInTheDocument();
+      expect(screen.queryByText("Alice Comment Note")).not.toBeInTheDocument();
     });
   });
 });

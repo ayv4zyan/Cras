@@ -59,13 +59,14 @@ BEGIN
         IF jsonb_typeof(update_task.plan) <> 'object' THEN
             RAISE EXCEPTION 'Invalid plan format: expected JSON object';
         END IF;
+
         IF update_task.plan ? 'type' AND jsonb_typeof(update_task.plan->'type') <> 'null' THEN
             IF update_task.plan->>'type' NOT IN ('floating', 'instant') THEN
                 RAISE EXCEPTION 'Invalid plan type: %', update_task.plan->>'type';
             END IF;
             IF update_task.plan->>'type' = 'floating' THEN
-                IF NOT (update_task.plan ? 'date') OR NOT (update_task.plan ? 'time') THEN
-                    RAISE EXCEPTION 'Floating plan requires date and time';
+                IF (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(update_task.plan) k) <> ARRAY['date', 'time', 'type']::TEXT[] THEN
+                    RAISE EXCEPTION 'Floating plan requires exactly type, date, and time';
                 END IF;
                 IF jsonb_typeof(update_task.plan->'date') <> 'string' OR NOT ((update_task.plan->>'date') ~ '^\d{4}-\d{2}-\d{2}$') THEN
                     RAISE EXCEPTION 'Floating plan date must match YYYY-MM-DD format';
@@ -74,14 +75,23 @@ BEGIN
                     RAISE EXCEPTION 'Floating plan time must match HH:MM or HH:MM:SS format';
                 END IF;
             ELSIF update_task.plan->>'type' = 'instant' THEN
-                IF NOT (update_task.plan ? 'at') THEN
-                    RAISE EXCEPTION 'Instant plan requires at';
+                IF (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(update_task.plan) k) <> ARRAY['at', 'type']::TEXT[] THEN
+                    RAISE EXCEPTION 'Instant plan requires exactly type and at';
                 END IF;
                 IF jsonb_typeof(update_task.plan->'at') <> 'string' OR NOT ((update_task.plan->>'at') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$') THEN
                     RAISE EXCEPTION 'Instant plan at must match ISO date-time format';
                 END IF;
             END IF;
         ELSIF (update_task.plan ? 'date') THEN
+            IF update_task.plan ? 'type' THEN
+                IF (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(update_task.plan) k) <> ARRAY['date', 'type']::TEXT[] THEN
+                    RAISE EXCEPTION 'Date-only plan with null type requires exactly type and date';
+                END IF;
+            ELSE
+                IF (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(update_task.plan) k) <> ARRAY['date']::TEXT[] THEN
+                    RAISE EXCEPTION 'Date-only plan requires exactly date';
+                END IF;
+            END IF;
             IF jsonb_typeof(update_task.plan->'date') <> 'string' OR NOT ((update_task.plan->>'date') ~ '^\d{4}-\d{2}-\d{2}$') THEN
                 RAISE EXCEPTION 'Date-only plan date must match YYYY-MM-DD format';
             END IF;

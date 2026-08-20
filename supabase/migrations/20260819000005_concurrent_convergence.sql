@@ -1,4 +1,4 @@
--- Migration: Add expected_version to complete_task and uncomplete_task RPCs, and add realtime publication
+-- Migration: Add expected_version to complete_task and uncomplete_task RPCs, and add realtime invalidation setup
 
 -- 1. Updated api.complete_task supporting version CAS
 DROP FUNCTION IF EXISTS api.complete_task(UUID, TIMESTAMPTZ);
@@ -30,7 +30,8 @@ BEGIN
     END IF;
 
     IF complete_task.expected_version IS NOT NULL AND v_task.version <> complete_task.expected_version THEN
-        RAISE EXCEPTION 'Task version conflict: expected %, found %', complete_task.expected_version, v_task.version;
+        RAISE EXCEPTION 'Task version conflict: expected %, found %', complete_task.expected_version, v_task.version
+            USING ERRCODE = 'P0003';
     END IF;
 
     UPDATE public.tasks
@@ -78,7 +79,8 @@ BEGIN
     END IF;
 
     IF uncomplete_task.expected_version IS NOT NULL AND v_task.version <> uncomplete_task.expected_version THEN
-        RAISE EXCEPTION 'Task version conflict: expected %, found %', uncomplete_task.expected_version, v_task.version;
+        RAISE EXCEPTION 'Task version conflict: expected %, found %', uncomplete_task.expected_version, v_task.version
+            USING ERRCODE = 'P0003';
     END IF;
 
     UPDATE public.tasks
@@ -97,16 +99,24 @@ $$;
 
 GRANT EXECUTE ON FUNCTION api.uncomplete_task(UUID, INTEGER) TO authenticated;
 
--- 3. Add tables to supabase_realtime publication for operator-authorized private changes
+-- 3. RLS policy on realtime.messages for authenticated operator broadcast topics
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.tasks, public.labels, public.comments, public.task_labels;
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'realtime' AND tablename = 'messages') THEN
+        DROP POLICY IF EXISTS "Authenticated users can listen to own operator channel" ON realtime.messages;
+        CREATE POLICY "Authenticated users can listen to own operator channel"
+        ON realtime.messages
+        FOR SELECT
+        TO authenticated
+        USING (
+            realtime.topic() = 'operator:' || auth.uid()::text
+            AND realtime.extension() = 'broadcast'
+        );
     END IF;
 END;
 $$;
 
--- Database-triggered private Broadcast events for resource invalidation
+-- 4. Database-triggered private Broadcast events for resource invalidation
 -- Emits only resource identity, operation, and necessary parent identity without sensitive content.
 CREATE OR REPLACE FUNCTION public.broadcast_resource_invalidation()
 RETURNS TRIGGER
@@ -180,7 +190,7 @@ BEGIN
             true
         );
     EXCEPTION WHEN OTHERS THEN
-        NULL;
+        RAISE WARNING 'Failed to send broadcast invalidation: %', SQLERRM;
     END;
 
     RETURN COALESCE(NEW, OLD);

@@ -217,19 +217,26 @@ export function AuthenticatedApp({
         }
       },
       onReconnect: () => {
-        Promise.all([fetchTasks(client), fetchLabels(client).catch(() => [])])
+        Promise.all([
+          fetchTasks(client).catch(() => null),
+          fetchLabels(client).catch(() => null),
+        ])
           .then(([freshTasks, freshLabels]) => {
-            setTasks(freshTasks);
-            if (freshLabels.length > 0) {
+            if (freshTasks !== null) {
+              setTasks(freshTasks);
+            }
+            if (freshLabels !== null) {
               setLabels(freshLabels);
             }
             const currentSelected = selectedTaskRef.current;
             if (currentSelected) {
-              const freshSelected = freshTasks.find(
-                (t) => t.id === currentSelected.id,
-              );
-              if (freshSelected) {
-                setSelectedTask(freshSelected);
+              if (freshTasks !== null) {
+                const freshSelected = freshTasks.find(
+                  (t) => t.id === currentSelected.id,
+                );
+                if (freshSelected) {
+                  setSelectedTask(freshSelected);
+                }
               }
               fetchComments(client, currentSelected.id)
                 .then((freshComments) => {
@@ -278,15 +285,15 @@ export function AuthenticatedApp({
   const handleVersionConflict = useCallback(
     async (taskId: string) => {
       const [freshTasks, freshTask] = await Promise.all([
-        fetchTasks(client).catch(() => []),
+        fetchTasks(client).catch(() => null),
         fetchTaskById(client, taskId).catch(() => null),
       ]);
-      if (freshTasks.length > 0) {
+      if (freshTasks !== null) {
         setTasks(freshTasks);
       }
       if (freshTask) {
         applyTaskUpdate(freshTask);
-      } else {
+      } else if (freshTasks !== null) {
         const matching = freshTasks.find((t) => t.id === taskId);
         if (matching) {
           applyTaskUpdate(matching);

@@ -143,7 +143,13 @@ export async function updateTask(
   });
 
   if (error) {
-    throw new Error(`Failed to update task: ${error.message} (${error.code})`);
+    const err = new Error(
+      `Failed to update task: ${error.message} (${error.code})`,
+    );
+    if (error.code) {
+      Object.assign(err, { code: error.code });
+    }
+    throw err;
   }
 
   return parseTask(data);
@@ -168,9 +174,13 @@ export async function completeTask(
   });
 
   if (error) {
-    throw new Error(
+    const err = new Error(
       `Failed to complete task: ${error.message} (${error.code})`,
     );
+    if (error.code) {
+      Object.assign(err, { code: error.code });
+    }
+    throw err;
   }
 
   return parseTask(data);
@@ -193,9 +203,13 @@ export async function uncompleteTask(
   });
 
   if (error) {
-    throw new Error(
+    const err = new Error(
       `Failed to uncomplete task: ${error.message} (${error.code})`,
     );
+    if (error.code) {
+      Object.assign(err, { code: error.code });
+    }
+    throw err;
   }
 
   return parseTask(data);
@@ -220,9 +234,13 @@ export async function fetchTaskById(
     if (error.code === "PGRST116" || error.message?.includes("No rows")) {
       return null;
     }
-    throw new Error(
+    const err = new Error(
       `Failed to fetch task ${taskId}: ${error.message} (${error.code})`,
     );
+    if (error.code) {
+      Object.assign(err, { code: error.code });
+    }
+    throw err;
   }
 
   if (!data) {
@@ -237,21 +255,19 @@ export async function fetchTaskById(
  */
 export function isVersionConflictError(error: unknown): boolean {
   if (!error) return false;
-  if (error instanceof Error) {
-    return (
-      error.message.includes("version conflict") ||
-      error.message.includes("Task version conflict")
-    );
-  }
   if (typeof error === "object") {
     const errObj = error as Record<string, unknown>;
-    const msg = typeof errObj.message === "string" ? errObj.message : "";
     const code = typeof errObj.code === "string" ? errObj.code : "";
-    return (
-      msg.includes("version conflict") ||
-      msg.includes("Task version conflict") ||
-      (code === "P0003" && msg.includes("version"))
-    );
+    if (code === "P0003") {
+      return true;
+    }
+    const msg = typeof errObj.message === "string" ? errObj.message : "";
+    if (msg.includes("version conflict")) {
+      return true;
+    }
+  }
+  if (error instanceof Error) {
+    return error.message.includes("version conflict");
   }
   return false;
 }

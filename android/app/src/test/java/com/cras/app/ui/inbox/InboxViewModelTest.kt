@@ -322,6 +322,35 @@ class InboxViewModelTest {
     }
 
     @Test
+    fun `loadTasks preserves task success state when labelService fails`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        viewModel.createTask("Buy groceries")
+        advanceUntilIdle()
+
+        assertTrue(viewModel.inboxState.value is InboxUiState.Success)
+
+        // Make label service fail
+        labelService.shouldFail = true
+        viewModel.loadTasks()
+        advanceUntilIdle()
+
+        // Tasks state must remain Success, not Error
+        val inboxState = viewModel.inboxState.value
+        assertTrue(inboxState is InboxUiState.Success)
+        assertEquals(1, (inboxState as InboxUiState.Success).tasks.size)
+        assertEquals("Buy groceries", inboxState.tasks[0].title)
+    }
+
+    @Test
     fun `createTask with all priority states and descriptions`() = runTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()

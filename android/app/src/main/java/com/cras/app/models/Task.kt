@@ -28,7 +28,7 @@ private val UUID_REGEX = Regex("""^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
 private val ISO_DATE_TIME_FORMATTER: DateTimeFormatter =
     DateTimeFormatter.ISO_OFFSET_DATE_TIME.withResolverStyle(ResolverStyle.STRICT)
 
-private fun isValidUuid(value: String): Boolean {
+fun isValidUuid(value: String): Boolean {
     if (!UUID_REGEX.matches(value)) return false
     return try {
         UUID.fromString(value)
@@ -199,7 +199,8 @@ data class Comment(
     }
 }
 
-private val HEX_COLOR_REGEX = Regex("""^#[0-9a-fA-F]{6}$""")
+val HEX_COLOR_REGEX = Regex("""^#[0-9a-fA-F]{6}$""")
+fun isValidHexColor(value: String): Boolean = HEX_COLOR_REGEX.matches(value)
 
 @Serializable(with = LabelSerializer::class)
 data class Label(

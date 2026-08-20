@@ -2,6 +2,7 @@ package com.cras.app.data
 
 import com.cras.app.auth.OperatorSession
 import com.cras.app.config.PublicSupabaseConfig
+import com.cras.app.models.isValidUuid
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import kotlinx.serialization.json.Json
@@ -104,6 +105,10 @@ class SupabaseTaskService(
     override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
         val trimmedTitle = params.title.trim()
         require(trimmedTitle.isNotEmpty()) { "Task title cannot be empty" }
+        params.labels.forEach { labelId ->
+            require(isValidUuid(labelId)) { "Task label must be a valid UUID: $labelId" }
+        }
+        require(params.labels.distinct().size == params.labels.size) { "Task labels must be unique" }
 
         val bodyObject = buildJsonObject {
             put("title", trimmedTitle)
@@ -132,6 +137,12 @@ class SupabaseTaskService(
         }
         if (params.priority != null) {
             require(params.priority in 1..4) { "Priority must be between 1 and 4" }
+        }
+        if (params.labels != null) {
+            params.labels.forEach { labelId ->
+                require(isValidUuid(labelId)) { "Task label must be a valid UUID: $labelId" }
+            }
+            require(params.labels.distinct().size == params.labels.size) { "Task labels must be unique" }
         }
 
         val clearPlan = params.clearPlan || (params.plan == null && false)

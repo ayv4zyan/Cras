@@ -13,6 +13,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.time.Instant
 
+import com.cras.app.models.isValidHexColor
+
 data class CreateLabelParams(
     val id: String? = null,
     val name: String,
@@ -69,7 +71,7 @@ class SupabaseLabelService(
         val trimmedName = params.name.trim()
         require(trimmedName.isNotEmpty()) { "Label name cannot be empty" }
         val trimmedColor = params.color.trim()
-        require(trimmedColor.isNotEmpty()) { "Label color cannot be empty" }
+        require(isValidHexColor(trimmedColor)) { "Label color must be a valid 6-digit hex code" }
 
         val endpoint = "${config.url}/rest/v1/labels"
         val bodyObject = buildJsonObject {
@@ -104,7 +106,8 @@ class SupabaseLabelService(
             require(params.name.trim().isNotEmpty()) { "Label name cannot be empty" }
         }
         if (params.color != null) {
-            require(params.color.trim().isNotEmpty()) { "Label color cannot be empty" }
+            val trimmedColor = params.color.trim()
+            require(isValidHexColor(trimmedColor)) { "Label color must be a valid 6-digit hex code" }
         }
 
         val endpoint = "${config.url}/rest/v1/labels?id=eq.${params.id}"

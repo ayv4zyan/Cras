@@ -203,10 +203,10 @@ class InboxViewModel(
         }
         try {
             val allTasksList = taskService.fetchTasks(session)
-            val allLabels = labelService.fetchLabels(session)
+            val labelsResult = runCatching { labelService.fetchLabels(session) }
             val commentsResult = runCatching { commentService.fetchComments(session) }
             _allTasks.value = allTasksList
-            _labels.value = allLabels
+            labelsResult.onSuccess { _labels.value = it }
             commentsResult.onSuccess { _comments.value = it }
 
             val now = nowProvider()

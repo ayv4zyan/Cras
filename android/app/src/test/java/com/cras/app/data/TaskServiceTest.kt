@@ -188,6 +188,36 @@ class TaskServiceTest {
     }
 
     @Test
+    fun `createTask rejects invalid or duplicate label IDs before network call`() = runTest {
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.createTask(
+                    session = testSession,
+                    params = CreateTaskParams(
+                        title = "Invalid label task",
+                        labels = listOf("not-a-uuid")
+                    )
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.createTask(
+                    session = testSession,
+                    params = CreateTaskParams(
+                        title = "Duplicate label task",
+                        labels = listOf(
+                            "22222222-2222-2222-2222-222222222222",
+                            "22222222-2222-2222-2222-222222222222"
+                        )
+                    )
+                )
+            }
+        }
+        assertEquals(0, mockWebServer.requestCount)
+    }
+
+    @Test
     fun `updateTask sends api update_task RPC payload and validates returned task`() = runTest {
         val updatedJson = """
             {
@@ -347,6 +377,38 @@ class TaskServiceTest {
                     params = UpdateTaskParams(
                         id = "550e8400-e29b-41d4-a716-446655440011",
                         priority = 5
+                    )
+                )
+            }
+        }
+
+        assertEquals(0, mockWebServer.requestCount)
+    }
+
+    @Test
+    fun `updateTask rejects invalid or duplicate label IDs before network call`() = runTest {
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.updateTask(
+                    session = testSession,
+                    params = UpdateTaskParams(
+                        id = "550e8400-e29b-41d4-a716-446655440011",
+                        labels = listOf("not-a-uuid")
+                    )
+                )
+            }
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.updateTask(
+                    session = testSession,
+                    params = UpdateTaskParams(
+                        id = "550e8400-e29b-41d4-a716-446655440011",
+                        labels = listOf(
+                            "22222222-2222-2222-2222-222222222222",
+                            "22222222-2222-2222-2222-222222222222"
+                        )
                     )
                 )
             }

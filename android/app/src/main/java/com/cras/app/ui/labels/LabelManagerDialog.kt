@@ -46,6 +46,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -74,6 +79,7 @@ fun LabelManagerDialog(
     var editError by remember { mutableStateOf<String?>(null) }
 
     var deletingId by remember { mutableStateOf<String?>(null) }
+    var deleteErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -163,8 +169,8 @@ fun LabelManagerDialog(
                         Spacer(modifier = Modifier.height(6.dp))
 
                         FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             LabelColors.ALL.forEach { colorOpt ->
@@ -173,25 +179,40 @@ fun LabelManagerDialog(
                                 Box(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
-                                        .size(30.dp)
+                                        .size(48.dp)
                                         .clip(CircleShape)
-                                        .background(col)
-                                        .border(
-                                            width = if (isSelected) 2.5.dp else 1.dp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                            shape = CircleShape
-                                        )
-                                        .clickable(enabled = !isCreating) {
+                                        .clickable(
+                                            enabled = !isCreating,
+                                            onClickLabel = "Select ${colorOpt.name} color"
+                                        ) {
                                             newColor = colorOpt.value
                                         }
+                                        .semantics {
+                                            this.contentDescription = "${colorOpt.name} color"
+                                            this.selected = isSelected
+                                            this.role = Role.RadioButton
+                                        }
                                 ) {
-                                    if (isSelected) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = "Selected color",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(16.dp)
-                                        )
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(CircleShape)
+                                            .background(col)
+                                            .border(
+                                                width = if (isSelected) 2.5.dp else 1.dp,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                                shape = CircleShape
+                                            )
+                                    ) {
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -310,8 +331,8 @@ fun LabelManagerDialog(
                                         Spacer(modifier = Modifier.height(8.dp))
 
                                         FlowRow(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
                                             LabelColors.ALL.forEach { colorOpt ->
@@ -320,25 +341,40 @@ fun LabelManagerDialog(
                                                 Box(
                                                     contentAlignment = Alignment.Center,
                                                     modifier = Modifier
-                                                        .size(26.dp)
+                                                        .size(48.dp)
                                                         .clip(CircleShape)
-                                                        .background(col)
-                                                        .border(
-                                                            width = if (isSelected) 2.dp else 1.dp,
-                                                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                                            shape = CircleShape
-                                                        )
-                                                        .clickable(enabled = !isUpdating) {
+                                                        .clickable(
+                                                            enabled = !isUpdating,
+                                                            onClickLabel = "Select ${colorOpt.name} color"
+                                                        ) {
                                                             editColor = colorOpt.value
                                                         }
+                                                        .semantics {
+                                                            this.contentDescription = "${colorOpt.name} color"
+                                                            this.selected = isSelected
+                                                            this.role = Role.RadioButton
+                                                        }
                                                 ) {
-                                                    if (isSelected) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Check,
-                                                            contentDescription = "Selected color",
-                                                            tint = Color.White,
-                                                            modifier = Modifier.size(14.dp)
-                                                        )
+                                                    Box(
+                                                        contentAlignment = Alignment.Center,
+                                                        modifier = Modifier
+                                                            .size(26.dp)
+                                                            .clip(CircleShape)
+                                                            .background(col)
+                                                            .border(
+                                                                width = if (isSelected) 2.dp else 1.dp,
+                                                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                                                shape = CircleShape
+                                                            )
+                                                    ) {
+                                                        if (isSelected) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.Check,
+                                                                contentDescription = null,
+                                                                tint = Color.White,
+                                                                modifier = Modifier.size(14.dp)
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -403,68 +439,89 @@ fun LabelManagerDialog(
                                         }
                                     }
                                 } else {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Box(
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
                                             modifier = Modifier
-                                                .size(12.dp)
-                                                .clip(CircleShape)
-                                                .background(parseHexColor(label.color))
-                                        )
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Text(
-                                            text = label.name,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = FontWeight.Medium,
-                                            modifier = Modifier.weight(1f)
-                                        )
-
-                                        IconButton(
-                                            onClick = {
-                                                editingId = label.id
-                                                editName = label.name
-                                                editColor = label.color
-                                                editError = null
-                                            },
-                                            modifier = Modifier.size(32.dp)
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 8.dp)
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Edit,
-                                                contentDescription = "Edit label",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(18.dp)
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(12.dp)
+                                                    .clip(CircleShape)
+                                                    .background(parseHexColor(label.color))
                                             )
-                                        }
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text(
+                                                text = label.name,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.Medium,
+                                                modifier = Modifier.weight(1f)
+                                            )
 
-                                        IconButton(
-                                            onClick = {
-                                                deletingId = label.id
-                                                onDeleteLabel(
-                                                    label.id,
-                                                    { deletingId = null },
-                                                    { deletingId = null }
-                                                )
-                                            },
-                                            enabled = !isDeletingThis,
-                                            modifier = Modifier.size(32.dp)
-                                        ) {
-                                            if (isDeletingThis) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(16.dp),
-                                                    strokeWidth = 2.dp
-                                                )
-                                            } else {
+                                            IconButton(
+                                                onClick = {
+                                                    editingId = label.id
+                                                    editName = label.name
+                                                    editColor = label.color
+                                                    editError = null
+                                                },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
                                                 Icon(
-                                                    imageVector = Icons.Default.Delete,
-                                                    contentDescription = "Delete label",
-                                                    tint = MaterialTheme.colorScheme.error,
+                                                    imageVector = Icons.Default.Edit,
+                                                    contentDescription = "Edit label",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     modifier = Modifier.size(18.dp)
                                                 )
                                             }
+
+                                            IconButton(
+                                                onClick = {
+                                                    deletingId = label.id
+                                                    deleteErrors = deleteErrors - label.id
+                                                    onDeleteLabel(
+                                                        label.id,
+                                                        {
+                                                            deletingId = null
+                                                            deleteErrors = deleteErrors - label.id
+                                                        },
+                                                        { err ->
+                                                            deletingId = null
+                                                            deleteErrors = deleteErrors + (label.id to err)
+                                                        }
+                                                    )
+                                                },
+                                                enabled = !isDeletingThis,
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                if (isDeletingThis) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(16.dp),
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                } else {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Delete,
+                                                        contentDescription = "Delete label",
+                                                        tint = MaterialTheme.colorScheme.error,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        val deleteErr = deleteErrors[label.id]
+                                        if (deleteErr != null) {
+                                            Text(
+                                                text = deleteErr,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.padding(start = 34.dp, end = 12.dp, bottom = 8.dp)
+                                            )
                                         }
                                     }
                                 }

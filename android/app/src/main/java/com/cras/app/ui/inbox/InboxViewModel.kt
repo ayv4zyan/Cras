@@ -23,6 +23,7 @@ import com.cras.app.models.Comment
 import com.cras.app.models.Label
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -157,6 +158,8 @@ class InboxViewModel(
             _authState.value = AuthUiState.Loading
             try {
                 authService.signInWithGoogleIdToken(idToken, nonce)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _authState.value = AuthUiState.Unauthenticated(e.message ?: "Sign in failed")
             }
@@ -187,6 +190,8 @@ class InboxViewModel(
         try {
             val effective = settingsService.fetchEffectiveTimedPlanType(session)
             _effectiveTimedPlanType.value = effective
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             // Keep current value on error
         }
@@ -208,7 +213,9 @@ class InboxViewModel(
         try {
             val allTasksList = taskService.fetchTasks(session)
             val labelsResult = runCatching { labelService.fetchLabels(session) }
+                .onFailure { if (it is CancellationException) throw it }
             val commentsResult = runCatching { commentService.fetchComments(session) }
+                .onFailure { if (it is CancellationException) throw it }
             _allTasks.value = allTasksList
             labelsResult.onSuccess { _labels.value = it }
             commentsResult.onSuccess {
@@ -255,6 +262,8 @@ class InboxViewModel(
             if (currentSelected != null) {
                 _selectedTask.value = allTasksList.find { it.id == currentSelected.id }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             val errorMsg = e.message ?: "Failed to load tasks"
             _inboxState.value = InboxUiState.Error(errorMsg)
@@ -286,6 +295,8 @@ class InboxViewModel(
                 )
                 _labels.value = _labels.value + created
                 onSuccess(created)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to create label"
                 _createLabelError.value = errorMsg
@@ -318,6 +329,8 @@ class InboxViewModel(
                 _labels.value = _labels.value.map { if (it.id == id) updated else it }
                 loadTasksInternal(currentAuth.session)
                 onSuccess(updated)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to update label"
                 onError(errorMsg)
@@ -342,6 +355,8 @@ class InboxViewModel(
                 _labels.value = _labels.value.filterNot { it.id == id }
                 loadTasksInternal(currentAuth.session)
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to delete label"
                 onError(errorMsg)
@@ -375,6 +390,8 @@ class InboxViewModel(
                 )
                 _comments.value = _comments.value + created
                 onSuccess(created)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to create comment"
                 onError(errorMsg)
@@ -417,6 +434,8 @@ class InboxViewModel(
                 )
                 loadTasksInternal(currentAuth.session)
                 onSuccess(created)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to create subtask"
                 onError(errorMsg)
@@ -454,6 +473,8 @@ class InboxViewModel(
                 )
                 loadTasksInternal(currentAuth.session)
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _createTaskError.value = e.message ?: "Failed to create task"
             } finally {
@@ -482,6 +503,8 @@ class InboxViewModel(
                 }
                 loadTasksInternal(currentAuth.session)
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: defaultError
                 // Reload to recover canonical state after a conflict or a rejection.
@@ -533,6 +556,8 @@ class InboxViewModel(
                 val effective = settingsService.fetchEffectiveTimedPlanType(currentAuth.session)
                 _effectiveTimedPlanType.value = effective
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to update default timed plan type")
             }

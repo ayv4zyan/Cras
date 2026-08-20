@@ -82,6 +82,11 @@ export function TaskDetailModal({
   const [subtaskError, setSubtaskError] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
+  const effectiveDefaultRef = useRef(effectiveDefault);
+  useEffect(() => {
+    effectiveDefaultRef.current = effectiveDefault;
+  }, [effectiveDefault]);
+
   useEffect(() => {
     if (task) {
       setTitle(task.title);
@@ -112,15 +117,15 @@ export function TaskDetailModal({
         } else if ("date" in task.plan) {
           setPlanDate(task.plan.date);
           setPlanTime("");
-          setPlanType(effectiveDefault);
+          setPlanType(effectiveDefaultRef.current);
         }
       } else {
         setPlanDate("");
         setPlanTime("");
-        setPlanType(effectiveDefault);
+        setPlanType(effectiveDefaultRef.current);
       }
     }
-  }, [task, effectiveDefault]);
+  }, [task]);
 
   useEffect(() => {
     if (!isOpen || !task) return;
@@ -469,6 +474,7 @@ export function TaskDetailModal({
                   <input
                     id="task-plan-date"
                     type="date"
+                    aria-label="Task Plan Date"
                     value={planDate}
                     onChange={(e) => setPlanDate(e.target.value)}
                     disabled={isSaving}

@@ -85,6 +85,42 @@ describe("TaskDetailModal Component", () => {
     });
   });
 
+  it("preserves existing Instant plan when saved without editing plan controls", async () => {
+    const handleSave = vi.fn().mockResolvedValue(undefined);
+    const instantTask: Task = {
+      ...openTask,
+      plan: {
+        type: "instant",
+        at: "2026-08-25T14:30:00.000Z",
+      },
+    };
+
+    render(
+      <TaskDetailModal
+        task={instantTask}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={handleSave}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    const saveButton = screen.getByRole("button", { name: /save changes/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(handleSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: instantTask.id,
+          clearPlan: false,
+          plan: expect.objectContaining({
+            type: "instant",
+          }),
+        }),
+      );
+    });
+  });
+
   it("allows setting and saving a Date-only plan", async () => {
     const handleSave = vi.fn().mockResolvedValue(undefined);
 
@@ -98,7 +134,7 @@ describe("TaskDetailModal Component", () => {
       />,
     );
 
-    const dateInput = screen.getByLabelText(/plan date/i);
+    const dateInput = screen.getByLabelText(/task plan date/i);
     fireEvent.change(dateInput, { target: { value: "2026-08-25" } });
 
     const saveButton = screen.getByRole("button", { name: /save changes/i });
@@ -129,7 +165,7 @@ describe("TaskDetailModal Component", () => {
       />,
     );
 
-    const dateInput = screen.getByLabelText(/plan date/i);
+    const dateInput = screen.getByLabelText(/task plan date/i);
     fireEvent.change(dateInput, { target: { value: "2026-08-25" } });
 
     const timeInput = screen.getByLabelText(/task plan time/i);

@@ -91,15 +91,10 @@ describe("Temporal Service Seam", () => {
         effectiveDefault: "floating",
       });
 
-      expect(plan).not.toBeNull();
-      if (plan && "type" in plan) {
-        expect(plan.type).toBe("instant");
-        if (plan.type === "instant") {
-          expect(plan.at).toMatch(
-            /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/,
-          );
-        }
-      }
+      expect(plan).toEqual({
+        type: "instant",
+        at: new Date(2026, 7, 20, 15, 30, 0, 0).toISOString(),
+      });
     });
 
     it("uses effective default ('instant') when no explicit type is provided", () => {
@@ -278,6 +273,52 @@ describe("Temporal Service Seam", () => {
         farFutureTask.id,
       ]);
     });
+
+    it("sorts tasks within the same day by time first, then priority tie-breaker", () => {
+      const now = new Date(2026, 7, 19, 12, 0, 0);
+
+      const taskNoTimeP1: Task = {
+        ...baseTask,
+        id: "task-notime-p1",
+        title: "No time P1",
+        plan: { date: "2026-08-19" },
+        priority: 1,
+      };
+      const taskEarlyP3: Task = {
+        ...baseTask,
+        id: "task-early-p3",
+        title: "Early 09:00 P3",
+        plan: { type: "floating", date: "2026-08-19", time: "09:00" },
+        priority: 3,
+      };
+      const taskLateP1: Task = {
+        ...baseTask,
+        id: "task-late-p1",
+        title: "Late 14:00 P1",
+        plan: { type: "floating", date: "2026-08-19", time: "14:00" },
+        priority: 1,
+      };
+      const taskLateP2: Task = {
+        ...baseTask,
+        id: "task-late-p2",
+        title: "Late 14:00 P2",
+        plan: { type: "floating", date: "2026-08-19", time: "14:00" },
+        priority: 2,
+      };
+
+      const result = filterUpcomingTasks(
+        [taskLateP2, taskLateP1, taskEarlyP3, taskNoTimeP1],
+        now,
+      );
+
+      expect(result.groups).toHaveLength(1);
+      expect(result.groups[0].tasks.map((t) => t.id)).toEqual([
+        "task-notime-p1",
+        "task-early-p3",
+        "task-late-p1",
+        "task-late-p2",
+      ]);
+    });
   });
 
   describe("formatPlanDisplay", () => {
@@ -344,7 +385,9 @@ describe("Temporal Service Seam", () => {
       };
 
       const dateObj = new Date(utcIso);
-      const expectedLocalDate = getDeviceLocalDate(dateObj);
+      const expectedLocalDate = `${dateObj.getFullYear()}-${String(
+        dateObj.getMonth() + 1,
+      ).padStart(2, "0")}-${String(dateObj.getDate()).padStart(2, "0")}`;
       expect(getPlanLocalDate(instantPlan)).toBe(expectedLocalDate);
     });
 

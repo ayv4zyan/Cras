@@ -27,7 +27,7 @@ describe("TodayView Component Seam", () => {
   };
 
   const overdueTask: Task = {
-    id: "22222222-2222-2222-2222-222222222222",
+    id: "99999999-9999-9999-9999-999999999999",
     title: "Overdue contract review",
     description: null,
     priority: 2,
@@ -45,7 +45,10 @@ describe("TodayView Component Seam", () => {
     title: "Global sync call",
     description: null,
     priority: 3,
-    plan: { type: "instant", at: "2026-08-19T14:00:00.000Z" },
+    plan: {
+      type: "instant",
+      at: new Date(2026, 7, 19, 14, 0, 0).toISOString(),
+    },
     labels: [],
     parentId: null,
     completedAt: null,
@@ -97,7 +100,7 @@ describe("TodayView Component Seam", () => {
     expect(handleComplete).toHaveBeenCalledWith(todayTask);
   });
 
-  it("calls onSelectTask when task item is clicked", () => {
+  it("calls onSelectTask when task item is clicked or activated with Enter/Space", () => {
     const handleSelect = vi.fn();
 
     render(
@@ -113,6 +116,14 @@ describe("TodayView Component Seam", () => {
 
     const item = screen.getByRole("listitem");
     fireEvent.click(item);
+    expect(handleSelect).toHaveBeenCalledWith(todayTask);
+
+    handleSelect.mockClear();
+    fireEvent.keyDown(item, { key: "Enter" });
+    expect(handleSelect).toHaveBeenCalledWith(todayTask);
+
+    handleSelect.mockClear();
+    fireEvent.keyDown(item, { key: " " });
     expect(handleSelect).toHaveBeenCalledWith(todayTask);
   });
 

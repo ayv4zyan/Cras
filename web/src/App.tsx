@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Inbox,
   Calendar,
@@ -298,6 +298,65 @@ export function CrasApp({
     [client],
   );
 
+  const inboxTasks = useMemo(() => filterInboxTasks(tasks), [tasks]);
+  const completedTasks = useMemo(() => filterCompletedTasks(tasks), [tasks]);
+  const todayTasks = useMemo(() => filterTodayTasks(tasks), [tasks]);
+  const upcomingResult = useMemo(() => filterUpcomingTasks(tasks), [tasks]);
+  const totalUpcomingCount = useMemo(
+    () =>
+      upcomingResult.overdue.length +
+      upcomingResult.groups.reduce((acc, g) => acc + g.tasks.length, 0),
+    [upcomingResult],
+  );
+
+  const selectedTaskComments = useMemo(
+    () =>
+      selectedTask ? comments.filter((c) => c.taskId === selectedTask.id) : [],
+    [selectedTask, comments],
+  );
+  const selectedTaskSubtasks = useMemo(
+    () => (selectedTask ? filterSubtasks(tasks, selectedTask.id) : []),
+    [selectedTask, tasks],
+  );
+
+  const navItems: readonly NavItem[] = useMemo(
+    () => [
+      {
+        id: "inbox",
+        label: "Inbox",
+        icon: Inbox,
+        badge: inboxTasks.length > 0 ? inboxTasks.length : undefined,
+      },
+      {
+        id: "today",
+        label: "Today",
+        icon: Calendar,
+        iconClassName: "text-emerald-600 dark:text-emerald-400",
+        badge: todayTasks.length > 0 ? todayTasks.length : undefined,
+      },
+      {
+        id: "upcoming",
+        label: "Upcoming",
+        icon: CalendarDays,
+        iconClassName: "text-blue-600 dark:text-blue-400",
+        badge: totalUpcomingCount > 0 ? totalUpcomingCount : undefined,
+      },
+      {
+        id: "completed",
+        label: "Completed",
+        icon: CheckCircle2,
+        iconClassName: "text-muted-foreground",
+        badge: completedTasks.length > 0 ? completedTasks.length : undefined,
+      },
+    ],
+    [
+      inboxTasks.length,
+      todayTasks.length,
+      totalUpcomingCount,
+      completedTasks.length,
+    ],
+  );
+
   if (isAuthLoading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground">
@@ -317,51 +376,6 @@ export function CrasApp({
   if (!user) {
     return <SignInScreen onSignInWithGoogle={signInWithGoogle} />;
   }
-
-  const inboxTasks = filterInboxTasks(tasks);
-  const completedTasks = filterCompletedTasks(tasks);
-  const todayTasks = filterTodayTasks(tasks);
-  const upcomingResult = filterUpcomingTasks(tasks);
-  const totalUpcomingCount =
-    upcomingResult.overdue.length +
-    upcomingResult.groups.reduce((acc, g) => acc + g.tasks.length, 0);
-
-  const selectedTaskComments = selectedTask
-    ? comments.filter((c) => c.taskId === selectedTask.id)
-    : [];
-  const selectedTaskSubtasks = selectedTask
-    ? filterSubtasks(tasks, selectedTask.id)
-    : [];
-
-  const navItems: readonly NavItem[] = [
-    {
-      id: "inbox",
-      label: "Inbox",
-      icon: Inbox,
-      badge: inboxTasks.length,
-    },
-    {
-      id: "today",
-      label: "Today",
-      icon: Calendar,
-      iconClassName: "text-emerald-600 dark:text-emerald-400",
-      badge: todayTasks.length,
-    },
-    {
-      id: "upcoming",
-      label: "Upcoming",
-      icon: CalendarDays,
-      iconClassName: "text-blue-600 dark:text-blue-400",
-      badge: totalUpcomingCount > 0 ? totalUpcomingCount : undefined,
-    },
-    {
-      id: "completed",
-      label: "Completed",
-      icon: CheckCircle2,
-      iconClassName: "text-muted-foreground",
-      badge: completedTasks.length,
-    },
-  ];
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
@@ -507,6 +521,7 @@ export function CrasApp({
             onCompleteTask={handleCompleteTask}
             onSelectTask={handleSelectTask}
             isLoading={isTasksLoading}
+            effectiveDefault={effectiveTimedPlanType}
           />
         ) : activeView === "today" ? (
           <TodayView
@@ -516,6 +531,7 @@ export function CrasApp({
             onCompleteTask={handleCompleteTask}
             onSelectTask={handleSelectTask}
             isLoading={isTasksLoading}
+            effectiveDefault={effectiveTimedPlanType}
           />
         ) : activeView === "upcoming" ? (
           <UpcomingView

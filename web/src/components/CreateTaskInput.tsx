@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef, useMemo } from "react";
 import {
   Plus,
   Loader2,
@@ -50,6 +50,23 @@ export function CreateTaskInput({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const lastDefaultDate = useRef(defaultDate);
+  if (lastDefaultDate.current !== defaultDate) {
+    lastDefaultDate.current = defaultDate;
+    setPlanDate(defaultDate ?? "");
+  }
+
+  const todayDateStr = useMemo(() => getDeviceLocalDate(new Date()), []);
+  const tomorrowDateStr = useMemo(() => {
+    const now = new Date();
+    const tomorrow = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1,
+    );
+    return getDeviceLocalDate(tomorrow);
+  }, []);
+
   const toggleLabel = useCallback((labelId: string) => {
     setSelectedLabels((prev) =>
       prev.includes(labelId)
@@ -60,22 +77,16 @@ export function CreateTaskInput({
 
   const handleSetQuickDate = useCallback(
     (type: "none" | "today" | "tomorrow") => {
-      const now = new Date();
       if (type === "none") {
         setPlanDate("");
         setPlanTime("");
       } else if (type === "today") {
-        setPlanDate(getDeviceLocalDate(now));
+        setPlanDate(todayDateStr);
       } else if (type === "tomorrow") {
-        const tomorrow = new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          now.getDate() + 1,
-        );
-        setPlanDate(getDeviceLocalDate(tomorrow));
+        setPlanDate(tomorrowDateStr);
       }
     },
-    [],
+    [todayDateStr, tomorrowDateStr],
   );
 
   const handleSubmit = useCallback(
@@ -239,7 +250,7 @@ export function CreateTaskInput({
                     type="button"
                     onClick={() => handleSetQuickDate("today")}
                     className={`px-2 py-1 rounded-md text-xs border transition-colors cursor-pointer ${
-                      planDate === getDeviceLocalDate()
+                      planDate === todayDateStr
                         ? "border-primary bg-primary/10 text-primary font-medium"
                         : "border-border/60 bg-background text-muted-foreground hover:bg-secondary"
                     }`}
@@ -249,7 +260,11 @@ export function CreateTaskInput({
                   <button
                     type="button"
                     onClick={() => handleSetQuickDate("tomorrow")}
-                    className="px-2 py-1 rounded-md text-xs border border-border/60 bg-background text-muted-foreground hover:bg-secondary transition-colors cursor-pointer"
+                    className={`px-2 py-1 rounded-md text-xs border transition-colors cursor-pointer ${
+                      planDate && planDate === tomorrowDateStr
+                        ? "border-primary bg-primary/10 text-primary font-medium"
+                        : "border-border/60 bg-background text-muted-foreground hover:bg-secondary"
+                    }`}
                   >
                     Tomorrow
                   </button>

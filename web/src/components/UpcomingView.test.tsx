@@ -13,7 +13,7 @@ describe("UpcomingView Component Seam", () => {
   ];
 
   const overdueTask: Task = {
-    id: "22222222-2222-2222-2222-222222222222",
+    id: "99999999-9999-9999-9999-999999999999",
     title: "Overdue task",
     description: null,
     priority: 1,
@@ -83,13 +83,19 @@ describe("UpcomingView Component Seam", () => {
     );
 
     // Overdue strip
-    expect(screen.getByText(/Overdue \(\d+\)/i)).toBeInTheDocument();
+    expect(screen.getByText("Overdue (1)")).toBeInTheDocument();
     expect(screen.getByText("Overdue task")).toBeInTheDocument();
 
-    // Day groups
-    expect(screen.getByText("Today task")).toBeInTheDocument();
-    expect(screen.getByText("Tomorrow task")).toBeInTheDocument();
-    expect(screen.getByText("Future 30-day task")).toBeInTheDocument();
+    // Day groups render in chronological order
+    const titles = screen
+      .getAllByText(/task$/i)
+      .map((node) => node.textContent);
+    expect(titles).toEqual([
+      "Overdue task",
+      "Today task",
+      "Tomorrow task",
+      "Future 30-day task",
+    ]);
   });
 
   it("calls onCompleteTask when task checkbox clicked in upcoming view", () => {
@@ -108,6 +114,32 @@ describe("UpcomingView Component Seam", () => {
     const completeBtn = screen.getByLabelText("Complete task Tomorrow task");
     fireEvent.click(completeBtn);
     expect(handleComplete).toHaveBeenCalledWith(tomorrowTask);
+  });
+
+  it("calls onSelectTask when task item is clicked or activated with Enter/Space", () => {
+    const handleSelect = vi.fn();
+
+    render(
+      <UpcomingView
+        tasks={[tomorrowTask]}
+        labels={sampleLabels}
+        onCompleteTask={vi.fn()}
+        onSelectTask={handleSelect}
+        now={new Date(2026, 7, 19, 12, 0, 0)}
+      />,
+    );
+
+    const item = screen.getByRole("listitem");
+    fireEvent.click(item);
+    expect(handleSelect).toHaveBeenCalledWith(tomorrowTask);
+
+    handleSelect.mockClear();
+    fireEvent.keyDown(item, { key: "Enter" });
+    expect(handleSelect).toHaveBeenCalledWith(tomorrowTask);
+
+    handleSelect.mockClear();
+    fireEvent.keyDown(item, { key: " " });
+    expect(handleSelect).toHaveBeenCalledWith(tomorrowTask);
   });
 
   it("renders empty state when no upcoming tasks", () => {

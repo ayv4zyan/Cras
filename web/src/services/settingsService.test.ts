@@ -116,6 +116,39 @@ describe("Settings & Deployment Configuration Seam", () => {
       const result = await fetchEffectiveTimedPlanType(mockClient);
       expect(result).toBe("floating");
     });
+
+    it("does not overwrite cache when one fetch fails", async () => {
+      setCachedEffectiveTimedPlanType("floating");
+
+      const mockSettingsSelect = vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockRejectedValue(new Error("Settings fetch failed")),
+      });
+
+      const mockDeployConfigSelect = vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { default_timed_plan_type: "instant" },
+          error: null,
+        }),
+      });
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === "settings") {
+          return { select: mockSettingsSelect };
+        }
+        if (table === "deployment_config") {
+          return { select: mockDeployConfigSelect };
+        }
+        return {};
+      });
+
+      const mockClient = {
+        from: mockFrom,
+      } as unknown as SupabaseClient;
+
+      const result = await fetchEffectiveTimedPlanType(mockClient);
+      expect(result).toBe("floating");
+      expect(getCachedEffectiveTimedPlanType()).toBe("floating");
+    });
   });
 
   describe("updateOperatorTimedPlanType", () => {
@@ -138,6 +171,48 @@ describe("Settings & Deployment Configuration Seam", () => {
         default_timed_plan_type: "floating",
       });
       expect(getCachedEffectiveTimedPlanType()).toBe("floating");
+    });
+
+    it("clears operator override when null is passed and refreshes cache", async () => {
+      setCachedEffectiveTimedPlanType("floating");
+
+      const mockUpsert = vi.fn().mockResolvedValue({ error: null });
+      const mockSettingsSelect = vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { default_timed_plan_type: null },
+          error: null,
+        }),
+      });
+      const mockDeployConfigSelect = vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { default_timed_plan_type: "instant" },
+          error: null,
+        }),
+      });
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === "settings") {
+          return {
+            upsert: mockUpsert,
+            select: mockSettingsSelect,
+          };
+        }
+        if (table === "deployment_config") {
+          return { select: mockDeployConfigSelect };
+        }
+        return {};
+      });
+
+      const mockClient = {
+        from: mockFrom,
+      } as unknown as SupabaseClient;
+
+      await updateOperatorTimedPlanType(mockClient, null);
+
+      expect(mockUpsert).toHaveBeenCalledWith({
+        default_timed_plan_type: null,
+      });
+      expect(getCachedEffectiveTimedPlanType()).toBe("instant");
     });
   });
 });

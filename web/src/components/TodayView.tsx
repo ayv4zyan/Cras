@@ -9,6 +9,7 @@ import {
   formatPlanDisplay,
   getDeviceLocalDate,
   isTaskOverdue,
+  type TimedPlanType,
 } from "../services/temporalService";
 
 export interface TodayViewProps {
@@ -23,6 +24,7 @@ export interface TodayViewProps {
   readonly onSelectTask: (task: Task) => void;
   readonly isLoading?: boolean;
   readonly now?: Date;
+  readonly effectiveDefault?: TimedPlanType;
 }
 
 export function TodayView({
@@ -33,6 +35,7 @@ export function TodayView({
   onSelectTask,
   isLoading = false,
   now,
+  effectiveDefault,
 }: TodayViewProps): React.JSX.Element {
   const currentDate = useMemo(() => now || new Date(), [now]);
   const todayDateStr = useMemo(
@@ -84,6 +87,7 @@ export function TodayView({
             availableLabels={labels}
             placeholder="Add a task for Today..."
             defaultDate={todayDateStr}
+            effectiveDefault={effectiveDefault}
           />
         </div>
 
@@ -117,8 +121,17 @@ export function TodayView({
                 <div
                   key={task.id}
                   role="listitem"
+                  tabIndex={0}
                   onClick={() => onSelectTask(task)}
-                  className={`group relative flex items-start justify-between p-3.5 rounded-lg border bg-card text-card-foreground shadow-xs transition-all hover:border-border cursor-pointer ${
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      if (e.target === e.currentTarget) {
+                        e.preventDefault();
+                        onSelectTask(task);
+                      }
+                    }
+                  }}
+                  className={`group relative flex items-start justify-between p-3.5 rounded-lg border bg-card text-card-foreground shadow-xs transition-all hover:border-border cursor-pointer focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${
                     overdue
                       ? "border-amber-500/30 bg-amber-500/5 hover:bg-amber-500/10"
                       : "border-border/60 hover:bg-secondary/40"

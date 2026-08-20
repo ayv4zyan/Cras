@@ -96,8 +96,17 @@ export function UpcomingView({
                       <div
                         key={task.id}
                         role="listitem"
+                        tabIndex={0}
                         onClick={() => onSelectTask(task)}
-                        className="group flex items-start justify-between p-3 rounded-md bg-card border border-red-500/20 text-card-foreground shadow-xs hover:border-red-500/40 cursor-pointer transition-all"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            if (e.target === e.currentTarget) {
+                              e.preventDefault();
+                              onSelectTask(task);
+                            }
+                          }
+                        }}
+                        className="group flex items-start justify-between p-3 rounded-md bg-card border border-red-500/20 text-card-foreground shadow-xs hover:border-red-500/40 cursor-pointer transition-all focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                       >
                         <div className="flex items-start space-x-3 min-w-0 flex-1 mr-2">
                           <button
@@ -186,8 +195,17 @@ export function UpcomingView({
                       <div
                         key={task.id}
                         role="listitem"
+                        tabIndex={0}
                         onClick={() => onSelectTask(task)}
-                        className="group flex items-start justify-between p-3.5 rounded-lg border border-border/60 bg-card text-card-foreground shadow-xs hover:bg-secondary/40 hover:border-border cursor-pointer transition-all"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            if (e.target === e.currentTarget) {
+                              e.preventDefault();
+                              onSelectTask(task);
+                            }
+                          }
+                        }}
+                        className="group flex items-start justify-between p-3.5 rounded-lg border border-border/60 bg-card text-card-foreground shadow-xs hover:bg-secondary/40 hover:border-border cursor-pointer transition-all focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                       >
                         <div className="flex items-start space-x-3 min-w-0 flex-1 mr-3">
                           <button

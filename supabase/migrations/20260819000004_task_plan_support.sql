@@ -1,5 +1,8 @@
 -- Migration: Enhance api.update_task RPC to support clear_plan and clear_description boolean parameters
 
+DROP FUNCTION IF EXISTS api.update_task(UUID, TEXT, TEXT, INTEGER, JSONB, UUID, INTEGER);
+DROP FUNCTION IF EXISTS api.update_task(UUID, TEXT, TEXT, INTEGER, JSONB, UUID, INTEGER, UUID[]);
+
 CREATE OR REPLACE FUNCTION api.update_task(
     id UUID,
     title TEXT DEFAULT NULL,
@@ -15,6 +18,7 @@ CREATE OR REPLACE FUNCTION api.update_task(
 RETURNS api.tasks
 LANGUAGE plpgsql
 SECURITY INVOKER
+SET search_path = ''
 AS $$
 DECLARE
     v_task public.tasks%ROWTYPE;
@@ -47,6 +51,25 @@ BEGIN
 
     IF update_task.priority IS NOT NULL AND (update_task.priority < 1 OR update_task.priority > 4) THEN
         RAISE EXCEPTION 'Priority must be between 1 and 4';
+    END IF;
+
+    IF update_task.plan IS NOT NULL THEN
+        IF jsonb_typeof(update_task.plan) <> 'object' THEN
+            RAISE EXCEPTION 'Invalid plan format: expected JSON object';
+        END IF;
+        IF update_task.plan ? 'type' THEN
+            IF update_task.plan->>'type' NOT IN ('floating', 'instant') THEN
+                RAISE EXCEPTION 'Invalid plan type: %', update_task.plan->>'type';
+            END IF;
+            IF update_task.plan->>'type' = 'floating' AND (NOT (update_task.plan ? 'date') OR NOT (update_task.plan ? 'time')) THEN
+                RAISE EXCEPTION 'Floating plan requires date and time';
+            END IF;
+            IF update_task.plan->>'type' = 'instant' AND NOT (update_task.plan ? 'at') THEN
+                RAISE EXCEPTION 'Instant plan requires at';
+            END IF;
+        ELSIF NOT (update_task.plan ? 'date') THEN
+            RAISE EXCEPTION 'Plan must specify date or type';
+        END IF;
     END IF;
 
     UPDATE public.tasks

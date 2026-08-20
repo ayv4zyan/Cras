@@ -4,6 +4,7 @@ import { CreateTaskInput } from "./CreateTaskInput";
 import { TaskLabelBadges } from "./TaskLabelBadges";
 import { type Priority, type Task, type Label } from "../contracts/task";
 import type { CreateTaskParams } from "../services/taskService";
+import type { TimedPlanType } from "../services/temporalService";
 
 export interface InboxViewProps {
   readonly tasks: readonly Task[];
@@ -16,6 +17,7 @@ export interface InboxViewProps {
   readonly onCompleteTask?: (task: Task) => Promise<void> | void;
   readonly onSelectTask?: (task: Task) => void;
   readonly isLoading?: boolean;
+  readonly effectiveDefault?: TimedPlanType;
 }
 
 export function InboxView({
@@ -25,6 +27,7 @@ export function InboxView({
   onCompleteTask,
   onSelectTask,
   isLoading = false,
+  effectiveDefault,
 }: InboxViewProps): React.JSX.Element {
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto">
@@ -47,6 +50,7 @@ export function InboxView({
           <CreateTaskInput
             onCreateTask={onCreateTask}
             availableLabels={labels}
+            effectiveDefault={effectiveDefault}
           />
         </div>
 

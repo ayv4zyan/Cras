@@ -149,6 +149,7 @@ class InboxViewModelTest {
         val tasksInDb = mutableListOf<Task>()
         var shouldFail = false
         var failureMessage = "Network error"
+        var onFetchTaskById: (suspend (String) -> Unit)? = null
 
         override suspend fun fetchTasks(session: OperatorSession): List<Task> {
             if (shouldFail) throw RuntimeException(failureMessage)
@@ -157,6 +158,7 @@ class InboxViewModelTest {
 
         override suspend fun fetchTaskById(session: OperatorSession, taskId: String): Task? {
             if (shouldFail) throw RuntimeException(failureMessage)
+            onFetchTaskById?.invoke(taskId)
             return tasksInDb.find { it.id == taskId }
         }
 
@@ -1158,6 +1160,77 @@ class InboxViewModelTest {
         )
         advanceUntilIdle()
 
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+        assertNull(viewModel.selectedTask.value)
+    }
+
+    @Test
+    fun `realtime task invalidation serializes update fetch before delete so task remains absent`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        viewModel.createTask("Task A")
+        advanceUntilIdle()
+
+        val taskA = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        val updatedTaskA = taskA.copy(title = "Task A Updated by Web", version = 2)
+
+        val fetchStarted = CompletableDeferred<Unit>()
+        val allowFetchToComplete = CompletableDeferred<Unit>()
+
+        taskService.onFetchTaskById = { taskId ->
+            if (taskId == taskA.id) {
+                fetchStarted.complete(Unit)
+                allowFetchToComplete.await()
+            }
+        }
+
+        // Remote client prepares update in DB
+        taskService.tasksInDb[0] = updatedTaskA
+
+        // Realtime update event arrives and starts fetching
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = taskA.id,
+                operation = "updated"
+            )
+        )
+
+        // Wait until fetch has started and suspended
+        fetchStarted.await()
+
+        // Remote client now deletes task from DB
+        taskService.tasksInDb.removeIf { it.id == taskA.id }
+
+        // Realtime delete broadcast arrives while update fetch is still in flight
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = taskA.id,
+                operation = "deleted"
+            )
+        )
+
+        // Allow the suspended update fetch to complete
+        allowFetchToComplete.complete(Unit)
+        advanceUntilIdle()
+
+        // Verify task remains absent and was not re-added by the delayed update fetch
         assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
         assertNull(viewModel.selectedTask.value)
     }

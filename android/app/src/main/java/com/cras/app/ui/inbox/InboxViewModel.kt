@@ -28,6 +28,7 @@ import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -128,8 +129,21 @@ class InboxViewModel(
 
     private var realtimeSubscription: RealtimeSubscription? = null
     private var loadJob: Job? = null
+    private val invalidationChannel = Channel<Pair<OperatorSession, InvalidationPayload>>(Channel.UNLIMITED)
 
     init {
+        viewModelScope.launch {
+            for ((session, payload) in invalidationChannel) {
+                try {
+                    handleInvalidationEventInternal(session, payload)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Guard loop against unexpected non-cancellation errors
+                }
+            }
+        }
+
         viewModelScope.launch {
             authService.currentSession.collect { session ->
                 loadJob?.cancel()
@@ -183,6 +197,7 @@ class InboxViewModel(
         super.onCleared()
         realtimeSubscription?.unsubscribe()
         realtimeSubscription = null
+        invalidationChannel.close()
     }
 
     fun selectTask(task: Task?) {
@@ -320,66 +335,68 @@ class InboxViewModel(
     }
 
     private fun handleInvalidationEvent(session: OperatorSession, event: InvalidationPayload) {
-        viewModelScope.launch {
-            val currentAuth = _authState.value
-            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) return@launch
+        invalidationChannel.trySend(session to event)
+    }
 
-            when (event.resource) {
-                "task" -> {
-                    when (event.operation) {
-                        "updated", "created" -> {
-                            try {
-                                val freshTask = taskService.fetchTaskById(session, event.id)
-                                if (freshTask != null) {
-                                    applyTaskUpdate(freshTask)
-                                } else {
-                                    val freshTasks = taskService.fetchTasks(session)
-                                    reconcileFreshTasks(freshTasks)
-                                }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (_: Exception) {
-                                val freshTasks = runCatching { taskService.fetchTasks(session) }
-                                    .onFailure { if (it is CancellationException) throw it }
-                                    .getOrNull()
-                                if (freshTasks != null) {
-                                    reconcileFreshTasks(freshTasks)
-                                }
-                            }
-                        }
-                        "deleted" -> {
-                            _allTasks.update { current ->
-                                current.filterNot { it.id == event.id }
-                            }
-                            recalculateViews(_allTasks.value)
+    private suspend fun handleInvalidationEventInternal(session: OperatorSession, event: InvalidationPayload) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) return
 
-                            _selectedTask.update { currentSelected ->
-                                if (currentSelected?.id == event.id) null else currentSelected
+        when (event.resource) {
+            "task" -> {
+                when (event.operation) {
+                    "updated", "created" -> {
+                        try {
+                            val freshTask = taskService.fetchTaskById(session, event.id)
+                            if (freshTask != null) {
+                                applyTaskUpdate(freshTask)
+                            } else {
+                                val freshTasks = taskService.fetchTasks(session)
+                                reconcileFreshTasks(freshTasks)
                             }
-                            if (_selectedTask.value == null) {
-                                _comments.value = emptyList()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            val freshTasks = runCatching { taskService.fetchTasks(session) }
+                                .onFailure { if (it is CancellationException) throw it }
+                                .getOrNull()
+                            if (freshTasks != null) {
+                                reconcileFreshTasks(freshTasks)
                             }
                         }
                     }
+                    "deleted" -> {
+                        _allTasks.update { current ->
+                            current.filterNot { it.id == event.id }
+                        }
+                        recalculateViews(_allTasks.value)
+
+                        _selectedTask.update { currentSelected ->
+                            if (currentSelected?.id == event.id) null else currentSelected
+                        }
+                        if (_selectedTask.value == null) {
+                            _comments.value = emptyList()
+                        }
+                    }
                 }
-                "label" -> {
-                    val freshLabels = runCatching { labelService.fetchLabels(session) }
+            }
+            "label" -> {
+                val freshLabels = runCatching { labelService.fetchLabels(session) }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrNull()
+                if (freshLabels != null) {
+                    _labels.value = freshLabels
+                }
+            }
+            "comment" -> {
+                val currentSelected = _selectedTask.value
+                if (currentSelected != null && (event.taskId == currentSelected.id || event.id == currentSelected.id)) {
+                    val freshComments = runCatching { commentService.fetchComments(session) }
                         .onFailure { if (it is CancellationException) throw it }
                         .getOrNull()
-                    if (freshLabels != null) {
-                        _labels.value = freshLabels
-                    }
-                }
-                "comment" -> {
-                    val currentSelected = _selectedTask.value
-                    if (currentSelected != null && (event.taskId == currentSelected.id || event.id == currentSelected.id)) {
-                        val freshComments = runCatching { commentService.fetchComments(session) }
-                            .onFailure { if (it is CancellationException) throw it }
-                            .getOrNull()
-                        if (freshComments != null) {
-                            _comments.value = freshComments
-                            _commentsError.value = null
-                        }
+                    if (freshComments != null) {
+                        _comments.value = freshComments
+                        _commentsError.value = null
                     }
                 }
             }

@@ -99,7 +99,14 @@ export function CrasApp({
       const [allTasks, allLabels, allComments, effectiveType] =
         await Promise.all([
           fetchTasks(client),
-          fetchLabels(client).catch(() => [] as Label[]),
+          fetchLabels(client).catch((err: unknown) => {
+            setErrorMessage(
+              err instanceof Error
+                ? `Failed to load labels: ${err.message}`
+                : "Failed to load labels",
+            );
+            return [] as Label[];
+          }),
           fetchComments(client).catch(() => [] as Comment[]),
           fetchEffectiveTimedPlanType(client).catch(() =>
             getCachedEffectiveTimedPlanType(),
@@ -229,6 +236,7 @@ export function CrasApp({
 
   const handleCreateLabel = useCallback(
     async (params: CreateLabelParams) => {
+      setErrorMessage(null);
       const newLabel = await createLabel(client, params);
       setLabels((prev) => [...prev, newLabel]);
     },
@@ -237,6 +245,7 @@ export function CrasApp({
 
   const handleUpdateLabel = useCallback(
     async (params: UpdateLabelParams) => {
+      setErrorMessage(null);
       const updated = await updateLabel(client, params);
       setLabels((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
     },
@@ -245,6 +254,7 @@ export function CrasApp({
 
   const handleDeleteLabel = useCallback(
     async (labelId: string) => {
+      setErrorMessage(null);
       await deleteLabel(client, labelId);
       setLabels((prev) => prev.filter((l) => l.id !== labelId));
       // Remove deleted label from loaded tasks

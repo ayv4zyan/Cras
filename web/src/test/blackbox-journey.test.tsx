@@ -162,7 +162,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                     const exists = dbLabels.some(
                       (l) =>
                         l.operator_id === currentUser.id &&
-                        l.name.toLowerCase() === name.toLowerCase(),
+                        l.name === name,
                     );
                     if (exists) {
                       return {
@@ -224,12 +224,12 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                         : existing.color;
 
                     // Check unique constraint on rename
-                    if (newName.toLowerCase() !== existing.name.toLowerCase()) {
+                    if (newName !== existing.name) {
                       const duplicate = dbLabels.some(
                         (l) =>
                           l.id !== val &&
                           l.operator_id === currentUser.id &&
-                          l.name.toLowerCase() === newName.toLowerCase(),
+                          l.name === newName,
                       );
                       if (duplicate) {
                         return {
@@ -510,8 +510,6 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 version: 1,
               };
 
-              dbTasks.push(newRow);
-
               const labelIds = (params.labels as string[] | undefined) ?? [];
               // Enforce foreign key constraints and operator isolation on labels
               for (const labelId of labelIds) {
@@ -528,6 +526,11 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                     },
                   });
                 }
+              }
+
+              dbTasks.push(newRow);
+
+              for (const labelId of labelIds) {
                 dbTaskLabels.push({
                   task_id: newId,
                   label_id: labelId,
@@ -680,8 +683,6 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 }
               }
 
-              dbTasks[taskIndex] = updatedRow;
-
               if (params.labels !== undefined && params.labels !== null) {
                 const labelIds = params.labels as string[];
                 // Verify all labels belong to current operator
@@ -716,6 +717,8 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                   });
                 }
               }
+
+              dbTasks[taskIndex] = updatedRow;
 
               const currentLabelIds = dbTaskLabels
                 .filter(
@@ -1642,6 +1645,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     expect(forgedCreateResult.error?.message).toContain(
       "foreign key constraint",
     );
+    expect(
+      dbTasks.some((t) => t.title === "Bob Task with Alice Label"),
+    ).toBe(false);
 
     // 3. Bob creates his own task, then tries to update it with Alice's label ID -> Rejected
     const bobTaskPromise = clientOp2.schema("api").rpc("create_task", {
@@ -1659,6 +1665,11 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     expect(forgedUpdateResult.error?.message).toContain(
       "foreign key constraint",
     );
+    const bobTaskInDb = dbTasks.find((t) => t.id === bobTaskResult.data.id);
+    expect(bobTaskInDb?.version).toBe(1);
+    expect(
+      dbTaskLabels.some((tl) => tl.task_id === bobTaskResult.data.id),
+    ).toBe(false);
 
     // 4. Bob tries to update or delete Alice's label directly -> Rejected / not found
     const forgedLabelUpdate = await clientOp2
@@ -1674,6 +1685,13 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
       .select("*")
       .order("created_at");
     expect(unauthedSelect.error?.message).toBe("Unauthorized");
+
+    const unauthedInsert = await unauthedClient
+      .from("labels")
+      .insert({ name: "Ghost", color: "#ef4444" })
+      .select("*")
+      .single();
+    expect(unauthedInsert.error?.message).toBe("Unauthorized");
   });
 
   it("proves Issue #45 Criterion 1: Operator can create and view dated Comments that remain distinct from Description", async () => {

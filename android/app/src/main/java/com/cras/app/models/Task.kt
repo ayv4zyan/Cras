@@ -15,13 +15,21 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import java.time.format.ResolverStyle
 import java.util.UUID
 
 private val DATE_REGEX = Regex("""^\d{4}-\d{2}-\d{2}$""")
 private val TIME_REGEX = Regex("""^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$""")
 private val ISO_DATE_TIME_REGEX = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$""")
+private val UUID_REGEX = Regex("""^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$""")
+private val ISO_DATE_TIME_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ISO_OFFSET_DATE_TIME.withResolverStyle(ResolverStyle.STRICT)
 
 private fun isValidUuid(value: String): Boolean {
+    if (!UUID_REGEX.matches(value)) return false
     return try {
         UUID.fromString(value)
         true
@@ -31,7 +39,15 @@ private fun isValidUuid(value: String): Boolean {
 }
 
 private fun isValidIsoDateTime(value: String): Boolean {
-    return ISO_DATE_TIME_REGEX.matches(value)
+    if (!ISO_DATE_TIME_REGEX.matches(value)) return false
+    return try {
+        OffsetDateTime.parse(value, ISO_DATE_TIME_FORMATTER)
+        true
+    } catch (_: DateTimeParseException) {
+        false
+    } catch (_: Exception) {
+        false
+    }
 }
 
 @Serializable(with = PlanSerializer::class)

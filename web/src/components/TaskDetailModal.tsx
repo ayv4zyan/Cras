@@ -542,37 +542,40 @@ export function TaskDetailModal({
                 <span>Labels</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {availableLabels.map((label) => {
-                  const isSelected = selectedLabels.includes(label.id);
-                  return (
-                    <label
-                      key={label.id}
-                      className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs border select-none transition-colors ${
-                        isCompleted
-                          ? isSelected
+                {availableLabels
+                  .filter(
+                    (label) =>
+                      !isCompleted || selectedLabels.includes(label.id),
+                  )
+                  .map((label) => {
+                    const isSelected = selectedLabels.includes(label.id);
+                    return (
+                      <label
+                        key={label.id}
+                        className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs border select-none transition-colors ${
+                          isCompleted
                             ? "border-border/80 bg-secondary/80 text-foreground cursor-not-allowed opacity-75"
-                            : "hidden"
-                          : isSelected
-                            ? "border-primary bg-primary/10 text-primary font-medium cursor-pointer"
-                            : "border-border/60 bg-background text-muted-foreground hover:bg-secondary/60 cursor-pointer"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleLabel(label.id)}
-                        disabled={isCompleted || isSaving}
-                        className="sr-only"
-                        aria-label={label.name}
-                      />
-                      <span
-                        className="h-2 w-2 rounded-full shrink-0"
-                        style={{ backgroundColor: label.color }}
-                      />
-                      <span>{label.name}</span>
-                    </label>
-                  );
-                })}
+                            : isSelected
+                              ? "border-primary bg-primary/10 text-primary font-medium cursor-pointer"
+                              : "border-border/60 bg-background text-muted-foreground hover:bg-secondary/60 cursor-pointer"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleLabel(label.id)}
+                          disabled={isCompleted || isSaving}
+                          className="sr-only"
+                          aria-label={label.name}
+                        />
+                        <span
+                          className="h-2 w-2 rounded-full shrink-0"
+                          style={{ backgroundColor: label.color }}
+                        />
+                        <span>{label.name}</span>
+                      </label>
+                    );
+                  })}
                 {isCompleted && selectedLabels.length === 0 && (
                   <span className="text-xs text-muted-foreground italic">
                     No labels attached

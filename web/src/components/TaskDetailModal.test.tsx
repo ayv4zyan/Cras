@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TaskDetailModal } from "./TaskDetailModal";
-import type { Task } from "../contracts/task";
+import type { Task, Label } from "../contracts/task";
 
 describe("TaskDetailModal Component", () => {
   const openTask: Task = {
@@ -255,16 +255,20 @@ describe("TaskDetailModal Component", () => {
 
   it("renders labels and allows adding and removing labels on an open task", async () => {
     const handleSave = vi.fn().mockResolvedValue(undefined);
-    const availableLabels = [
+    const availableLabels: Label[] = [
       {
         id: "22222222-2222-2222-2222-222222222222",
         name: "Urgent",
         color: "#ef4444",
+        createdAt: "2026-08-18T10:00:00.000Z",
+        updatedAt: "2026-08-18T10:00:00.000Z",
       },
       {
         id: "33333333-3333-3333-3333-333333333333",
         name: "Work",
         color: "#3b82f6",
+        createdAt: "2026-08-18T11:00:00.000Z",
+        updatedAt: "2026-08-18T11:00:00.000Z",
       },
     ];
 

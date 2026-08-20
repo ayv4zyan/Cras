@@ -124,10 +124,14 @@ class InboxViewModel(
     init {
         viewModelScope.launch {
             authService.currentSession.collect { session ->
+                loadJob?.cancel()
+                loadJob = null
                 if (session != null) {
                     _authState.value = AuthUiState.Authenticated(session)
-                    loadTasksInternal(session)
-                    loadSettingsInternal(session)
+                    loadJob = viewModelScope.launch {
+                        loadTasksInternal(session)
+                        loadSettingsInternal(session)
+                    }
                 } else {
                     _authState.value = AuthUiState.Unauthenticated()
                     _allTasks.value = emptyList()
@@ -167,6 +171,8 @@ class InboxViewModel(
     }
 
     fun signOut() {
+        loadJob?.cancel()
+        loadJob = null
         viewModelScope.launch {
             authService.signOut()
         }
@@ -185,11 +191,21 @@ class InboxViewModel(
         }
     }
 
+    private fun triggerLoadTasks(session: OperatorSession) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            loadTasksInternal(session)
+        }
+    }
+
     private suspend fun loadSettingsInternal(session: OperatorSession) {
         if (settingsService == null) return
         try {
             val effective = settingsService.fetchEffectiveTimedPlanType(session)
-            _effectiveTimedPlanType.value = effective
+            val currentAuth = _authState.value
+            if (currentAuth is AuthUiState.Authenticated && currentAuth.session == session) {
+                _effectiveTimedPlanType.value = effective
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -216,6 +232,12 @@ class InboxViewModel(
                 .onFailure { if (it is CancellationException) throw it }
             val commentsResult = runCatching { commentService.fetchComments(session) }
                 .onFailure { if (it is CancellationException) throw it }
+
+            val currentAuth = _authState.value
+            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) {
+                return
+            }
+
             _allTasks.value = allTasksList
             labelsResult.onSuccess { _labels.value = it }
             commentsResult.onSuccess {
@@ -265,6 +287,10 @@ class InboxViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            val currentAuth = _authState.value
+            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) {
+                return
+            }
             val errorMsg = e.message ?: "Failed to load tasks"
             _inboxState.value = InboxUiState.Error(errorMsg)
             _todayState.value = TodayUiState.Error(errorMsg)
@@ -327,7 +353,7 @@ class InboxViewModel(
                     params = UpdateLabelParams(id = id, name = name, color = color)
                 )
                 _labels.value = _labels.value.map { if (it.id == id) updated else it }
-                loadTasksInternal(currentAuth.session)
+                triggerLoadTasks(currentAuth.session)
                 onSuccess(updated)
             } catch (e: CancellationException) {
                 throw e
@@ -353,7 +379,7 @@ class InboxViewModel(
             try {
                 labelService.deleteLabel(currentAuth.session, id)
                 _labels.value = _labels.value.filterNot { it.id == id }
-                loadTasksInternal(currentAuth.session)
+                triggerLoadTasks(currentAuth.session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
@@ -432,7 +458,7 @@ class InboxViewModel(
                         parentId = parentId
                     )
                 )
-                loadTasksInternal(currentAuth.session)
+                triggerLoadTasks(currentAuth.session)
                 onSuccess(created)
             } catch (e: CancellationException) {
                 throw e
@@ -471,7 +497,7 @@ class InboxViewModel(
                         labels = labels
                     )
                 )
-                loadTasksInternal(currentAuth.session)
+                triggerLoadTasks(currentAuth.session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
@@ -501,14 +527,14 @@ class InboxViewModel(
                 if (_selectedTask.value?.id == updatedTask.id) {
                     _selectedTask.value = updatedTask
                 }
-                loadTasksInternal(currentAuth.session)
+                triggerLoadTasks(currentAuth.session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: defaultError
                 // Reload to recover canonical state after a conflict or a rejection.
-                loadTasksInternal(currentAuth.session)
+                triggerLoadTasks(currentAuth.session)
                 onError(errorMsg)
             }
         }

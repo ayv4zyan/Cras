@@ -80,6 +80,7 @@ BEGIN
         IF EXISTS (
             SELECT 1 FROM public.tasks
             WHERE id = NEW.parent_id AND operator_id = NEW.operator_id AND parent_id IS NOT NULL
+            FOR SHARE
         ) THEN
             RAISE EXCEPTION 'Subtasks cannot have children (one-level nesting only)';
         END IF;
@@ -88,6 +89,7 @@ BEGIN
         IF EXISTS (
             SELECT 1 FROM public.tasks
             WHERE parent_id = NEW.id AND operator_id = NEW.operator_id
+            FOR SHARE
         ) THEN
             RAISE EXCEPTION 'A task with children cannot become a subtask (one-level nesting only)';
         END IF;

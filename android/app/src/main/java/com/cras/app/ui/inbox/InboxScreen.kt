@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import com.cras.app.auth.OperatorSession
 import com.cras.app.domain.TimedPlanType
 import com.cras.app.domain.formatPlanDisplay
+import com.cras.app.domain.getDeviceLocalDate
 import com.cras.app.domain.isTaskOverdue
 import com.cras.app.models.Label
 import com.cras.app.models.Plan
@@ -249,8 +250,9 @@ fun TaskItemRow(
     onComplete: () -> Unit,
     onClick: () -> Unit
 ) {
-    val overdue = remember(task.plan) { isTaskOverdue(task) }
-    val planDisplay = remember(task.plan) { formatPlanDisplay(task.plan) }
+    val todayDateStr = getDeviceLocalDate()
+    val overdue = remember(task.plan, todayDateStr) { isTaskOverdue(task) }
+    val planDisplay = remember(task.plan, todayDateStr) { formatPlanDisplay(task.plan) }
 
     Card(
         modifier = Modifier

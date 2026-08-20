@@ -88,6 +88,7 @@ fun TodayScreen(
             val millisUntilMidnight = Duration.between(now, nextMidnight).toMillis() + 50L
             delay(millisUntilMidnight.coerceAtLeast(1000L))
             todayDateStr = getDeviceLocalDate()
+            onRefresh()
         }
     }
     val todayFormatted = remember(todayDateStr) {
@@ -260,8 +261,8 @@ fun TodayScreen(
                         contentPadding = PaddingValues(bottom = 80.dp)
                     ) {
                         items(todayState.tasks, key = { it.id }) { task ->
-                            val overdue = remember(task.plan) { isTaskOverdue(task) }
-                            val planDisplay = remember(task.plan) { formatPlanDisplay(task.plan) }
+                            val overdue = remember(task.plan, todayDateStr) { isTaskOverdue(task) }
+                            val planDisplay = remember(task.plan, todayDateStr) { formatPlanDisplay(task.plan) }
 
                             Card(
                                 modifier = Modifier

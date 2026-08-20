@@ -12,16 +12,10 @@ const DEFAULT_LOCAL_ANON_KEY =
 export function getPublicSupabaseConfig(
   env: Record<string, string | undefined> = import.meta.env,
 ): PublicSupabaseConfig {
-  const url =
-    env.VITE_SUPABASE_URL ||
-    env.SUPABASE_URL ||
-    env.NEXT_PUBLIC_SUPABASE_URL ||
-    DEFAULT_LOCAL_URL;
+  const url = env.VITE_SUPABASE_URL || DEFAULT_LOCAL_URL;
   const publishableKey =
     env.VITE_SUPABASE_ANON_KEY ||
     env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    env.SUPABASE_ANON_KEY ||
-    env.SUPABASE_PUBLISHABLE_KEY ||
     DEFAULT_LOCAL_ANON_KEY;
 
   return {

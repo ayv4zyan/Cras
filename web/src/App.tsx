@@ -86,13 +86,18 @@ export function CrasApp({
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const userId = user?.id;
+
   const loadData = useCallback(async () => {
     if (!user) {
       setTasks([]);
       setLabels([]);
+      setSelectedTask(null);
+      setIsDetailModalOpen(false);
       setComments([]);
       return;
     }
+    const currentUserId = user.id;
     setIsTasksLoading(true);
     setErrorMessage(null);
     try {
@@ -110,27 +115,84 @@ export function CrasApp({
           getCachedEffectiveTimedPlanType(),
         ),
       ]);
-      setTasks(allTasks);
-      setLabels(allLabels);
-      setEffectiveTimedPlanType(effectiveType);
+      if (user.id === currentUserId) {
+        setTasks(allTasks);
+        setLabels(allLabels);
+        setEffectiveTimedPlanType(effectiveType);
+      }
     } catch (err) {
-      setErrorMessage(
-        err instanceof Error ? err.message : "Failed to load data",
-      );
+      if (user.id === currentUserId) {
+        setErrorMessage(
+          err instanceof Error ? err.message : "Failed to load data",
+        );
+      }
     } finally {
-      setIsTasksLoading(false);
+      if (user.id === currentUserId) {
+        setIsTasksLoading(false);
+      }
     }
   }, [user, client]);
 
   useEffect(() => {
-    if (user) {
-      loadData();
+    let isCancelled = false;
+
+    setTasks([]);
+    setLabels([]);
+    setSelectedTask(null);
+    setIsDetailModalOpen(false);
+    setComments([]);
+    setErrorMessage(null);
+
+    if (!user) {
+      setIsTasksLoading(false);
+      return;
     }
-  }, [user, loadData]);
+
+    setIsTasksLoading(true);
+    Promise.all([
+      fetchTasks(client),
+      fetchLabels(client).catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error
+              ? `Failed to load labels: ${err.message}`
+              : "Failed to load labels",
+          );
+        }
+        return [] as Label[];
+      }),
+      fetchEffectiveTimedPlanType(client).catch(() =>
+        getCachedEffectiveTimedPlanType(),
+      ),
+    ])
+      .then(([allTasks, allLabels, effectiveType]) => {
+        if (!isCancelled) {
+          setTasks(allTasks);
+          setLabels(allLabels);
+          setEffectiveTimedPlanType(effectiveType);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error ? err.message : "Failed to load data",
+          );
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsTasksLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [userId, client]);
 
   const selectedTaskId = selectedTask?.id;
   useEffect(() => {
-    if (!selectedTaskId) {
+    if (!selectedTaskId || !userId) {
       setComments([]);
       return;
     }
@@ -154,7 +216,7 @@ export function CrasApp({
     return () => {
       isCancelled = true;
     };
-  }, [client, selectedTaskId]);
+  }, [client, selectedTaskId, userId]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));

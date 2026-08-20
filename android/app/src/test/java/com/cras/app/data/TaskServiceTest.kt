@@ -214,7 +214,61 @@ class TaskServiceTest {
                 )
             }
         }
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.createTask(
+                    session = testSession,
+                    params = CreateTaskParams(
+                        title = "Mixed-case duplicate label task",
+                        labels = listOf(
+                            "22222222-2222-2222-2222-222222222222",
+                            "22222222-2222-2222-2222-222222222222".uppercase()
+                        )
+                    )
+                )
+            }
+        }
         assertEquals(0, mockWebServer.requestCount)
+    }
+
+    @Test
+    fun `createTask normalizes uppercase label UUIDs to lowercase`() = runTest {
+        val createdJson = """
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440011",
+                "title": "Uppercase label task",
+                "description": null,
+                "priority": 4,
+                "plan": null,
+                "labels": ["22222222-2222-2222-2222-222222222222"],
+                "parentId": null,
+                "completedAt": null,
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T00:00:00Z",
+                "version": 1
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(createdJson)
+        )
+
+        val task = taskService.createTask(
+            session = testSession,
+            params = CreateTaskParams(
+                title = "Uppercase label task",
+                labels = listOf("22222222-2222-2222-2222-222222222222".uppercase())
+            )
+        )
+
+        assertNotNull(task)
+        val request = mockWebServer.takeRequest()
+        val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        val labelsArray = body["labels"]
+        assertEquals("[\"22222222-2222-2222-2222-222222222222\"]", labelsArray.toString())
     }
 
     @Test
@@ -311,6 +365,46 @@ class TaskServiceTest {
         val body = request.body.readUtf8()
         assertEquals("/rest/v1/rpc/update_task", request.path)
         assertTrue(body.contains("\"clear_plan\":true"))
+    }
+
+    @Test
+    fun `updateTask with clearDescription sends clear_description in RPC payload`() = runTest {
+        val updatedJson = """
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440011",
+                "title": "Updated task",
+                "description": null,
+                "priority": 4,
+                "plan": null,
+                "labels": [],
+                "parentId": null,
+                "completedAt": null,
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T00:10:00Z",
+                "version": 2
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(updatedJson)
+        )
+
+        val task = taskService.updateTask(
+            session = testSession,
+            params = UpdateTaskParams(
+                id = "550e8400-e29b-41d4-a716-446655440011",
+                clearDescription = true
+            )
+        )
+
+        assertNotNull(task)
+        val request = mockWebServer.takeRequest()
+        val body = request.body.readUtf8()
+        assertEquals("/rest/v1/rpc/update_task", request.path)
+        assertTrue(body.contains("\"clear_description\":true"))
     }
 
     @Test
@@ -414,7 +508,62 @@ class TaskServiceTest {
             }
         }
 
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.updateTask(
+                    session = testSession,
+                    params = UpdateTaskParams(
+                        id = "550e8400-e29b-41d4-a716-446655440011",
+                        labels = listOf(
+                            "22222222-2222-2222-2222-222222222222",
+                            "22222222-2222-2222-2222-222222222222".uppercase()
+                        )
+                    )
+                )
+            }
+        }
+
         assertEquals(0, mockWebServer.requestCount)
+    }
+
+    @Test
+    fun `updateTask normalizes uppercase label UUIDs to lowercase`() = runTest {
+        val updatedJson = """
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440011",
+                "title": "Labeled task",
+                "description": null,
+                "priority": 4,
+                "plan": null,
+                "labels": ["22222222-2222-2222-2222-222222222222"],
+                "parentId": null,
+                "completedAt": null,
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T00:10:00Z",
+                "version": 2
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(updatedJson)
+        )
+
+        val task = taskService.updateTask(
+            session = testSession,
+            params = UpdateTaskParams(
+                id = "550e8400-e29b-41d4-a716-446655440011",
+                labels = listOf("22222222-2222-2222-2222-222222222222".uppercase())
+            )
+        )
+
+        assertNotNull(task)
+        val request = mockWebServer.takeRequest()
+        val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        val labelsArray = body["labels"]
+        assertEquals("[\"22222222-2222-2222-2222-222222222222\"]", labelsArray.toString())
     }
 
     @Test

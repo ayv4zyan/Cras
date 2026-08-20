@@ -2,6 +2,8 @@
 
 DROP FUNCTION IF EXISTS api.update_task(UUID, TEXT, TEXT, INTEGER, JSONB, UUID, INTEGER);
 DROP FUNCTION IF EXISTS api.update_task(UUID, TEXT, TEXT, INTEGER, JSONB, UUID, INTEGER, UUID[]);
+DROP FUNCTION IF EXISTS api.update_task(UUID, TEXT, TEXT, INTEGER, JSONB, UUID, INTEGER, BOOLEAN);
+DROP FUNCTION IF EXISTS api.update_task(UUID, TEXT, TEXT, INTEGER, JSONB, UUID, INTEGER, UUID[], BOOLEAN);
 
 CREATE OR REPLACE FUNCTION api.update_task(
     id UUID,
@@ -57,17 +59,33 @@ BEGIN
         IF jsonb_typeof(update_task.plan) <> 'object' THEN
             RAISE EXCEPTION 'Invalid plan format: expected JSON object';
         END IF;
-        IF update_task.plan ? 'type' THEN
+        IF update_task.plan ? 'type' AND jsonb_typeof(update_task.plan->'type') <> 'null' THEN
             IF update_task.plan->>'type' NOT IN ('floating', 'instant') THEN
                 RAISE EXCEPTION 'Invalid plan type: %', update_task.plan->>'type';
             END IF;
-            IF update_task.plan->>'type' = 'floating' AND (NOT (update_task.plan ? 'date') OR NOT (update_task.plan ? 'time')) THEN
-                RAISE EXCEPTION 'Floating plan requires date and time';
+            IF update_task.plan->>'type' = 'floating' THEN
+                IF NOT (update_task.plan ? 'date') OR NOT (update_task.plan ? 'time') THEN
+                    RAISE EXCEPTION 'Floating plan requires date and time';
+                END IF;
+                IF jsonb_typeof(update_task.plan->'date') <> 'string' OR NOT ((update_task.plan->>'date') ~ '^\d{4}-\d{2}-\d{2}$') THEN
+                    RAISE EXCEPTION 'Floating plan date must match YYYY-MM-DD format';
+                END IF;
+                IF jsonb_typeof(update_task.plan->'time') <> 'string' OR NOT ((update_task.plan->>'time') ~ '^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$') THEN
+                    RAISE EXCEPTION 'Floating plan time must match HH:MM or HH:MM:SS format';
+                END IF;
+            ELSIF update_task.plan->>'type' = 'instant' THEN
+                IF NOT (update_task.plan ? 'at') THEN
+                    RAISE EXCEPTION 'Instant plan requires at';
+                END IF;
+                IF jsonb_typeof(update_task.plan->'at') <> 'string' OR NOT ((update_task.plan->>'at') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$') THEN
+                    RAISE EXCEPTION 'Instant plan at must match ISO date-time format';
+                END IF;
             END IF;
-            IF update_task.plan->>'type' = 'instant' AND NOT (update_task.plan ? 'at') THEN
-                RAISE EXCEPTION 'Instant plan requires at';
+        ELSIF (update_task.plan ? 'date') THEN
+            IF jsonb_typeof(update_task.plan->'date') <> 'string' OR NOT ((update_task.plan->>'date') ~ '^\d{4}-\d{2}-\d{2}$') THEN
+                RAISE EXCEPTION 'Date-only plan date must match YYYY-MM-DD format';
             END IF;
-        ELSIF NOT (update_task.plan ? 'date') THEN
+        ELSE
             RAISE EXCEPTION 'Plan must specify date or type';
         END IF;
     END IF;

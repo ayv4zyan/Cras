@@ -46,7 +46,7 @@ class SupabaseCommentService(
             .addQueryParameter("select", "*")
 
         if (taskId != null) {
-            urlBuilder.addQueryParameter("taskId", "eq.$taskId")
+            urlBuilder.addQueryParameter("task_id", "eq.$taskId")
         }
 
         val endpoint = urlBuilder.build().toString()

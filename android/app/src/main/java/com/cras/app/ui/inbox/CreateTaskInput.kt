@@ -80,7 +80,7 @@ fun CreateTaskInput(
     var selectedTimedType by remember { mutableStateOf<TimedPlanType?>(null) }
     var isTypeMenuExpanded by remember { mutableStateOf(false) }
 
-    val todayDate = remember { getDeviceLocalDate() }
+    val todayDate = remember(defaultDate, isExpanded) { defaultDate ?: getDeviceLocalDate() }
     val tomorrowDate = remember(todayDate) {
         try {
             LocalDate.parse(todayDate).plusDays(1).toString()

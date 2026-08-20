@@ -121,17 +121,7 @@ export function TodayView({
                 <div
                   key={task.id}
                   role="listitem"
-                  tabIndex={0}
-                  onClick={() => onSelectTask(task)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      if (e.target === e.currentTarget) {
-                        e.preventDefault();
-                        onSelectTask(task);
-                      }
-                    }
-                  }}
-                  className={`group relative flex items-start justify-between p-3.5 rounded-lg border bg-card text-card-foreground shadow-xs transition-all hover:border-border cursor-pointer focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${
+                  className={`group relative flex items-start justify-between p-3.5 rounded-lg border bg-card text-card-foreground shadow-xs transition-all hover:border-border ${
                     overdue
                       ? "border-amber-500/30 bg-amber-500/5 hover:bg-amber-500/10"
                       : "border-border/60 hover:bg-secondary/40"
@@ -150,7 +140,12 @@ export function TodayView({
                       <Circle className="h-4 w-4" />
                     </button>
 
-                    <div className="space-y-1 min-w-0 flex-1">
+                    <button
+                      type="button"
+                      onClick={() => onSelectTask(task)}
+                      aria-label={`Select task ${task.title}`}
+                      className="space-y-1 min-w-0 flex-1 text-left bg-transparent border-0 p-0 focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring rounded-xs cursor-pointer"
+                    >
                       <div className="flex items-center space-x-2">
                         <p className="text-sm font-medium leading-snug tracking-tight text-foreground truncate">
                           {task.title}
@@ -209,7 +204,7 @@ export function TodayView({
                           labels={labels}
                         />
                       </div>
-                    </div>
+                    </button>
                   </div>
                 </div>
               );

@@ -96,17 +96,7 @@ export function UpcomingView({
                       <div
                         key={task.id}
                         role="listitem"
-                        tabIndex={0}
-                        onClick={() => onSelectTask(task)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            if (e.target === e.currentTarget) {
-                              e.preventDefault();
-                              onSelectTask(task);
-                            }
-                          }
-                        }}
-                        className="group flex items-start justify-between p-3 rounded-md bg-card border border-red-500/20 text-card-foreground shadow-xs hover:border-red-500/40 cursor-pointer transition-all focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                        className="group flex items-start justify-between p-3 rounded-md bg-card border border-red-500/20 text-card-foreground shadow-xs hover:border-red-500/40 transition-all"
                       >
                         <div className="flex items-start space-x-3 min-w-0 flex-1 mr-2">
                           <button
@@ -121,7 +111,12 @@ export function UpcomingView({
                             <Circle className="h-4 w-4" />
                           </button>
 
-                          <div className="space-y-1 min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => onSelectTask(task)}
+                            aria-label={`Select task ${task.title}`}
+                            className="space-y-1 min-w-0 flex-1 text-left bg-transparent border-0 p-0 focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring rounded-xs cursor-pointer"
+                          >
                             <p className="text-sm font-medium leading-snug text-foreground truncate">
                               {task.title}
                             </p>
@@ -157,7 +152,7 @@ export function UpcomingView({
                                 labels={labels}
                               />
                             </div>
-                          </div>
+                          </button>
                         </div>
                       </div>
                     );
@@ -195,17 +190,7 @@ export function UpcomingView({
                       <div
                         key={task.id}
                         role="listitem"
-                        tabIndex={0}
-                        onClick={() => onSelectTask(task)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            if (e.target === e.currentTarget) {
-                              e.preventDefault();
-                              onSelectTask(task);
-                            }
-                          }
-                        }}
-                        className="group flex items-start justify-between p-3.5 rounded-lg border border-border/60 bg-card text-card-foreground shadow-xs hover:bg-secondary/40 hover:border-border cursor-pointer transition-all focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                        className="group flex items-start justify-between p-3.5 rounded-lg border border-border/60 bg-card text-card-foreground shadow-xs hover:bg-secondary/40 hover:border-border transition-all"
                       >
                         <div className="flex items-start space-x-3 min-w-0 flex-1 mr-3">
                           <button
@@ -220,7 +205,12 @@ export function UpcomingView({
                             <Circle className="h-4 w-4" />
                           </button>
 
-                          <div className="space-y-1 min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => onSelectTask(task)}
+                            aria-label={`Select task ${task.title}`}
+                            className="space-y-1 min-w-0 flex-1 text-left bg-transparent border-0 p-0 focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring rounded-xs cursor-pointer"
+                          >
                             <p className="text-sm font-medium leading-snug text-foreground truncate">
                               {task.title}
                             </p>
@@ -264,7 +254,7 @@ export function UpcomingView({
                                 labels={labels}
                               />
                             </div>
-                          </div>
+                          </button>
                         </div>
                       </div>
                     );

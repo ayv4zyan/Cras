@@ -216,5 +216,48 @@ describe("Settings & Deployment Configuration Seam", () => {
       });
       expect(getCachedEffectiveTimedPlanType()).toBe("instant");
     });
+
+    it("clears cached override when updateOperatorTimedPlanType(client, null) succeeds but refresh fails", async () => {
+      setCachedEffectiveTimedPlanType("floating");
+      expect(getCachedEffectiveTimedPlanType()).toBe("floating");
+
+      const mockUpsert = vi.fn().mockResolvedValue({ error: null });
+      const mockSettingsSelect = vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: null,
+          error: { message: "Network error", code: "PGRST000" },
+        }),
+      });
+      const mockDeployConfigSelect = vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: null,
+          error: { message: "Network error", code: "PGRST000" },
+        }),
+      });
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === "settings") {
+          return {
+            upsert: mockUpsert,
+            select: mockSettingsSelect,
+          };
+        }
+        if (table === "deployment_config") {
+          return { select: mockDeployConfigSelect };
+        }
+        return {};
+      });
+
+      const mockClient = {
+        from: mockFrom,
+      } as unknown as SupabaseClient;
+
+      await updateOperatorTimedPlanType(mockClient, null);
+
+      expect(mockUpsert).toHaveBeenCalledWith({
+        default_timed_plan_type: null,
+      });
+      expect(getCachedEffectiveTimedPlanType()).toBe("instant");
+    });
   });
 });

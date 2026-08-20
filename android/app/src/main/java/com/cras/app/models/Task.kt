@@ -121,7 +121,12 @@ object PlanSerializer : KSerializer<Plan> {
                 Plan.Instant(at = at)
             }
             typePrimitive == null -> {
-                val unknownKeys = element.keys - allowedDateOnlyKeys
+                val hasExplicitType = element.containsKey("type")
+                if (hasExplicitType && element["type"] !is JsonNull) {
+                    throw SerializationException("Unknown or invalid plan type: ${element["type"]}")
+                }
+                val allowedKeys = if (hasExplicitType) setOf("date", "type") else allowedDateOnlyKeys
+                val unknownKeys = element.keys - allowedKeys
                 if (unknownKeys.isNotEmpty()) {
                     throw SerializationException("Date-only plan contains unexpected keys: $unknownKeys")
                 }

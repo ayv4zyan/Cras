@@ -158,4 +158,89 @@ describe("Web Client Seam - App Surface", () => {
       expect(screen.getByText(/no completed tasks yet/i)).toBeInTheDocument();
     });
   });
+
+  it("resets task state and selection on account switch and sign out", async () => {
+    let authCallback: ((event: string, session: Session | null) => void) | null = null;
+    const userA: User = {
+      id: "operator-a-uuid",
+      email: "alice@example.com",
+    } as User;
+    const sessionA = { user: userA, access_token: "token-a" } as Session;
+
+    const mockTasksA = [
+      {
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        title: "Alice's Secret Task",
+        description: "Alice notes",
+        priority: 4,
+        plan: null,
+        labels: [],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-19T00:00:00Z",
+        updatedAt: "2026-08-19T00:00:00Z",
+        version: 1,
+      },
+    ];
+
+    const mockClient = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({
+          data: { session: sessionA },
+          error: null,
+        }),
+        onAuthStateChange: vi.fn().mockImplementation((cb) => {
+          authCallback = cb;
+          return { data: { subscription: { unsubscribe: vi.fn() } } };
+        }),
+        signInWithOAuth: vi.fn(),
+        signOut: vi.fn(),
+      },
+      schema: vi.fn().mockReturnValue({
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === "tasks") {
+            return {
+              select: vi.fn().mockResolvedValue({ data: mockTasksA, error: null }),
+            };
+          }
+          return {
+            select: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
+        }),
+      }),
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "comments") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          }),
+        };
+      }),
+    } as unknown as SupabaseClient;
+
+    render(
+      <AuthProvider client={mockClient}>
+        <CrasApp client={mockClient} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Alice's Secret Task")).toBeInTheDocument();
+    });
+
+    // Sign out via auth callback
+    act(() => {
+      authCallback?.("SIGNED_OUT", null);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Alice's Secret Task")).not.toBeInTheDocument();
+    });
+  });
 });

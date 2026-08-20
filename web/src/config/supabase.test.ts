@@ -14,14 +14,14 @@ describe("Supabase Public Configuration & Client Seam", () => {
     expect(Object.keys(config)).toEqual(["url", "publishableKey"]);
   });
 
-  it("supports SUPABASE_ prefixed keys as fallback", () => {
+  it("supports VITE_SUPABASE_PUBLISHABLE_KEY as fallback", () => {
     const config = getPublicSupabaseConfig({
-      SUPABASE_URL: "https://legacy-project.supabase.co",
-      SUPABASE_ANON_KEY: "sb_legacy_key_123",
+      VITE_SUPABASE_URL: "https://example-project.supabase.co",
+      VITE_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_key_456",
     });
 
-    expect(config.url).toBe("https://legacy-project.supabase.co");
-    expect(config.publishableKey).toBe("sb_legacy_key_123");
+    expect(config.url).toBe("https://example-project.supabase.co");
+    expect(config.publishableKey).toBe("sb_publishable_key_456");
   });
 
   it("falls back to default local Supabase credentials when env is empty", () => {

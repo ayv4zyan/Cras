@@ -100,7 +100,7 @@ describe("TodayView Component Seam", () => {
     expect(handleComplete).toHaveBeenCalledWith(todayTask);
   });
 
-  it("calls onSelectTask when task item is clicked or activated with Enter/Space", () => {
+  it("calls onSelectTask when task selection button is clicked", () => {
     const handleSelect = vi.fn();
 
     render(
@@ -114,16 +114,10 @@ describe("TodayView Component Seam", () => {
       />,
     );
 
-    const item = screen.getByRole("listitem");
-    fireEvent.click(item);
-    expect(handleSelect).toHaveBeenCalledWith(todayTask);
-
-    handleSelect.mockClear();
-    fireEvent.keyDown(item, { key: "Enter" });
-    expect(handleSelect).toHaveBeenCalledWith(todayTask);
-
-    handleSelect.mockClear();
-    fireEvent.keyDown(item, { key: " " });
+    const selectBtn = screen.getByRole("button", {
+      name: `Select task ${todayTask.title}`,
+    });
+    fireEvent.click(selectBtn);
     expect(handleSelect).toHaveBeenCalledWith(todayTask);
   });
 

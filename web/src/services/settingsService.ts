@@ -185,10 +185,7 @@ export async function updateOperatorTimedPlanType(
   if (type) {
     setCachedEffectiveTimedPlanType(type);
   } else {
-    try {
-      await fetchEffectiveTimedPlanType(client);
-    } catch {
-      clearCachedEffectiveTimedPlanType();
-    }
+    clearCachedEffectiveTimedPlanType();
+    await fetchEffectiveTimedPlanType(client);
   }
 }

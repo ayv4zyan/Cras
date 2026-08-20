@@ -78,7 +78,7 @@ fun LabelManagerDialog(
     var isUpdating by remember { mutableStateOf(false) }
     var editError by remember { mutableStateOf<String?>(null) }
 
-    var deletingId by remember { mutableStateOf<String?>(null) }
+    var deletingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var deleteErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
     Dialog(
@@ -307,7 +307,7 @@ fun LabelManagerDialog(
                     ) {
                         labels.forEach { label ->
                             val isEditingThis = editingId == label.id
-                            val isDeletingThis = deletingId == label.id
+                            val isDeletingThis = deletingIds.contains(label.id)
 
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
@@ -481,16 +481,16 @@ fun LabelManagerDialog(
 
                                             IconButton(
                                                 onClick = {
-                                                    deletingId = label.id
+                                                    deletingIds = deletingIds + label.id
                                                     deleteErrors = deleteErrors - label.id
                                                     onDeleteLabel(
                                                         label.id,
                                                         {
-                                                            deletingId = null
+                                                            deletingIds = deletingIds - label.id
                                                             deleteErrors = deleteErrors - label.id
                                                         },
                                                         { err ->
-                                                            deletingId = null
+                                                            deletingIds = deletingIds - label.id
                                                             deleteErrors = deleteErrors + (label.id to err)
                                                         }
                                                     )

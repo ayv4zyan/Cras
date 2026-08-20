@@ -116,7 +116,7 @@ describe("UpcomingView Component Seam", () => {
     expect(handleComplete).toHaveBeenCalledWith(tomorrowTask);
   });
 
-  it("calls onSelectTask when task item is clicked or activated with Enter/Space", () => {
+  it("calls onSelectTask when task selection button is clicked", () => {
     const handleSelect = vi.fn();
 
     render(
@@ -129,16 +129,10 @@ describe("UpcomingView Component Seam", () => {
       />,
     );
 
-    const item = screen.getByRole("listitem");
-    fireEvent.click(item);
-    expect(handleSelect).toHaveBeenCalledWith(tomorrowTask);
-
-    handleSelect.mockClear();
-    fireEvent.keyDown(item, { key: "Enter" });
-    expect(handleSelect).toHaveBeenCalledWith(tomorrowTask);
-
-    handleSelect.mockClear();
-    fireEvent.keyDown(item, { key: " " });
+    const selectBtn = screen.getByRole("button", {
+      name: `Select task ${tomorrowTask.title}`,
+    });
+    fireEvent.click(selectBtn);
     expect(handleSelect).toHaveBeenCalledWith(tomorrowTask);
   });
 

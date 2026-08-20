@@ -7,9 +7,13 @@ import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
 import com.cras.app.data.DeploymentConfig
+import com.cras.app.data.InvalidationPayload
 import com.cras.app.data.LabelService
 import com.cras.app.data.OperatorSettings
+import com.cras.app.data.RealtimeService
+import com.cras.app.data.RealtimeSubscription
 import com.cras.app.data.SettingsService
+import com.cras.app.data.TaskConflictException
 import com.cras.app.data.TaskService
 import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
@@ -145,10 +149,21 @@ class InboxViewModelTest {
         val tasksInDb = mutableListOf<Task>()
         var shouldFail = false
         var failureMessage = "Network error"
+        var onFetchTaskById: (suspend (String) -> Unit)? = null
+        var onFetchTasks: (suspend () -> Unit)? = null
 
         override suspend fun fetchTasks(session: OperatorSession): List<Task> {
             if (shouldFail) throw RuntimeException(failureMessage)
-            return tasksInDb.toList()
+            val tasks = tasksInDb.toList()
+            onFetchTasks?.invoke()
+            return tasks
+        }
+
+        override suspend fun fetchTaskById(session: OperatorSession, taskId: String): Task? {
+            if (shouldFail) throw RuntimeException(failureMessage)
+            val task = tasksInDb.find { it.id == taskId }
+            onFetchTaskById?.invoke(taskId)
+            return task
         }
 
         override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
@@ -186,7 +201,12 @@ class InboxViewModelTest {
                 throw RuntimeException("Completed tasks cannot be edited. Uncomplete first.")
             }
             if (params.expectedVersion != null && existing.version != params.expectedVersion) {
-                throw RuntimeException("Task version conflict: expected ${params.expectedVersion}, found ${existing.version}")
+                throw TaskConflictException(
+                    message = "Task version conflict: expected ${params.expectedVersion}, found ${existing.version}",
+                    code = "P0003",
+                    expectedVersion = params.expectedVersion,
+                    foundVersion = existing.version
+                )
             }
             val updated = existing.copy(
                 title = params.title ?: existing.title,
@@ -205,12 +225,21 @@ class InboxViewModelTest {
         override suspend fun completeTask(
             session: OperatorSession,
             taskId: String,
+            expectedVersion: Int,
             completedAt: String?
         ): Task {
             if (shouldFail) throw RuntimeException(failureMessage)
             val index = tasksInDb.indexOfFirst { it.id == taskId }
             if (index == -1) throw RuntimeException("Task not found")
             val existing = tasksInDb[index]
+            if (existing.version != expectedVersion) {
+                throw TaskConflictException(
+                    message = "Task version conflict: expected $expectedVersion, found ${existing.version}",
+                    code = "P0003",
+                    expectedVersion = expectedVersion,
+                    foundVersion = existing.version
+                )
+            }
             val completed = existing.copy(
                 completedAt = completedAt ?: "2026-08-19T10:00:00Z",
                 updatedAt = "2026-08-19T10:00:00Z",
@@ -220,11 +249,23 @@ class InboxViewModelTest {
             return completed
         }
 
-        override suspend fun uncompleteTask(session: OperatorSession, taskId: String): Task {
+        override suspend fun uncompleteTask(
+            session: OperatorSession,
+            taskId: String,
+            expectedVersion: Int
+        ): Task {
             if (shouldFail) throw RuntimeException(failureMessage)
             val index = tasksInDb.indexOfFirst { it.id == taskId }
             if (index == -1) throw RuntimeException("Task not found")
             val existing = tasksInDb[index]
+            if (existing.version != expectedVersion) {
+                throw TaskConflictException(
+                    message = "Task version conflict: expected $expectedVersion, found ${existing.version}",
+                    code = "P0003",
+                    expectedVersion = expectedVersion,
+                    foundVersion = existing.version
+                )
+            }
             val uncompleted = existing.copy(
                 completedAt = null,
                 updatedAt = "2026-08-19T10:05:00Z",
@@ -232,6 +273,38 @@ class InboxViewModelTest {
             )
             tasksInDb[index] = uncompleted
             return uncompleted
+        }
+    }
+
+    private class FakeRealtimeService : RealtimeService {
+        var onInvalidateCallback: ((InvalidationPayload) -> Unit)? = null
+        var onReconnectCallback: (() -> Unit)? = null
+        var isSubscribed = false
+
+        override fun subscribeToInvalidations(
+            session: OperatorSession,
+            onInvalidate: (InvalidationPayload) -> Unit,
+            onReconnect: (() -> Unit)?
+        ): RealtimeSubscription {
+            onInvalidateCallback = onInvalidate
+            onReconnectCallback = onReconnect
+            isSubscribed = true
+
+            return object : RealtimeSubscription {
+                override fun unsubscribe() {
+                    isSubscribed = false
+                    onInvalidateCallback = null
+                    onReconnectCallback = null
+                }
+            }
+        }
+
+        fun emitInvalidate(payload: InvalidationPayload) {
+            onInvalidateCallback?.invoke(payload)
+        }
+
+        fun triggerReconnect() {
+            onReconnectCallback?.invoke()
         }
     }
 
@@ -284,6 +357,32 @@ class InboxViewModelTest {
         val auth = viewModel.authState.value
         assertTrue(auth is AuthUiState.Authenticated)
         assertEquals("alice@cras.app", (auth as AuthUiState.Authenticated).session.email)
+    }
+
+    @Test
+    fun `signOut cancels load job and unsubscribes realtime service`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+        assertTrue(realtimeService.isSubscribed)
+
+        viewModel.signOut()
+        advanceUntilIdle()
+        assertFalse(realtimeService.isSubscribed)
+        assertTrue(viewModel.authState.value is AuthUiState.Unauthenticated)
     }
 
     @Test
@@ -406,11 +505,11 @@ class InboxViewModelTest {
         val taskTwo = inboxTasks.find { it.title == "Task Two" }!!
 
         // Complete Task One at 10:00
-        viewModel.completeTask(taskOne.id, completedAt = "2026-08-19T10:00:00Z")
+        viewModel.completeTask(taskOne.id, expectedVersion = taskOne.version, completedAt = "2026-08-19T10:00:00Z")
         advanceUntilIdle()
 
         // Complete Task Two at 11:00
-        viewModel.completeTask(taskTwo.id, completedAt = "2026-08-19T11:00:00Z")
+        viewModel.completeTask(taskTwo.id, expectedVersion = taskTwo.version, completedAt = "2026-08-19T11:00:00Z")
         advanceUntilIdle()
 
         // Inbox should now be empty
@@ -425,7 +524,7 @@ class InboxViewModelTest {
         assertEquals("Task One", completedTasks[1].title)
 
         // Uncomplete Task One
-        viewModel.uncompleteTask(taskOne.id)
+        viewModel.uncompleteTask(taskOne.id, expectedVersion = 2)
         advanceUntilIdle()
 
         val inboxAfterUncomplete = (viewModel.inboxState.value as InboxUiState.Success).tasks
@@ -435,6 +534,35 @@ class InboxViewModelTest {
         val completedAfterUncomplete = (viewModel.completedState.value as CompletedUiState.Success).tasks
         assertEquals(1, completedAfterUncomplete.size)
         assertEquals("Task Two", completedAfterUncomplete[0].title)
+    }
+
+    @Test
+    fun `completeTask and uncompleteTask fail when task version cannot be resolved`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        var completeError: String? = null
+        viewModel.completeTask(
+            taskId = "non-existent-task-id",
+            onError = { completeError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Task state is unavailable. Refresh and try again.", completeError)
+
+        var uncompleteError: String? = null
+        viewModel.uncompleteTask(
+            taskId = "non-existent-task-id",
+            onError = { uncompleteError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Task state is unavailable. Refresh and try again.", uncompleteError)
     }
 
     @Test
@@ -486,7 +614,7 @@ class InboxViewModelTest {
         assertEquals(2, viewModel.selectedTask.value?.version)
 
         // 2. Complete task
-        viewModel.completeTask(updatedTask.id)
+        viewModel.completeTask(updatedTask.id, expectedVersion = updatedTask.version)
         advanceUntilIdle()
 
         // 3. Attempt update on completed task - must be rejected
@@ -504,7 +632,7 @@ class InboxViewModelTest {
         assertTrue(completedUpdateError!!.contains("Completed tasks cannot be edited"))
 
         // 4. Stale version conflict recovery
-        viewModel.uncompleteTask(updatedTask.id)
+        viewModel.uncompleteTask(updatedTask.id, expectedVersion = 3)
         advanceUntilIdle()
 
         val uncompletedTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
@@ -837,7 +965,7 @@ class InboxViewModelTest {
         assertNotNull(createdSubtask)
 
         // Complete subtask
-        viewModel.completeTask(createdSubtask!!.id)
+        viewModel.completeTask(createdSubtask!!.id, expectedVersion = createdSubtask!!.version)
         advanceUntilIdle()
 
         // Parent task should still be selected
@@ -845,7 +973,7 @@ class InboxViewModelTest {
         assertEquals("Parent Task", viewModel.selectedTask.value?.title)
 
         // Uncomplete subtask
-        viewModel.uncompleteTask(createdSubtask!!.id)
+        viewModel.uncompleteTask(createdSubtask!!.id, expectedVersion = 2)
         advanceUntilIdle()
 
         // Parent task should still be selected
@@ -854,44 +982,332 @@ class InboxViewModelTest {
     }
 
     @Test
-    fun `comment fetch failure preserves existing comments and sets commentsError`() = runTest {
+    fun `realtime task invalidation applies updates without full reload`() = runTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
         val labelService = FakeLabelService()
         val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
         val session = OperatorSession("op-1", "alice@cras.app", "token-1")
         authService.sessionFlow.value = session
 
-        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
         advanceUntilIdle()
 
-        viewModel.createTask("Task with comments")
+        viewModel.createTask("Task A")
+        advanceUntilIdle()
+
+        val taskA = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+
+        // Remote client (e.g. Web) updates Task A in DB to version 2
+        val remoteUpdatedTask = taskA.copy(title = "Task A Updated by Web", version = 2)
+        val idx = taskService.tasksInDb.indexOfFirst { it.id == taskA.id }
+        taskService.tasksInDb[idx] = remoteUpdatedTask
+
+        // Realtime event arrives
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = taskA.id,
+                operation = "updated"
+            )
+        )
+        advanceUntilIdle()
+
+        val updatedLocalTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals("Task A Updated by Web", updatedLocalTask.title)
+        assertEquals(2, updatedLocalTask.version)
+    }
+
+    @Test
+    fun `realtime task invalidation inserts absent task when updated from another session`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+
+        // Web creates a task
+        val webTask = Task(
+            id = UUID.randomUUID().toString(),
+            title = "Task from Web",
+            description = null,
+            priority = 3,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-19T00:00:00Z",
+            updatedAt = "2026-08-19T00:00:00Z",
+            version = 1
+        )
+        taskService.tasksInDb.add(webTask)
+
+        // Broadcast arrives
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = webTask.id,
+                operation = "created"
+            )
+        )
+        advanceUntilIdle()
+
+        val state = viewModel.inboxState.value
+        assertTrue(state is InboxUiState.Success)
+        assertEquals(1, (state as InboxUiState.Success).tasks.size)
+        assertEquals("Task from Web", state.tasks[0].title)
+    }
+
+    @Test
+    fun `realtime task invalidation discards stale version without overwriting newer state`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        viewModel.createTask("Newer Task")
+        advanceUntilIdle()
+
+        val currentTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        // Local state is at version 3
+        val localV3 = currentTask.copy(title = "Local Newer Title", version = 3)
+        viewModel.applyTaskUpdate(localV3)
+
+        // An older version (version 2) is fetched from DB
+        val staleV2 = currentTask.copy(title = "Stale Remote Title", version = 2)
+        taskService.tasksInDb[0] = staleV2
+
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = currentTask.id,
+                operation = "updated"
+            )
+        )
+        advanceUntilIdle()
+
+        // Local state must retain version 3
+        val taskAfter = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        assertEquals("Local Newer Title", taskAfter.title)
+        assertEquals(3, taskAfter.version)
+    }
+
+    @Test
+    fun `realtime task delete invalidation removes task from state and clears selectedTask`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        viewModel.createTask("Task to Delete")
         advanceUntilIdle()
 
         val task = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
-        viewModel.createComment(task.id, "Existing comment")
+        viewModel.selectTask(task)
+        advanceUntilIdle()
+        assertNotNull(viewModel.selectedTask.value)
+
+        // Remove from db
+        taskService.tasksInDb.removeIf { it.id == task.id }
+
+        // Realtime delete broadcast arrives
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = task.id,
+                operation = "deleted"
+            )
+        )
         advanceUntilIdle()
 
-        assertEquals(1, viewModel.comments.value.size)
-        assertNull(viewModel.commentsError.value)
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+        assertNull(viewModel.selectedTask.value)
+    }
 
-        // Set failure and reload tasks
-        commentService.shouldFail = true
-        commentService.failureMessage = "Supabase 500 error"
-        viewModel.loadTasks()
+    @Test
+    fun `realtime task invalidation serializes update fetch before delete so task remains absent`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
         advanceUntilIdle()
 
-        // Comments should still be preserved
-        assertEquals(1, viewModel.comments.value.size)
-        assertEquals("Supabase 500 error", viewModel.commentsError.value)
-
-        // Recover failure
-        commentService.shouldFail = false
-        viewModel.loadTasks()
+        viewModel.createTask("Task A")
         advanceUntilIdle()
 
-        assertEquals(1, viewModel.comments.value.size)
-        assertNull(viewModel.commentsError.value)
+        val taskA = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        val updatedTaskA = taskA.copy(title = "Task A Updated by Web", version = 2)
+
+        val fetchStarted = CompletableDeferred<Unit>()
+        val allowFetchToComplete = CompletableDeferred<Unit>()
+
+        taskService.onFetchTaskById = { taskId ->
+            if (taskId == taskA.id) {
+                fetchStarted.complete(Unit)
+                allowFetchToComplete.await()
+            }
+        }
+
+        // Remote client prepares update in DB
+        taskService.tasksInDb[0] = updatedTaskA
+
+        // Realtime update event arrives and starts fetching
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = taskA.id,
+                operation = "updated"
+            )
+        )
+
+        // Wait until fetch has started and suspended
+        fetchStarted.await()
+
+        // Remote client now deletes task from DB
+        taskService.tasksInDb.removeIf { it.id == taskA.id }
+
+        // Realtime delete broadcast arrives while update fetch is still in flight
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = taskA.id,
+                operation = "deleted"
+            )
+        )
+
+        // Allow the suspended update fetch to complete
+        allowFetchToComplete.complete(Unit)
+        advanceUntilIdle()
+
+        // Verify task remains absent and was not re-added by the delayed update fetch
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+        assertNull(viewModel.selectedTask.value)
+    }
+
+    @Test
+    fun `realtime label invalidation triggers refetch of labels`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        assertEquals(0, viewModel.labels.value.size)
+
+        // Label added in DB externally
+        val label = Label(id = UUID.randomUUID().toString(), name = "Feature", color = "#3b82f6")
+        labelService.labelsInDb.add(label)
+
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "label",
+                id = label.id,
+                operation = "created"
+            )
+        )
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.labels.value.size)
+        assertEquals("Feature", viewModel.labels.value[0].name)
+    }
+
+    @Test
+    fun `realtime reconnect triggers full canonical reload`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        // During offline period, 2 tasks are created on server
+        val task1 = Task(id = UUID.randomUUID().toString(), title = "Offline Created 1", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+        val task2 = Task(id = UUID.randomUUID().toString(), title = "Offline Created 2", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+        taskService.tasksInDb.addAll(listOf(task1, task2))
+
+        // Trigger reconnect
+        realtimeService.triggerReconnect()
+        advanceUntilIdle()
+
+        val state = viewModel.inboxState.value
+        assertTrue(state is InboxUiState.Success)
+        assertEquals(2, (state as InboxUiState.Success).tasks.size)
     }
 
     @Test
@@ -969,5 +1385,257 @@ class InboxViewModelTest {
 
         assertFalse(viewModel.inboxState.value is InboxUiState.Error)
         assertNull(viewModel.commentsError.value)
+    }
+
+    @Test
+    fun `loadTasks preserves comments when no task is selected and clears comments when selected task is dropped`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val taskId = UUID.randomUUID().toString()
+        val task1 = Task(id = taskId, title = "Task 1", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+        taskService.tasksInDb.add(task1)
+        val commentId = UUID.randomUUID().toString()
+        commentService.commentsInDb.add(Comment(id = commentId, taskId = taskId, content = "General comment", createdAt = "2026-08-19T10:00:00Z"))
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        // When no task is selected, loadTasks should NOT clear freshly loaded comments
+        assertEquals(1, viewModel.comments.value.size)
+        assertEquals(commentId, viewModel.comments.value[0].id)
+        assertNull(viewModel.selectedTask.value)
+
+        // Select task-1
+        viewModel.selectTask(task1)
+        advanceUntilIdle()
+        assertNotNull(viewModel.selectedTask.value)
+
+        // Dropping selection via reconcileFreshTasks when task is deleted
+        viewModel.reconcileFreshTasks(emptyList())
+        advanceUntilIdle()
+
+        assertNull(viewModel.selectedTask.value)
+        assertTrue(viewModel.comments.value.isEmpty())
+    }
+
+    @Test
+    fun `updateTask fails with error when expectedVersion is absent and task is not in allTasks`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        var errorMsg: String? = null
+        var updateCalled = false
+        val customTaskService = object : TaskService by taskService {
+            override suspend fun updateTask(session: OperatorSession, params: UpdateTaskParams): Task {
+                updateCalled = true
+                return taskService.updateTask(session, params)
+            }
+        }
+        val vmWithCustomTaskService = InboxViewModel(authService, customTaskService, labelService, commentService)
+        advanceUntilIdle()
+
+        val nonExistentId = UUID.randomUUID().toString()
+        vmWithCustomTaskService.updateTask(
+            UpdateTaskParams(id = nonExistentId, title = "New title"),
+            onError = { errorMsg = it }
+        )
+        advanceUntilIdle()
+
+        assertEquals("Task state is unavailable. Refresh and try again.", errorMsg)
+        assertFalse(updateCalled)
+    }
+
+    @Test
+    fun `realtime delete invalidation preserves comments when no task is selected or when unrelated task is deleted`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val taskId1 = UUID.randomUUID().toString()
+        val task1 = Task(id = taskId1, title = "Task 1", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+        val taskId2 = UUID.randomUUID().toString()
+        val task2 = Task(id = taskId2, title = "Task 2", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+        taskService.tasksInDb.addAll(listOf(task1, task2))
+
+        val commentId = UUID.randomUUID().toString()
+        commentService.commentsInDb.add(Comment(id = commentId, taskId = taskId1, content = "Comment on Task 1", createdAt = "2026-08-19T10:00:00Z"))
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        // Initially no task selected, comments loaded from initial fetch
+        assertEquals(1, viewModel.comments.value.size)
+        assertNull(viewModel.selectedTask.value)
+
+        // Realtime delete for task2 when no task is selected does not clear comments
+        realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = taskId2, operation = "deleted"))
+        advanceUntilIdle()
+        assertEquals(1, viewModel.comments.value.size)
+
+        // Select task1
+        viewModel.selectTask(task1)
+        advanceUntilIdle()
+        assertEquals(taskId1, viewModel.selectedTask.value?.id)
+
+        // Realtime delete for unrelated task does not clear comments
+        realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = UUID.randomUUID().toString(), operation = "deleted"))
+        advanceUntilIdle()
+        assertEquals(1, viewModel.comments.value.size)
+        assertEquals(taskId1, viewModel.selectedTask.value?.id)
+
+        // Realtime delete for the selected task (taskId1) clears selection and comments
+        realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = taskId1, operation = "deleted"))
+        advanceUntilIdle()
+        assertNull(viewModel.selectedTask.value)
+        assertTrue(viewModel.comments.value.isEmpty())
+    }
+
+    @Test
+    fun `realtime delete invalidation during reload fetch is processed after reload so task remains absent`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        viewModel.createTask("Task A")
+        advanceUntilIdle()
+
+        val taskA = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+
+        val fetchStarted = CompletableDeferred<Unit>()
+        val allowFetchToComplete = CompletableDeferred<Unit>()
+
+        taskService.onFetchTasks = {
+            fetchStarted.complete(Unit)
+            allowFetchToComplete.await()
+        }
+
+        // Trigger canonical reload
+        viewModel.loadTasks()
+
+        // Wait until reload fetch has captured tasks and suspended
+        fetchStarted.await()
+
+        // Remote client deletes task from DB
+        taskService.tasksInDb.removeIf { it.id == taskA.id }
+
+        // Realtime delete broadcast arrives while reload fetch is in flight
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = taskA.id,
+                operation = "deleted"
+            )
+        )
+
+        // Allow suspended reload fetch to complete
+        allowFetchToComplete.complete(Unit)
+        advanceUntilIdle()
+
+        // Verify task remains absent and was not re-added by the delayed reload snapshot
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+        assertNull(viewModel.selectedTask.value)
+    }
+
+    @Test
+    fun `bounded coalescing queue merges invalidations and triggers canonical reload on overflow`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        viewModel.createTask("Task A")
+        advanceUntilIdle()
+
+        val taskA = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        val fetchStarted = CompletableDeferred<Unit>()
+        val allowFetchToComplete = CompletableDeferred<Unit>()
+
+        taskService.onFetchTaskById = { taskId ->
+            if (taskId == taskA.id) {
+                fetchStarted.complete(Unit)
+                allowFetchToComplete.await()
+            }
+        }
+
+        // First invalidation to keep worker busy
+        realtimeService.emitInvalidate(
+            InvalidationPayload(
+                resource = "task",
+                id = taskA.id,
+                operation = "updated"
+            )
+        )
+        fetchStarted.await()
+
+        // Enqueue duplicate invalidations for the same task - these should coalesce
+        val taskIdB = UUID.randomUUID().toString()
+        val taskB = Task(id = taskIdB, title = "Task B", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+        taskService.tasksInDb.add(taskB)
+
+        realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = taskIdB, operation = "updated"))
+        realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = taskIdB, operation = "updated"))
+
+        // Enqueue 70 distinct invalidations to trigger queue overflow and canonical reload
+        for (i in 1..70) {
+            val overflowId = UUID.randomUUID().toString()
+            val overflowTask = Task(id = overflowId, title = "Overflow Task $i", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+            taskService.tasksInDb.add(overflowTask)
+            realtimeService.emitInvalidate(InvalidationPayload(resource = "task", id = overflowId, operation = "created"))
+        }
+
+        // Allow worker to finish first fetch and process the coalesced canonical reload
+        allowFetchToComplete.complete(Unit)
+        advanceUntilIdle()
+
+        // All tasks in DB should now be present due to canonical reload
+        val currentTasks = (viewModel.inboxState.value as InboxUiState.Success).tasks
+        assertEquals(72, currentTasks.size)
     }
 }

@@ -808,4 +808,87 @@ class InboxViewModelTest {
         assertTrue(viewModel.labels.value.isEmpty())
         assertTrue(viewModel.comments.value.isEmpty())
     }
+
+    @Test
+    fun `completing or uncompleting a subtask does not change selected parent task`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        viewModel.createTask("Parent Task")
+        advanceUntilIdle()
+
+        val parentTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        viewModel.selectTask(parentTask)
+        advanceUntilIdle()
+        assertEquals(parentTask.id, viewModel.selectedTask.value?.id)
+
+        var createdSubtask: Task? = null
+        viewModel.createSubtask(parentTask.id, "Subtask 1", onSuccess = { createdSubtask = it })
+        advanceUntilIdle()
+        assertNotNull(createdSubtask)
+
+        // Complete subtask
+        viewModel.completeTask(createdSubtask!!.id)
+        advanceUntilIdle()
+
+        // Parent task should still be selected
+        assertEquals(parentTask.id, viewModel.selectedTask.value?.id)
+        assertEquals("Parent Task", viewModel.selectedTask.value?.title)
+
+        // Uncomplete subtask
+        viewModel.uncompleteTask(createdSubtask!!.id)
+        advanceUntilIdle()
+
+        // Parent task should still be selected
+        assertEquals(parentTask.id, viewModel.selectedTask.value?.id)
+        assertEquals("Parent Task", viewModel.selectedTask.value?.title)
+    }
+
+    @Test
+    fun `comment fetch failure preserves existing comments and sets commentsError`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        viewModel.createTask("Task with comments")
+        advanceUntilIdle()
+
+        val task = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        viewModel.createComment(task.id, "Existing comment")
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.comments.value.size)
+        assertNull(viewModel.commentsError.value)
+
+        // Set failure and reload tasks
+        commentService.shouldFail = true
+        commentService.failureMessage = "Supabase 500 error"
+        viewModel.loadTasks()
+        advanceUntilIdle()
+
+        // Comments should still be preserved
+        assertEquals(1, viewModel.comments.value.size)
+        assertEquals("Supabase 500 error", viewModel.commentsError.value)
+
+        // Recover failure
+        commentService.shouldFail = false
+        viewModel.loadTasks()
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.comments.value.size)
+        assertNull(viewModel.commentsError.value)
+    }
 }

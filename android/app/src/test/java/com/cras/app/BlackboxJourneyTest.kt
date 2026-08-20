@@ -318,6 +318,9 @@ class BlackboxJourneyTest {
                             )
                             return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
                         }
+                        else -> {
+                            return MockResponse().setResponseCode(405).setBody("""{"code":"42P01","message":"Method Not Allowed"}""")
+                        }
                     }
                 }
 

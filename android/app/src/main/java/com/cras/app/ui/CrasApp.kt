@@ -242,8 +242,12 @@ fun CrasApp(
 
                     if (selectedTask != null) {
                         val currentTaskId = selectedTask!!.id
-                        val taskComments = comments.filter { it.taskId == currentTaskId }
-                        val taskSubtasks = filterSubtasks(allTasks, currentTaskId)
+                        val taskComments = remember(comments, currentTaskId) {
+                            comments.filter { it.taskId == currentTaskId }
+                        }
+                        val taskSubtasks = remember(allTasks, currentTaskId) {
+                            filterSubtasks(allTasks, currentTaskId)
+                        }
 
                         TaskDetailDialog(
                             task = selectedTask,

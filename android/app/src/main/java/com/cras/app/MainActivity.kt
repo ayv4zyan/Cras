@@ -18,6 +18,7 @@ import com.cras.app.ui.CrasApp
 import com.cras.app.ui.inbox.InboxViewModel
 import com.cras.app.ui.theme.CrasTheme
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 
 class MainActivity : ComponentActivity() {
 
@@ -36,10 +37,11 @@ class MainActivity : ComponentActivity() {
         )
         val prefs = getSharedPreferences("cras_session_prefs", MODE_PRIVATE)
         val sessionStore = SharedPreferencesSessionStore(prefs)
-        val authService = SupabaseAuthService(config, sessionStore)
-        val taskService = SupabaseTaskService(config)
-        val labelService = SupabaseLabelService(config)
-        val commentService = SupabaseCommentService(config)
+        val httpClient = OkHttpClient()
+        val authService = SupabaseAuthService(config, sessionStore, httpClient)
+        val taskService = SupabaseTaskService(config, httpClient)
+        val labelService = SupabaseLabelService(config, httpClient)
+        val commentService = SupabaseCommentService(config, httpClient)
 
         inboxViewModel = InboxViewModel(authService, taskService, labelService, commentService)
         googleAuthManager = GoogleAuthManager(this)

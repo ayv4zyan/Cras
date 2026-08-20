@@ -80,7 +80,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-internal fun formatCompletedAt(isoTimestamp: String): String {
+internal fun formatDateTime(isoTimestamp: String): String {
     return try {
         val instant = try {
             OffsetDateTime.parse(isoTimestamp).toInstant()
@@ -94,6 +94,8 @@ internal fun formatCompletedAt(isoTimestamp: String): String {
         isoTimestamp
     }
 }
+
+internal fun formatCompletedAt(isoTimestamp: String): String = formatDateTime(isoTimestamp)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1103,7 +1105,7 @@ fun TaskDetailDialog(
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = comment.createdAt,
+                                        text = formatDateTime(comment.createdAt),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                                     )

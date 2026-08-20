@@ -102,6 +102,9 @@ class InboxViewModel(
     private val _comments = MutableStateFlow<List<Comment>>(emptyList())
     val comments: StateFlow<List<Comment>> = _comments.asStateFlow()
 
+    private val _commentsError = MutableStateFlow<String?>(null)
+    val commentsError: StateFlow<String?> = _commentsError.asStateFlow()
+
     private val _selectedTask = MutableStateFlow<Task?>(null)
     val selectedTask: StateFlow<Task?> = _selectedTask.asStateFlow()
 
@@ -134,6 +137,7 @@ class InboxViewModel(
                     _effectiveTimedPlanType.value = TimedPlanType.INSTANT
                     _labels.value = emptyList()
                     _comments.value = emptyList()
+                    _commentsError.value = null
                     _selectedTask.value = null
                 }
             }
@@ -207,7 +211,12 @@ class InboxViewModel(
             val commentsResult = runCatching { commentService.fetchComments(session) }
             _allTasks.value = allTasksList
             labelsResult.onSuccess { _labels.value = it }
-            commentsResult.onSuccess { _comments.value = it }
+            commentsResult.onSuccess {
+                _comments.value = it
+                _commentsError.value = null
+            }.onFailure {
+                _commentsError.value = it.message ?: "Failed to fetch comments"
+            }
 
             val now = nowProvider()
             val zoneId = zoneIdProvider()
@@ -467,7 +476,10 @@ class InboxViewModel(
 
         viewModelScope.launch {
             try {
-                _selectedTask.value = mutation(currentAuth.session)
+                val updatedTask = mutation(currentAuth.session)
+                if (_selectedTask.value?.id == updatedTask.id) {
+                    _selectedTask.value = updatedTask
+                }
                 loadTasksInternal(currentAuth.session)
                 onSuccess()
             } catch (e: Exception) {

@@ -92,6 +92,43 @@ class TaskServiceTest {
     }
 
     @Test
+    fun `fetchTaskById sends query filter and returns single task`() = runTest {
+        val tasksJson = """
+            [
+                {
+                    "id": "550e8400-e29b-41d4-a716-446655440010",
+                    "title": "Buy oat milk",
+                    "description": null,
+                    "priority": 4,
+                    "plan": null,
+                    "labels": [],
+                    "parentId": null,
+                    "completedAt": null,
+                    "createdAt": "2026-08-19T00:00:00Z",
+                    "updatedAt": "2026-08-19T00:00:00Z",
+                    "version": 1
+                }
+            ]
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(tasksJson)
+        )
+
+        val result = taskService.fetchTaskById(testSession, "550e8400-e29b-41d4-a716-446655440010")
+        assertNotNull(result)
+        assertEquals("550e8400-e29b-41d4-a716-446655440010", result?.id)
+        assertEquals("Buy oat milk", result?.title)
+
+        val request = mockWebServer.takeRequest()
+        assertEquals("/rest/v1/tasks?id=eq.550e8400-e29b-41d4-a716-446655440010&select=*", request.path)
+        assertEquals("GET", request.method)
+    }
+
+    @Test
     fun `createTask sends api create_task RPC payload and validates returned task`() = runTest {
         val createdJson = """
             {
@@ -325,6 +362,32 @@ class TaskServiceTest {
         assertEquals("Thoroughly wipe down surface", body["description"]?.jsonPrimitive?.content)
         assertEquals(1, body["priority"]?.jsonPrimitive?.int)
         assertEquals(1, body["expected_version"]?.jsonPrimitive?.int)
+    }
+
+    @Test
+    fun `updateTask throws TaskConflictException on version conflict rejection`() = runTest {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(400)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"code":"P0003","message":"Task version conflict: expected 1, found 2"}""")
+        )
+
+        val exception = assertThrows(TaskConflictException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.updateTask(
+                    session = testSession,
+                    params = UpdateTaskParams(
+                        id = "550e8400-e29b-41d4-a716-446655440011",
+                        title = "Stale Edit",
+                        expectedVersion = 1
+                    )
+                )
+            }
+        }
+
+        assertEquals("P0003", exception.code)
+        assertTrue(exception.message!!.contains("Task version conflict"))
     }
 
     @Test
@@ -567,7 +630,7 @@ class TaskServiceTest {
     }
 
     @Test
-    fun `completeTask sends api complete_task RPC payload with task id and timestamp`() = runTest {
+    fun `completeTask sends api complete_task RPC payload with expected_version`() = runTest {
         val completedJson = """
             {
                 "id": "550e8400-e29b-41d4-a716-446655440011",
@@ -594,6 +657,7 @@ class TaskServiceTest {
         val task = taskService.completeTask(
             session = testSession,
             taskId = "550e8400-e29b-41d4-a716-446655440011",
+            expectedVersion = 1,
             completedAt = "2026-08-19T10:00:00Z"
         )
 
@@ -608,11 +672,34 @@ class TaskServiceTest {
 
         val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals("550e8400-e29b-41d4-a716-446655440011", body["id"]?.jsonPrimitive?.content)
+        assertEquals(1, body["expected_version"]?.jsonPrimitive?.int)
         assertEquals("2026-08-19T10:00:00Z", body["completed_at"]?.jsonPrimitive?.content)
     }
 
     @Test
-    fun `uncompleteTask sends api uncomplete_task RPC payload with task id`() = runTest {
+    fun `completeTask throws TaskConflictException on version conflict rejection`() = runTest {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(400)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"code":"P0003","message":"Task version conflict: expected 1, found 2"}""")
+        )
+
+        val exception = assertThrows(TaskConflictException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.completeTask(
+                    session = testSession,
+                    taskId = "550e8400-e29b-41d4-a716-446655440011",
+                    expectedVersion = 1
+                )
+            }
+        }
+
+        assertEquals("P0003", exception.code)
+    }
+
+    @Test
+    fun `uncompleteTask sends api uncomplete_task RPC payload with expected_version`() = runTest {
         val uncompletedJson = """
             {
                 "id": "550e8400-e29b-41d4-a716-446655440011",
@@ -638,7 +725,8 @@ class TaskServiceTest {
 
         val task = taskService.uncompleteTask(
             session = testSession,
-            taskId = "550e8400-e29b-41d4-a716-446655440011"
+            taskId = "550e8400-e29b-41d4-a716-446655440011",
+            expectedVersion = 2
         )
 
         assertNotNull(task)
@@ -652,5 +740,28 @@ class TaskServiceTest {
 
         val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals("550e8400-e29b-41d4-a716-446655440011", body["id"]?.jsonPrimitive?.content)
+        assertEquals(2, body["expected_version"]?.jsonPrimitive?.int)
+    }
+
+    @Test
+    fun `uncompleteTask throws TaskConflictException on version conflict rejection`() = runTest {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(400)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"code":"P0003","message":"Task version conflict: expected 2, found 3"}""")
+        )
+
+        val exception = assertThrows(TaskConflictException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.uncompleteTask(
+                    session = testSession,
+                    taskId = "550e8400-e29b-41d4-a716-446655440011",
+                    expectedVersion = 2
+                )
+            }
+        }
+
+        assertEquals("P0003", exception.code)
     }
 }

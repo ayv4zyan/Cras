@@ -13,6 +13,7 @@ import com.cras.app.auth.SupabaseAuthService
 import com.cras.app.config.getPublicSupabaseConfig
 import com.cras.app.data.SupabaseCommentService
 import com.cras.app.data.SupabaseLabelService
+import com.cras.app.data.SupabaseRealtimeService
 import com.cras.app.data.SupabaseTaskService
 import com.cras.app.ui.CrasApp
 import com.cras.app.ui.inbox.InboxViewModel
@@ -42,8 +43,15 @@ class MainActivity : ComponentActivity() {
         val taskService = SupabaseTaskService(config, httpClient)
         val labelService = SupabaseLabelService(config, httpClient)
         val commentService = SupabaseCommentService(config, httpClient)
+        val realtimeService = SupabaseRealtimeService(config, httpClient)
 
-        inboxViewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        inboxViewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
         googleAuthManager = GoogleAuthManager(this)
 
         setContent {

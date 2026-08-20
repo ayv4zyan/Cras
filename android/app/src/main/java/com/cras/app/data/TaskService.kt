@@ -11,6 +11,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -47,12 +49,20 @@ data class UpdateTaskParams(
     val labels: List<String>? = null
 )
 
+class TaskConflictException(
+    message: String,
+    val code: String? = null,
+    val expectedVersion: Int? = null,
+    val foundVersion: Int? = null
+) : IOException(message)
+
 interface TaskService {
     suspend fun fetchTasks(session: OperatorSession): List<Task>
+    suspend fun fetchTaskById(session: OperatorSession, taskId: String): Task?
     suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task
     suspend fun updateTask(session: OperatorSession, params: UpdateTaskParams): Task
-    suspend fun completeTask(session: OperatorSession, taskId: String, completedAt: String? = null): Task
-    suspend fun uncompleteTask(session: OperatorSession, taskId: String): Task
+    suspend fun completeTask(session: OperatorSession, taskId: String, expectedVersion: Int, completedAt: String? = null): Task
+    suspend fun uncompleteTask(session: OperatorSession, taskId: String, expectedVersion: Int): Task
 }
 
 class SupabaseTaskService(
@@ -66,6 +76,32 @@ class SupabaseTaskService(
             val responseBody = response.body?.string() ?: ""
 
             if (!response.isSuccessful) {
+                // Check if response is a version conflict error (SQLSTATE P0003)
+                try {
+                    val errorObj = json.parseToJsonElement(responseBody).jsonObject
+                    val code = errorObj["code"]?.jsonPrimitive?.content
+                    val message = errorObj["message"]?.jsonPrimitive?.content ?: responseBody
+
+                    if (code == "P0003" || message.contains("Task version conflict")) {
+                        val expected = Regex("""expected\s+(\d+)""").find(message)?.groupValues?.get(1)?.toIntOrNull()
+                        val found = Regex("""found\s+(\d+)""").find(message)?.groupValues?.get(1)?.toIntOrNull()
+                        throw TaskConflictException(
+                            message = message,
+                            code = code ?: "P0003",
+                            expectedVersion = expected,
+                            foundVersion = found
+                        )
+                    }
+                } catch (e: TaskConflictException) {
+                    throw e
+                } catch (_: Exception) {
+                    // fall through
+                }
+
+                if (responseBody.contains("Task version conflict")) {
+                    throw TaskConflictException(responseBody, code = "P0003")
+                }
+
                 throw IOException("Failed to $operationName: ${response.code} $responseBody")
             }
             responseBody
@@ -108,6 +144,27 @@ class SupabaseTaskService(
 
         val responseBody = executeRequest(request, "fetch tasks")
         return json.decodeFromString<List<Task>>(responseBody)
+    }
+
+    override suspend fun fetchTaskById(session: OperatorSession, taskId: String): Task? {
+        require(taskId.isNotBlank()) { "Task id cannot be empty" }
+        val endpoint = "${config.url}/rest/v1/tasks?id=eq.$taskId&select=*"
+
+        val request = Request.Builder()
+            .url(endpoint)
+            .addHeader("apikey", config.publishableKey)
+            .addHeader("Authorization", "Bearer ${session.accessToken}")
+            .addHeader("Accept-Profile", "api")
+            .get()
+            .build()
+
+        return try {
+            val responseBody = executeRequest(request, "fetch task by id")
+            val list = json.decodeFromString<List<Task>>(responseBody)
+            list.firstOrNull()
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
@@ -194,12 +251,14 @@ class SupabaseTaskService(
     override suspend fun completeTask(
         session: OperatorSession,
         taskId: String,
+        expectedVersion: Int,
         completedAt: String?
     ): Task {
         require(taskId.isNotBlank()) { "Task id cannot be empty" }
 
         val bodyObject = buildJsonObject {
             put("id", taskId)
+            put("expected_version", expectedVersion)
             if (completedAt != null) {
                 put("completed_at", completedAt)
             }
@@ -208,11 +267,16 @@ class SupabaseTaskService(
         return executeRpc(session, "complete_task", bodyObject)
     }
 
-    override suspend fun uncompleteTask(session: OperatorSession, taskId: String): Task {
+    override suspend fun uncompleteTask(
+        session: OperatorSession,
+        taskId: String,
+        expectedVersion: Int
+    ): Task {
         require(taskId.isNotBlank()) { "Task id cannot be empty" }
 
         val bodyObject = buildJsonObject {
             put("id", taskId)
+            put("expected_version", expectedVersion)
         }
 
         return executeRpc(session, "uncomplete_task", bodyObject)

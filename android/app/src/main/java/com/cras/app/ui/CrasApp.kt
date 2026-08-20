@@ -258,10 +258,10 @@ fun CrasApp(
                                 viewModel.updateTask(params, onSuccess, onError)
                             },
                             onComplete = { taskId, completedAt, onSuccess, onError ->
-                                viewModel.completeTask(taskId, completedAt, onSuccess, onError)
+                                viewModel.completeTask(taskId, expectedVersion = selectedTask?.version, completedAt = completedAt, onSuccess = onSuccess, onError = onError)
                             },
                             onUncomplete = { taskId, onSuccess, onError ->
-                                viewModel.uncompleteTask(taskId, onSuccess, onError)
+                                viewModel.uncompleteTask(taskId, expectedVersion = selectedTask?.version, onSuccess = onSuccess, onError = onError)
                             },
                             onAddComment = { taskId, content, onSuccess, onError ->
                                 viewModel.createComment(taskId, content, onSuccess = { onSuccess() }, onError = onError)

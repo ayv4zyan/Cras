@@ -8,7 +8,10 @@ import com.cras.app.data.CommentService
 import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
+import com.cras.app.data.InvalidationPayload
 import com.cras.app.data.LabelService
+import com.cras.app.data.RealtimeService
+import com.cras.app.data.RealtimeSubscription
 import com.cras.app.data.SettingsService
 import com.cras.app.data.TaskService
 import com.cras.app.data.UpdateLabelParams
@@ -72,6 +75,7 @@ class InboxViewModel(
     private val labelService: LabelService,
     private val commentService: CommentService,
     private val settingsService: SettingsService? = null,
+    private val realtimeService: RealtimeService? = null,
     private val nowProvider: () -> Instant = { Instant.now() },
     private val zoneIdProvider: () -> ZoneId = { ZoneId.systemDefault() }
 ) : ViewModel() {
@@ -121,17 +125,36 @@ class InboxViewModel(
     private val _createLabelError = MutableStateFlow<String?>(null)
     val createLabelError: StateFlow<String?> = _createLabelError.asStateFlow()
 
+    private var realtimeSubscription: RealtimeSubscription? = null
+    private var loadJob: Job? = null
+
     init {
         viewModelScope.launch {
             authService.currentSession.collect { session ->
                 loadJob?.cancel()
                 loadJob = null
+                realtimeSubscription?.unsubscribe()
+                realtimeSubscription = null
+
                 if (session != null) {
                     _authState.value = AuthUiState.Authenticated(session)
                     loadJob = viewModelScope.launch {
                         loadTasksInternal(session)
                         loadSettingsInternal(session)
                     }
+
+                    realtimeSubscription = realtimeService?.subscribeToInvalidations(
+                        session = session,
+                        onInvalidate = { payload ->
+                            handleInvalidationEvent(session, payload)
+                        },
+                        onReconnect = {
+                            val currentAuth = _authState.value
+                            if (currentAuth is AuthUiState.Authenticated && currentAuth.session == session) {
+                                triggerLoadTasks(session)
+                            }
+                        }
+                    )
                 } else {
                     _authState.value = AuthUiState.Unauthenticated()
                     _allTasks.value = emptyList()
@@ -151,6 +174,12 @@ class InboxViewModel(
         viewModelScope.launch {
             authService.restoreSession()
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        realtimeSubscription?.unsubscribe()
+        realtimeSubscription = null
     }
 
     fun selectTask(task: Task?) {
@@ -173,12 +202,12 @@ class InboxViewModel(
     fun signOut() {
         loadJob?.cancel()
         loadJob = null
+        realtimeSubscription?.unsubscribe()
+        realtimeSubscription = null
         viewModelScope.launch {
             authService.signOut()
         }
     }
-
-    private var loadJob: Job? = null
 
     fun loadTasks() {
         val currentAuth = _authState.value
@@ -195,6 +224,145 @@ class InboxViewModel(
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             loadTasksInternal(session)
+        }
+    }
+
+    private fun recalculateViews(tasks: List<Task>) {
+        val now = nowProvider()
+        val zoneId = zoneIdProvider()
+
+        val inboxTasks = filterInboxTasks(tasks)
+        val todayTasks = filterTodayTasks(tasks, now, zoneId)
+        val upcomingResult = filterUpcomingTasks(tasks, now, zoneId)
+        val completedTasks = filterCompletedTasks(tasks)
+
+        _inboxState.value = if (inboxTasks.isEmpty()) {
+            InboxUiState.Empty
+        } else {
+            InboxUiState.Success(inboxTasks)
+        }
+
+        _todayState.value = if (todayTasks.isEmpty()) {
+            TodayUiState.Empty
+        } else {
+            TodayUiState.Success(todayTasks)
+        }
+
+        _upcomingState.value = if (upcomingResult.overdue.isEmpty() && upcomingResult.groups.isEmpty()) {
+            UpcomingUiState.Empty
+        } else {
+            UpcomingUiState.Success(upcomingResult.overdue, upcomingResult.groups)
+        }
+
+        _completedState.value = if (completedTasks.isEmpty()) {
+            CompletedUiState.Empty
+        } else {
+            CompletedUiState.Success(completedTasks)
+        }
+    }
+
+    fun applyTaskUpdate(updated: Task) {
+        val current = _allTasks.value
+        val exists = current.any { it.id == updated.id }
+        val newTasks = if (!exists) {
+            listOf(updated) + current
+        } else {
+            current.map { t ->
+                if (t.id == updated.id) {
+                    if (t.version > updated.version) t else updated
+                } else {
+                    t
+                }
+            }
+        }
+        _allTasks.value = newTasks
+        recalculateViews(newTasks)
+
+        val currentSelected = _selectedTask.value
+        if (currentSelected?.id == updated.id) {
+            _selectedTask.value = if (currentSelected.version > updated.version) currentSelected else updated
+        }
+    }
+
+    fun reconcileFreshTasks(freshTasks: List<Task>) {
+        val prevMap = _allTasks.value.associateBy { it.id }
+        val reconciled = freshTasks.map { fresh ->
+            val existing = prevMap[fresh.id]
+            if (existing != null && existing.version > fresh.version) existing else fresh
+        }
+        _allTasks.value = reconciled
+        recalculateViews(reconciled)
+
+        val currentSelected = _selectedTask.value
+        if (currentSelected != null) {
+            val freshSelected = reconciled.find { it.id == currentSelected.id }
+            if (freshSelected != null) {
+                _selectedTask.value = if (currentSelected.version > freshSelected.version) currentSelected else freshSelected
+            } else {
+                _selectedTask.value = null
+                _comments.value = emptyList()
+            }
+        }
+    }
+
+    private fun handleInvalidationEvent(session: OperatorSession, event: InvalidationPayload) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) return
+
+        when (event.resource) {
+            "task" -> {
+                when (event.operation) {
+                    "updated", "created" -> {
+                        viewModelScope.launch {
+                            try {
+                                val freshTask = taskService.fetchTaskById(session, event.id)
+                                if (freshTask != null) {
+                                    applyTaskUpdate(freshTask)
+                                } else {
+                                    val freshTasks = taskService.fetchTasks(session)
+                                    reconcileFreshTasks(freshTasks)
+                                }
+                            } catch (_: Exception) {
+                                val freshTasks = runCatching { taskService.fetchTasks(session) }.getOrNull()
+                                if (freshTasks != null) {
+                                    reconcileFreshTasks(freshTasks)
+                                }
+                            }
+                        }
+                    }
+                    "deleted" -> {
+                        val current = _allTasks.value
+                        val updated = current.filterNot { it.id == event.id }
+                        _allTasks.value = updated
+                        recalculateViews(updated)
+
+                        if (_selectedTask.value?.id == event.id) {
+                            _selectedTask.value = null
+                            _comments.value = emptyList()
+                        }
+                    }
+                }
+            }
+            "label" -> {
+                viewModelScope.launch {
+                    val freshLabels = runCatching { labelService.fetchLabels(session) }.getOrNull()
+                    if (freshLabels != null) {
+                        _labels.value = freshLabels
+                    }
+                }
+            }
+            "comment" -> {
+                val currentSelected = _selectedTask.value
+                if (currentSelected != null && (event.taskId == currentSelected.id || event.id == currentSelected.id)) {
+                    viewModelScope.launch {
+                        val freshComments = runCatching { commentService.fetchComments(session) }.getOrNull()
+                        if (freshComments != null) {
+                            _comments.value = freshComments
+                            _commentsError.value = null
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -238,7 +406,6 @@ class InboxViewModel(
                 return
             }
 
-            _allTasks.value = allTasksList
             labelsResult.onSuccess { _labels.value = it }
             commentsResult.onSuccess {
                 _comments.value = it
@@ -247,43 +414,7 @@ class InboxViewModel(
                 _commentsError.value = it.message ?: "Failed to fetch comments"
             }
 
-            val now = nowProvider()
-            val zoneId = zoneIdProvider()
-
-            val inboxTasks = filterInboxTasks(allTasksList)
-            val todayTasks = filterTodayTasks(allTasksList, now, zoneId)
-            val upcomingResult = filterUpcomingTasks(allTasksList, now, zoneId)
-            val completedTasks = filterCompletedTasks(allTasksList)
-
-            _inboxState.value = if (inboxTasks.isEmpty()) {
-                InboxUiState.Empty
-            } else {
-                InboxUiState.Success(inboxTasks)
-            }
-
-            _todayState.value = if (todayTasks.isEmpty()) {
-                TodayUiState.Empty
-            } else {
-                TodayUiState.Success(todayTasks)
-            }
-
-            _upcomingState.value = if (upcomingResult.overdue.isEmpty() && upcomingResult.groups.isEmpty()) {
-                UpcomingUiState.Empty
-            } else {
-                UpcomingUiState.Success(upcomingResult.overdue, upcomingResult.groups)
-            }
-
-            _completedState.value = if (completedTasks.isEmpty()) {
-                CompletedUiState.Empty
-            } else {
-                CompletedUiState.Success(completedTasks)
-            }
-
-            // Refresh selectedTask if it's currently selected
-            val currentSelected = _selectedTask.value
-            if (currentSelected != null) {
-                _selectedTask.value = allTasksList.find { it.id == currentSelected.id }
-            }
+            reconcileFreshTasks(allTasksList)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -487,7 +618,7 @@ class InboxViewModel(
             _isCreatingTask.value = true
             _createTaskError.value = null
             try {
-                taskService.createTask(
+                val created = taskService.createTask(
                     session = currentAuth.session,
                     params = CreateTaskParams(
                         title = trimmed,
@@ -497,6 +628,7 @@ class InboxViewModel(
                         labels = labels
                     )
                 )
+                applyTaskUpdate(created)
                 triggerLoadTasks(currentAuth.session)
                 onSuccess()
             } catch (e: CancellationException) {
@@ -524,16 +656,14 @@ class InboxViewModel(
         viewModelScope.launch {
             try {
                 val updatedTask = mutation(currentAuth.session)
-                if (_selectedTask.value?.id == updatedTask.id) {
-                    _selectedTask.value = updatedTask
-                }
+                applyTaskUpdate(updatedTask)
                 triggerLoadTasks(currentAuth.session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: defaultError
-                // Reload to recover canonical state after a conflict or a rejection.
+                // Reload canonical state after a conflict or error to avoid stale overwrites
                 triggerLoadTasks(currentAuth.session)
                 onError(errorMsg)
             }
@@ -544,25 +674,41 @@ class InboxViewModel(
         params: UpdateTaskParams,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
-    ) = mutateTask("Failed to update task", onSuccess, onError) { session ->
-        taskService.updateTask(session, params)
+    ) {
+        val effectiveParams = if (params.expectedVersion == null) {
+            val currentVer = _allTasks.value.find { it.id == params.id }?.version
+            params.copy(expectedVersion = currentVer)
+        } else {
+            params
+        }
+        mutateTask("Failed to update task", onSuccess, onError) { session ->
+            taskService.updateTask(session, effectiveParams)
+        }
     }
 
     fun completeTask(
         taskId: String,
+        expectedVersion: Int? = null,
         completedAt: String? = null,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
-    ) = mutateTask("Failed to complete task", onSuccess, onError) { session ->
-        taskService.completeTask(session, taskId, completedAt)
+    ) {
+        val version = expectedVersion ?: _allTasks.value.find { it.id == taskId }?.version ?: 1
+        mutateTask("Failed to complete task", onSuccess, onError) { session ->
+            taskService.completeTask(session, taskId, version, completedAt)
+        }
     }
 
     fun uncompleteTask(
         taskId: String,
+        expectedVersion: Int? = null,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
-    ) = mutateTask("Failed to uncomplete task", onSuccess, onError) { session ->
-        taskService.uncompleteTask(session, taskId)
+    ) {
+        val version = expectedVersion ?: _allTasks.value.find { it.id == taskId }?.version ?: 1
+        mutateTask("Failed to uncomplete task", onSuccess, onError) { session ->
+            taskService.uncompleteTask(session, taskId, version)
+        }
     }
 
     fun updateOperatorTimedPlanType(

@@ -18,6 +18,11 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
@@ -85,7 +90,10 @@ interface RealtimeService {
 class SupabaseRealtimeService(
     private val config: PublicSupabaseConfig,
     private val httpClient: OkHttpClient = OkHttpClient(),
-    private val json: Json = Json { ignoreUnknownKeys = true }
+    private val json: Json = Json { ignoreUnknownKeys = true },
+    private val reconnectExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "realtime-reconnect").apply { isDaemon = true }
+    }
 ) : RealtimeService {
 
     override fun subscribeToInvalidations(
@@ -96,9 +104,11 @@ class SupabaseRealtimeService(
         val wsUrl = buildWebSocketUrl(config.url, config.publishableKey)
         val topic = "realtime:operator:${session.operatorId}"
 
-        var wasDisconnected = false
-        var isInitialConnect = true
-        var isCancelled = false
+        val wasDisconnected = AtomicBoolean(false)
+        val isInitialConnect = AtomicBoolean(true)
+        val isCancelled = AtomicBoolean(false)
+        val reconnectAttempts = AtomicInteger(0)
+        val reconnectFuture = AtomicReference<ScheduledFuture<*>?>(null)
 
         val joinRef = "1"
         val refCounter = AtomicInteger(1)
@@ -109,12 +119,33 @@ class SupabaseRealtimeService(
 
         val socketRef = AtomicReference<WebSocket?>(null)
 
-        val listener = object : WebSocketListener() {
+        lateinit var listener: WebSocketListener
+
+        fun scheduleReconnect() {
+            if (isCancelled.get()) return
+            val attempt = reconnectAttempts.getAndIncrement()
+            val delayMs = minOf(1000L * (1L shl minOf(attempt, 5)), 30000L)
+            try {
+                val future = reconnectExecutor.schedule({
+                    if (!isCancelled.get()) {
+                        val newSocket = httpClient.newWebSocket(request, listener)
+                        socketRef.set(newSocket)
+                    }
+                }, delayMs, TimeUnit.MILLISECONDS)
+                reconnectFuture.set(future)
+            } catch (_: Exception) {
+                // Ignore if scheduler is shut down
+            }
+        }
+
+        listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                if (isCancelled) {
+                if (isCancelled.get()) {
                     webSocket.close(1000, "Unsubscribed")
                     return
                 }
+
+                reconnectAttempts.set(0)
 
                 // Send phx_join to operator topic
                 val joinMessage = buildJsonObject {
@@ -140,15 +171,15 @@ class SupabaseRealtimeService(
 
                 webSocket.send(joinMessage)
 
-                if (!isInitialConnect && wasDisconnected) {
+                val disconnectedBefore = wasDisconnected.getAndSet(false)
+                val initial = isInitialConnect.getAndSet(false)
+                if (!initial && disconnectedBefore) {
                     onReconnect?.invoke()
                 }
-                isInitialConnect = false
-                wasDisconnected = false
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                if (isCancelled) return
+                if (isCancelled.get()) return
                 try {
                     val root = json.parseToJsonElement(text)
                     if (root is JsonObject) {
@@ -161,7 +192,7 @@ class SupabaseRealtimeService(
                             } else null
 
                             val parsed = parseInvalidationPayload(innerPayload)
-                            if (parsed != null) {
+                            if (parsed != null && !isCancelled.get()) {
                                 onInvalidate(parsed)
                             }
                         }
@@ -173,7 +204,7 @@ class SupabaseRealtimeService(
                                 (payload["payload"] as? JsonObject) ?: payload
                             } else null
                             val parsed = parseInvalidationPayload(innerPayload)
-                            if (parsed != null) {
+                            if (parsed != null && !isCancelled.get()) {
                                 onInvalidate(parsed)
                             }
                         }
@@ -184,15 +215,21 @@ class SupabaseRealtimeService(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                wasDisconnected = true
+                wasDisconnected.set(true)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                wasDisconnected = true
+                wasDisconnected.set(true)
+                if (!isCancelled.get()) {
+                    scheduleReconnect()
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                wasDisconnected = true
+                wasDisconnected.set(true)
+                if (!isCancelled.get()) {
+                    scheduleReconnect()
+                }
             }
         }
 
@@ -201,7 +238,8 @@ class SupabaseRealtimeService(
 
         return object : RealtimeSubscription {
             override fun unsubscribe() {
-                isCancelled = true
+                isCancelled.set(true)
+                reconnectFuture.getAndSet(null)?.cancel(true)
                 val ws = socketRef.getAndSet(null)
                 if (ws != null) {
                     try {

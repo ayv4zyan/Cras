@@ -5,6 +5,7 @@ import com.cras.app.config.PublicSupabaseConfig
 import com.cras.app.models.isValidUuid
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -14,6 +15,7 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -148,7 +150,11 @@ class SupabaseTaskService(
 
     override suspend fun fetchTaskById(session: OperatorSession, taskId: String): Task? {
         require(taskId.isNotBlank()) { "Task id cannot be empty" }
-        val endpoint = "${config.url}/rest/v1/tasks?id=eq.$taskId&select=*"
+        val endpoint = "${config.url}/rest/v1/tasks".toHttpUrl().newBuilder()
+            .addQueryParameter("id", "eq.$taskId")
+            .addQueryParameter("select", "*")
+            .build()
+            .toString()
 
         val request = Request.Builder()
             .url(endpoint)
@@ -162,6 +168,8 @@ class SupabaseTaskService(
             val responseBody = executeRequest(request, "fetch task by id")
             val list = json.decodeFromString<List<Task>>(responseBody)
             list.firstOrNull()
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             null
         }

@@ -43,7 +43,11 @@ class MainActivity : ComponentActivity() {
         val taskService = SupabaseTaskService(config, httpClient)
         val labelService = SupabaseLabelService(config, httpClient)
         val commentService = SupabaseCommentService(config, httpClient)
-        val realtimeService = SupabaseRealtimeService(config, httpClient)
+        val realtimeHttpClient = httpClient.newBuilder()
+            .pingInterval(java.time.Duration.ofSeconds(30))
+            .readTimeout(java.time.Duration.ZERO)
+            .build()
+        val realtimeService = SupabaseRealtimeService(config, realtimeHttpClient)
 
         inboxViewModel = InboxViewModel(
             authService = authService,

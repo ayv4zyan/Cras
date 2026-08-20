@@ -354,6 +354,32 @@ class InboxViewModelTest {
     }
 
     @Test
+    fun `signOut cancels load job and unsubscribes realtime service`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val realtimeService = FakeRealtimeService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+        assertTrue(realtimeService.isSubscribed)
+
+        viewModel.signOut()
+        advanceUntilIdle()
+        assertFalse(realtimeService.isSubscribed)
+        assertTrue(viewModel.authState.value is AuthUiState.Unauthenticated)
+    }
+
+    @Test
     fun `loadInbox transitions through Loading, Empty, Success, and Failure states`() = runTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()
@@ -502,6 +528,35 @@ class InboxViewModelTest {
         val completedAfterUncomplete = (viewModel.completedState.value as CompletedUiState.Success).tasks
         assertEquals(1, completedAfterUncomplete.size)
         assertEquals("Task Two", completedAfterUncomplete[0].title)
+    }
+
+    @Test
+    fun `completeTask and uncompleteTask fail when task version cannot be resolved`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        var completeError: String? = null
+        viewModel.completeTask(
+            taskId = "non-existent-task-id",
+            onError = { completeError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Task state is unavailable. Refresh and try again.", completeError)
+
+        var uncompleteError: String? = null
+        viewModel.uncompleteTask(
+            taskId = "non-existent-task-id",
+            onError = { uncompleteError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Task state is unavailable. Refresh and try again.", uncompleteError)
     }
 
     @Test

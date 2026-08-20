@@ -31,6 +31,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -262,58 +263,68 @@ class InboxViewModel(
     }
 
     fun applyTaskUpdate(updated: Task) {
-        val current = _allTasks.value
-        val exists = current.any { it.id == updated.id }
-        val newTasks = if (!exists) {
-            listOf(updated) + current
-        } else {
-            current.map { t ->
-                if (t.id == updated.id) {
-                    if (t.version > updated.version) t else updated
-                } else {
-                    t
+        _allTasks.update { current ->
+            val exists = current.any { it.id == updated.id }
+            if (!exists) {
+                listOf(updated) + current
+            } else {
+                current.map { t ->
+                    if (t.id == updated.id) {
+                        if (t.version > updated.version) t else updated
+                    } else {
+                        t
+                    }
                 }
             }
         }
-        _allTasks.value = newTasks
-        recalculateViews(newTasks)
+        recalculateViews(_allTasks.value)
 
-        val currentSelected = _selectedTask.value
-        if (currentSelected?.id == updated.id) {
-            _selectedTask.value = if (currentSelected.version > updated.version) currentSelected else updated
+        _selectedTask.update { currentSelected ->
+            if (currentSelected?.id == updated.id) {
+                if (currentSelected.version > updated.version) currentSelected else updated
+            } else {
+                currentSelected
+            }
         }
     }
 
     fun reconcileFreshTasks(freshTasks: List<Task>) {
-        val prevMap = _allTasks.value.associateBy { it.id }
-        val reconciled = freshTasks.map { fresh ->
-            val existing = prevMap[fresh.id]
-            if (existing != null && existing.version > fresh.version) existing else fresh
+        _allTasks.update { current ->
+            val prevMap = current.associateBy { it.id }
+            freshTasks.map { fresh ->
+                val existing = prevMap[fresh.id]
+                if (existing != null && existing.version > fresh.version) existing else fresh
+            }
         }
-        _allTasks.value = reconciled
+        val reconciled = _allTasks.value
         recalculateViews(reconciled)
 
-        val currentSelected = _selectedTask.value
-        if (currentSelected != null) {
-            val freshSelected = reconciled.find { it.id == currentSelected.id }
-            if (freshSelected != null) {
-                _selectedTask.value = if (currentSelected.version > freshSelected.version) currentSelected else freshSelected
+        _selectedTask.update { currentSelected ->
+            if (currentSelected != null) {
+                val freshSelected = reconciled.find { it.id == currentSelected.id }
+                if (freshSelected != null) {
+                    if (currentSelected.version > freshSelected.version) currentSelected else freshSelected
+                } else {
+                    null
+                }
             } else {
-                _selectedTask.value = null
-                _comments.value = emptyList()
+                null
             }
+        }
+        if (_selectedTask.value == null) {
+            _comments.value = emptyList()
         }
     }
 
     private fun handleInvalidationEvent(session: OperatorSession, event: InvalidationPayload) {
-        val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) return
+        viewModelScope.launch {
+            val currentAuth = _authState.value
+            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) return@launch
 
-        when (event.resource) {
-            "task" -> {
-                when (event.operation) {
-                    "updated", "created" -> {
-                        viewModelScope.launch {
+            when (event.resource) {
+                "task" -> {
+                    when (event.operation) {
+                        "updated", "created" -> {
                             try {
                                 val freshTask = taskService.fetchTaskById(session, event.id)
                                 if (freshTask != null) {
@@ -322,40 +333,46 @@ class InboxViewModel(
                                     val freshTasks = taskService.fetchTasks(session)
                                     reconcileFreshTasks(freshTasks)
                                 }
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (_: Exception) {
-                                val freshTasks = runCatching { taskService.fetchTasks(session) }.getOrNull()
+                                val freshTasks = runCatching { taskService.fetchTasks(session) }
+                                    .onFailure { if (it is CancellationException) throw it }
+                                    .getOrNull()
                                 if (freshTasks != null) {
                                     reconcileFreshTasks(freshTasks)
                                 }
                             }
                         }
-                    }
-                    "deleted" -> {
-                        val current = _allTasks.value
-                        val updated = current.filterNot { it.id == event.id }
-                        _allTasks.value = updated
-                        recalculateViews(updated)
+                        "deleted" -> {
+                            _allTasks.update { current ->
+                                current.filterNot { it.id == event.id }
+                            }
+                            recalculateViews(_allTasks.value)
 
-                        if (_selectedTask.value?.id == event.id) {
-                            _selectedTask.value = null
-                            _comments.value = emptyList()
+                            _selectedTask.update { currentSelected ->
+                                if (currentSelected?.id == event.id) null else currentSelected
+                            }
+                            if (_selectedTask.value == null) {
+                                _comments.value = emptyList()
+                            }
                         }
                     }
                 }
-            }
-            "label" -> {
-                viewModelScope.launch {
-                    val freshLabels = runCatching { labelService.fetchLabels(session) }.getOrNull()
+                "label" -> {
+                    val freshLabels = runCatching { labelService.fetchLabels(session) }
+                        .onFailure { if (it is CancellationException) throw it }
+                        .getOrNull()
                     if (freshLabels != null) {
                         _labels.value = freshLabels
                     }
                 }
-            }
-            "comment" -> {
-                val currentSelected = _selectedTask.value
-                if (currentSelected != null && (event.taskId == currentSelected.id || event.id == currentSelected.id)) {
-                    viewModelScope.launch {
-                        val freshComments = runCatching { commentService.fetchComments(session) }.getOrNull()
+                "comment" -> {
+                    val currentSelected = _selectedTask.value
+                    if (currentSelected != null && (event.taskId == currentSelected.id || event.id == currentSelected.id)) {
+                        val freshComments = runCatching { commentService.fetchComments(session) }
+                            .onFailure { if (it is CancellationException) throw it }
+                            .getOrNull()
                         if (freshComments != null) {
                             _comments.value = freshComments
                             _commentsError.value = null
@@ -693,7 +710,11 @@ class InboxViewModel(
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
-        val version = expectedVersion ?: _allTasks.value.find { it.id == taskId }?.version ?: 1
+        val version = expectedVersion ?: _allTasks.value.find { it.id == taskId }?.version
+        if (version == null) {
+            onError("Task state is unavailable. Refresh and try again.")
+            return
+        }
         mutateTask("Failed to complete task", onSuccess, onError) { session ->
             taskService.completeTask(session, taskId, version, completedAt)
         }
@@ -705,7 +726,11 @@ class InboxViewModel(
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
-        val version = expectedVersion ?: _allTasks.value.find { it.id == taskId }?.version ?: 1
+        val version = expectedVersion ?: _allTasks.value.find { it.id == taskId }?.version
+        if (version == null) {
+            onError("Task state is unavailable. Refresh and try again.")
+            return
+        }
         mutateTask("Failed to uncomplete task", onSuccess, onError) { session ->
             taskService.uncompleteTask(session, taskId, version)
         }

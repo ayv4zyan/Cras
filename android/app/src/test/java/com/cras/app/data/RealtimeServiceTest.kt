@@ -18,6 +18,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -49,7 +50,9 @@ class RealtimeServiceTest {
 
     @After
     fun tearDown() {
-        mockWebServer.shutdown()
+        try {
+            mockWebServer.shutdown()
+        } catch (_: Exception) {}
     }
 
     @Test
@@ -143,15 +146,15 @@ class RealtimeServiceTest {
 
     @Test
     fun `subscribeToInvalidations sends phx_join for authorized operator channel and receives invalidation broadcast`() {
-        val serverReceivedMessages = mutableListOf<String>()
+        val serverReceivedMessages = CopyOnWriteArrayList<String>()
         val serverSocketLatch = CountDownLatch(1)
         val joinLatch = CountDownLatch(1)
-        var serverWebSocket: WebSocket? = null
+        val serverWebSocket = java.util.concurrent.atomic.AtomicReference<WebSocket?>(null)
 
         mockWebServer.enqueue(
             MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    serverWebSocket = webSocket
+                    serverWebSocket.set(webSocket)
                     serverSocketLatch.countDown()
                 }
 
@@ -178,12 +181,17 @@ class RealtimeServiceTest {
         assertTrue("Server socket opened", serverSocketLatch.await(5, TimeUnit.SECONDS))
         assertTrue("Client sent phx_join", joinLatch.await(5, TimeUnit.SECONDS))
 
-        // Verify join message contains expected operator topic and token
+        // Verify join message contains expected operator topic, token, and private config
         val joinMsg = serverReceivedMessages.firstOrNull { it.contains("phx_join") }
         assertNotNull(joinMsg)
         val json = Json.parseToJsonElement(joinMsg!!).jsonObject
         assertEquals("realtime:operator:550e8400-e29b-41d4-a716-446655440001", json["topic"]?.jsonPrimitive?.content)
         assertEquals("phx_join", json["event"]?.jsonPrimitive?.content)
+
+        val payload = json["payload"]?.jsonObject
+        assertEquals("operator-alice-jwt", payload?.get("access_token")?.jsonPrimitive?.content)
+        val config = payload?.get("config")?.jsonObject
+        assertEquals("true", config?.get("private")?.jsonPrimitive?.content)
 
         // Server pushes a broadcast event
         val broadcastEvent = """
@@ -202,7 +210,7 @@ class RealtimeServiceTest {
             }
         """.trimIndent()
 
-        serverWebSocket?.send(broadcastEvent)
+        serverWebSocket.get()?.send(broadcastEvent)
 
         assertTrue("Client received invalidation", invalidationLatch.await(5, TimeUnit.SECONDS))
         assertEquals(1, receivedInvalidations.size)

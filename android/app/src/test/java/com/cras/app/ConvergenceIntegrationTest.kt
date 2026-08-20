@@ -175,7 +175,13 @@ class ConvergenceIntegrationTest {
 
                 // Auth endpoint
                 if (path.startsWith("/auth/v1/token")) {
-                    val operatorId = "550e8400-e29b-41d4-a716-446655440001"
+                    val reqBody = request.body.clone().readUtf8()
+                    val operatorId = if (reqBody.contains("bob") || reqBody.contains("446655440002")) {
+                        "550e8400-e29b-41d4-a716-446655440002"
+                    } else {
+                        "550e8400-e29b-41d4-a716-446655440001"
+                    }
+                    val email = if (operatorId.endsWith("0002")) "bob@cras.app" else "alice@cras.app"
                     val resp = """
                         {
                             "access_token": "jwt-$operatorId",
@@ -183,7 +189,7 @@ class ConvergenceIntegrationTest {
                             "expires_in": 3600,
                             "user": {
                                 "id": "$operatorId",
-                                "email": "alice@cras.app"
+                                "email": "$email"
                             }
                         }
                     """.trimIndent()
@@ -681,5 +687,136 @@ class ConvergenceIntegrationTest {
         assertNotEquals(tasks[0].id, tasks[1].id)
         assertTrue(tasks.any { it.description == "Created on Web" && it.priority == 1 })
         assertTrue(tasks.any { it.description == null && it.priority == 2 })
+    }
+
+    @Test
+    fun `cross-operator isolation ensures operator only observes their own tasks, labels, and comments`() = runTest {
+        val operatorAlice = "550e8400-e29b-41d4-a716-446655440001"
+        val operatorBob = "550e8400-e29b-41d4-a716-446655440002"
+
+        // Seed Bob's data in the database
+        dbRows.add(
+            SimulatedDbRow(
+                id = "550e8400-e29b-41d4-a716-446655440099",
+                operatorId = operatorBob,
+                title = "Bob Private Task",
+                description = "Confidential to Bob",
+                priority = 2,
+                plan = null,
+                labels = listOf("550e8400-e29b-41d4-a716-446655440098"),
+                parentId = null,
+                completedAt = null,
+                createdAt = "2026-08-19T00:00:00Z",
+                updatedAt = "2026-08-19T00:00:00Z",
+                version = 1
+            )
+        )
+        labelDbRows.add(
+            SimulatedLabelDbRow(
+                id = "550e8400-e29b-41d4-a716-446655440098",
+                operatorId = operatorBob,
+                name = "Bob Label",
+                color = "#FF0000",
+                createdAt = "2026-08-19T00:00:00Z",
+                updatedAt = "2026-08-19T00:00:00Z"
+            )
+        )
+        commentDbRows.add(
+            SimulatedCommentDbRow(
+                id = "550e8400-e29b-41d4-a716-446655440097",
+                operatorId = operatorBob,
+                taskId = "550e8400-e29b-41d4-a716-446655440099",
+                content = "Bob's secret comment",
+                createdAt = "2026-08-19T00:00:00Z"
+            )
+        )
+
+        // Seed Alice's data
+        dbRows.add(
+            SimulatedDbRow(
+                id = "550e8400-e29b-41d4-a716-446655440010",
+                operatorId = operatorAlice,
+                title = "Alice Task",
+                description = "Alice Work",
+                priority = 4,
+                plan = null,
+                labels = listOf("550e8400-e29b-41d4-a716-446655440030"),
+                parentId = null,
+                completedAt = null,
+                createdAt = "2026-08-19T00:00:00Z",
+                updatedAt = "2026-08-19T00:00:00Z",
+                version = 1
+            )
+        )
+        labelDbRows.add(
+            SimulatedLabelDbRow(
+                id = "550e8400-e29b-41d4-a716-446655440030",
+                operatorId = operatorAlice,
+                name = "Alice Label",
+                color = "#00FF00",
+                createdAt = "2026-08-19T00:00:00Z",
+                updatedAt = "2026-08-19T00:00:00Z"
+            )
+        )
+        commentDbRows.add(
+            SimulatedCommentDbRow(
+                id = "550e8400-e29b-41d4-a716-446655440020",
+                operatorId = operatorAlice,
+                taskId = "550e8400-e29b-41d4-a716-446655440010",
+                content = "Alice's comment",
+                createdAt = "2026-08-19T00:00:00Z"
+            )
+        )
+
+        val baseUrl = mockWebServer.url("/").toString().removeSuffix("/")
+        val config = PublicSupabaseConfig(url = baseUrl, publishableKey = "test-anon-key")
+        val sessionStore = InMemorySessionStore()
+        val authService = SupabaseAuthService(config, sessionStore, OkHttpClient())
+        val taskService = SupabaseTaskService(config, OkHttpClient())
+        val labelService = SupabaseLabelService(config, OkHttpClient())
+        val commentService = SupabaseCommentService(config, OkHttpClient())
+        val settingsService = SupabaseSettingsService(config, OkHttpClient())
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            settingsService = settingsService,
+            realtimeService = realtimeService
+        )
+        advanceUntilIdle()
+
+        viewModel.signInWithGoogleIdToken("google-token-alice")
+        advanceUntilIdle()
+
+        assertEquals(operatorAlice, realtimeService.subscribedSession?.operatorId)
+
+        val inboxState = viewModel.inboxState.value
+        assertTrue(inboxState is InboxUiState.Success)
+        val allTasks = (inboxState as InboxUiState.Success).tasks
+        assertEquals(1, allTasks.size)
+        assertEquals("Alice Task", allTasks[0].title)
+
+        val labels = viewModel.labels.value
+        assertEquals(1, labels.size)
+        assertEquals("Alice Label", labels[0].name)
+
+        viewModel.selectTask(allTasks[0])
+        advanceUntilIdle()
+
+        realtimeService.emit(
+            InvalidationPayload(
+                resource = "comment",
+                id = "550e8400-e29b-41d4-a716-446655440020",
+                operation = "created",
+                taskId = allTasks[0].id
+            )
+        )
+        advanceUntilIdle()
+
+        val comments = viewModel.comments.value
+        assertEquals(1, comments.size)
+        assertEquals("Alice's comment", comments[0].content)
     }
 }

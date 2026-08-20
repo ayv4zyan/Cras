@@ -129,6 +129,31 @@ class TaskServiceTest {
     }
 
     @Test
+    fun `fetchTaskById returns null when response contains empty array`() = runTest {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody("[]")
+        )
+
+        val result = taskService.fetchTaskById(testSession, "550e8400-e29b-41d4-a716-446655440099")
+        assertNull(result)
+    }
+
+    @Test
+    fun `fetchTaskById returns null on 4xx or 5xx server failure`() = runTest {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(500)
+                .setBody("Internal server error")
+        )
+
+        val result = taskService.fetchTaskById(testSession, "550e8400-e29b-41d4-a716-446655440099")
+        assertNull(result)
+    }
+
+    @Test
     fun `createTask sends api create_task RPC payload and validates returned task`() = runTest {
         val createdJson = """
             {
@@ -387,6 +412,8 @@ class TaskServiceTest {
         }
 
         assertEquals("P0003", exception.code)
+        assertEquals(1, exception.expectedVersion)
+        assertEquals(2, exception.foundVersion)
         assertTrue(exception.message!!.contains("Task version conflict"))
     }
 

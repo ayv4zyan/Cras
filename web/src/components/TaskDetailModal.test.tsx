@@ -488,8 +488,12 @@ describe("TaskDetailModal Component", () => {
   });
 
   it("surfaces comment and subtask creation errors next to their respective sections", async () => {
-    const handleAddCommentFail = vi.fn().mockRejectedValue(new Error("Comment server error"));
-    const handleCreateSubtaskFail = vi.fn().mockRejectedValue(new Error("Subtask limit reached"));
+    const handleAddCommentFail = vi
+      .fn()
+      .mockRejectedValue(new Error("Comment server error"));
+    const handleCreateSubtaskFail = vi
+      .fn()
+      .mockRejectedValue(new Error("Subtask limit reached"));
 
     render(
       <TaskDetailModal

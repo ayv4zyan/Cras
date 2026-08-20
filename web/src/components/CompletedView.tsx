@@ -68,7 +68,9 @@ export function CompletedView({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      void Promise.resolve(onUncompleteTask(task)).catch(() => {});
+                      void Promise.resolve(onUncompleteTask(task)).catch(
+                        () => {},
+                      );
                     }}
                     aria-label={`Uncomplete task ${task.title}`}
                     title="Uncomplete task"

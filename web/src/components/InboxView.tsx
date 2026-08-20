@@ -90,7 +90,9 @@ export function InboxView({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      void Promise.resolve(onCompleteTask?.(task)).catch(() => {});
+                      void Promise.resolve(onCompleteTask?.(task)).catch(
+                        () => {},
+                      );
                     }}
                     aria-label={`Complete task ${task.title}`}
                     title="Complete task"

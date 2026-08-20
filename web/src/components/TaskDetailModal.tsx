@@ -690,10 +690,7 @@ export function TaskDetailModal({
 
             {/* Add Subtask Form */}
             {!isCompleted && onCreateSubtask && (
-              <form
-                onSubmit={handleAddSubtaskSubmit}
-                className="space-y-1.5"
-              >
+              <form onSubmit={handleAddSubtaskSubmit} className="space-y-1.5">
                 <div className="flex space-x-2">
                   <input
                     type="text"

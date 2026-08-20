@@ -121,7 +121,9 @@ describe("Settings & Deployment Configuration Seam", () => {
       setCachedEffectiveTimedPlanType("floating");
 
       const mockSettingsSelect = vi.fn().mockReturnValue({
-        maybeSingle: vi.fn().mockRejectedValue(new Error("Settings fetch failed")),
+        maybeSingle: vi
+          .fn()
+          .mockRejectedValue(new Error("Settings fetch failed")),
       });
 
       const mockDeployConfigSelect = vi.fn().mockReturnValue({

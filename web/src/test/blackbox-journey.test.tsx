@@ -161,8 +161,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                     // Check unique constraint: (name, operator_id)
                     const exists = dbLabels.some(
                       (l) =>
-                        l.operator_id === currentUser.id &&
-                        l.name === name,
+                        l.operator_id === currentUser.id && l.name === name,
                     );
                     if (exists) {
                       return {
@@ -353,11 +352,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                               val,
                           );
                         }),
-                      order: vi
-                        .fn()
-                        .mockImplementation(() => {
-                          return makeChain(filterFn);
-                        }),
+                      order: vi.fn().mockImplementation(() => {
+                        return makeChain(filterFn);
+                      }),
                       then: (
                         resolve: (v: unknown) => unknown,
                         reject?: (reason: unknown) => unknown,
@@ -1658,9 +1655,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     expect(forgedCreateResult.error?.message).toContain(
       "foreign key constraint",
     );
-    expect(
-      dbTasks.some((t) => t.title === "Bob Task with Alice Label"),
-    ).toBe(false);
+    expect(dbTasks.some((t) => t.title === "Bob Task with Alice Label")).toBe(
+      false,
+    );
 
     // 3. Bob creates his own task, then tries to update it with Alice's label ID -> Rejected
     const bobTaskPromise = clientOp2.schema("api").rpc("create_task", {
@@ -2088,7 +2085,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
       });
       expect(screen.queryByText("Today Urgent Task")).not.toBeInTheDocument();
       expect(screen.queryByText("Overdue Task")).not.toBeInTheDocument();
-      expect(screen.queryByText("Future Floating Task")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Future Floating Task"),
+      ).not.toBeInTheDocument();
 
       // 2. Navigate to Today View
       const todayNavBtn = screen.getByRole("button", { name: /today/i });
@@ -2099,7 +2098,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
         expect(screen.getByText("Overdue Task")).toBeInTheDocument();
       });
       expect(screen.queryByText("Inbox Task")).not.toBeInTheDocument();
-      expect(screen.queryByText("Future Floating Task")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Future Floating Task"),
+      ).not.toBeInTheDocument();
 
       // 3. Navigate to Upcoming View
       const upcomingNavBtn = screen.getByRole("button", { name: /upcoming/i });
@@ -2141,7 +2142,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
       });
 
       // Check DB state: plan should now be Date-only without type or time
-      const updatedTask = dbTasks.find((t) => t.title === "Future Floating Task");
+      const updatedTask = dbTasks.find(
+        (t) => t.title === "Future Floating Task",
+      );
       expect(updatedTask?.plan).toEqual({ date: futureStr });
 
       // 5. Open modal again and clear date -> moves to Inbox

@@ -150,8 +150,48 @@ export function AuthenticatedApp({
   }, [userId, client]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
-    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-    setSelectedTask((prev) => (prev?.id === updated.id ? updated : prev));
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id === updated.id) {
+          return t.version > updated.version ? t : updated;
+        }
+        return t;
+      }),
+    );
+    setSelectedTask((prev) => {
+      if (prev?.id === updated.id) {
+        return prev.version > updated.version ? prev : updated;
+      }
+      return prev;
+    });
+  }, []);
+
+  const reconcileFreshTasks = useCallback((freshTasks: Task[]) => {
+    setTasks((prev) => {
+      const prevMap = new Map(prev.map((t) => [t.id, t]));
+      return freshTasks.map((fresh) => {
+        const existing = prevMap.get(fresh.id);
+        return existing && existing.version > fresh.version ? existing : fresh;
+      });
+    });
+
+    const currentSelected = selectedTaskRef.current;
+    if (currentSelected) {
+      const freshSelected = freshTasks.find((t) => t.id === currentSelected.id);
+      if (freshSelected) {
+        setSelectedTask((prev) =>
+          prev &&
+          prev.id === freshSelected.id &&
+          prev.version > freshSelected.version
+            ? prev
+            : freshSelected,
+        );
+      } else {
+        setSelectedTask(null);
+        setComments([]);
+        setIsDetailModalOpen(false);
+      }
+    }
   }, []);
 
   // Realtime subscription for Operator domain invalidations
@@ -170,29 +210,18 @@ export function AuthenticatedApp({
                   applyTaskUpdate(freshTask);
                 } else {
                   fetchTasks(client)
-                    .then(setTasks)
+                    .then(reconcileFreshTasks)
                     .catch(() => {});
                 }
               })
               .catch(() => {
                 fetchTasks(client)
-                  .then(setTasks)
+                  .then(reconcileFreshTasks)
                   .catch(() => {});
               });
           } else {
             fetchTasks(client)
-              .then((freshTasks) => {
-                setTasks(freshTasks);
-                const currentSelected = selectedTaskRef.current;
-                if (currentSelected) {
-                  const freshSelected = freshTasks.find(
-                    (t) => t.id === currentSelected.id,
-                  );
-                  if (freshSelected) {
-                    setSelectedTask(freshSelected);
-                  }
-                }
-              })
+              .then(reconcileFreshTasks)
               .catch(() => {});
           }
         } else if (event.resource === "label") {
@@ -223,26 +252,21 @@ export function AuthenticatedApp({
         ])
           .then(([freshTasks, freshLabels]) => {
             if (freshTasks !== null) {
-              setTasks(freshTasks);
+              reconcileFreshTasks(freshTasks);
+              const currentSelected = selectedTaskRef.current;
+              if (
+                currentSelected &&
+                freshTasks.some((t) => t.id === currentSelected.id)
+              ) {
+                fetchComments(client, currentSelected.id)
+                  .then((freshComments) => {
+                    setComments(freshComments);
+                  })
+                  .catch(() => {});
+              }
             }
             if (freshLabels !== null) {
               setLabels(freshLabels);
-            }
-            const currentSelected = selectedTaskRef.current;
-            if (currentSelected) {
-              if (freshTasks !== null) {
-                const freshSelected = freshTasks.find(
-                  (t) => t.id === currentSelected.id,
-                );
-                if (freshSelected) {
-                  setSelectedTask(freshSelected);
-                }
-              }
-              fetchComments(client, currentSelected.id)
-                .then((freshComments) => {
-                  setComments(freshComments);
-                })
-                .catch(() => {});
             }
           })
           .catch(() => {});
@@ -252,7 +276,7 @@ export function AuthenticatedApp({
     return () => {
       subscription.unsubscribe();
     };
-  }, [client, userId, applyTaskUpdate]);
+  }, [client, userId, applyTaskUpdate, reconcileFreshTasks]);
 
   const selectedTaskId = selectedTask?.id;
   useEffect(() => {
@@ -289,7 +313,7 @@ export function AuthenticatedApp({
         fetchTaskById(client, taskId).catch(() => null),
       ]);
       if (freshTasks !== null) {
-        setTasks(freshTasks);
+        reconcileFreshTasks(freshTasks);
       }
       if (freshTask) {
         applyTaskUpdate(freshTask);
@@ -297,6 +321,13 @@ export function AuthenticatedApp({
         const matching = freshTasks.find((t) => t.id === taskId);
         if (matching) {
           applyTaskUpdate(matching);
+        } else {
+          const currentSelected = selectedTaskRef.current;
+          if (currentSelected?.id === taskId) {
+            setSelectedTask(null);
+            setComments([]);
+            setIsDetailModalOpen(false);
+          }
         }
       }
       const conflictMsg =
@@ -304,7 +335,7 @@ export function AuthenticatedApp({
       setErrorMessage(conflictMsg);
       return new Error(conflictMsg);
     },
-    [client, applyTaskUpdate],
+    [client, applyTaskUpdate, reconcileFreshTasks],
   );
 
   const handleCreateTask = useCallback(
@@ -348,12 +379,7 @@ export function AuthenticatedApp({
     async (task: Task) => {
       setErrorMessage(null);
       try {
-        const completed = await completeTask(
-          client,
-          task.id,
-          undefined,
-          task.version,
-        );
+        const completed = await completeTask(client, task.id, task.version);
         applyTaskUpdate(completed);
       } catch (err) {
         if (isVersionConflictError(err)) {

@@ -3,11 +3,13 @@
 -- 1. Updated api.complete_task supporting version CAS
 DROP FUNCTION IF EXISTS api.complete_task(UUID, TIMESTAMPTZ);
 DROP FUNCTION IF EXISTS api.complete_task(UUID, TIMESTAMPTZ, INTEGER);
+DROP FUNCTION IF EXISTS api.complete_task(UUID, INTEGER, TIMESTAMPTZ);
+DROP FUNCTION IF EXISTS api.complete_task(UUID, INTEGER);
 
 CREATE OR REPLACE FUNCTION api.complete_task(
     id UUID,
-    completed_at TIMESTAMPTZ DEFAULT now(),
-    expected_version INTEGER DEFAULT NULL
+    expected_version INTEGER,
+    completed_at TIMESTAMPTZ DEFAULT now()
 )
 RETURNS api.tasks
 LANGUAGE plpgsql
@@ -19,6 +21,11 @@ DECLARE
     v_task_id UUID;
     v_result api.tasks;
 BEGIN
+    IF complete_task.expected_version IS NULL THEN
+        RAISE EXCEPTION 'expected_version is required'
+            USING ERRCODE = '22004';
+    END IF;
+
     SELECT * INTO v_task
     FROM public.tasks
     WHERE public.tasks.id = complete_task.id
@@ -29,7 +36,7 @@ BEGIN
         RAISE EXCEPTION 'Task not found or unauthorized';
     END IF;
 
-    IF complete_task.expected_version IS NOT NULL AND v_task.version <> complete_task.expected_version THEN
+    IF v_task.version <> complete_task.expected_version THEN
         RAISE EXCEPTION 'Task version conflict: expected %, found %', complete_task.expected_version, v_task.version
             USING ERRCODE = 'P0003';
     END IF;
@@ -48,7 +55,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION api.complete_task(UUID, TIMESTAMPTZ, INTEGER) TO authenticated;
+GRANT EXECUTE ON FUNCTION api.complete_task(UUID, INTEGER, TIMESTAMPTZ) TO authenticated;
 
 -- 2. Updated api.uncomplete_task supporting version CAS
 DROP FUNCTION IF EXISTS api.uncomplete_task(UUID);
@@ -56,7 +63,7 @@ DROP FUNCTION IF EXISTS api.uncomplete_task(UUID, INTEGER);
 
 CREATE OR REPLACE FUNCTION api.uncomplete_task(
     id UUID,
-    expected_version INTEGER DEFAULT NULL
+    expected_version INTEGER
 )
 RETURNS api.tasks
 LANGUAGE plpgsql
@@ -68,6 +75,11 @@ DECLARE
     v_task_id UUID;
     v_result api.tasks;
 BEGIN
+    IF uncomplete_task.expected_version IS NULL THEN
+        RAISE EXCEPTION 'expected_version is required'
+            USING ERRCODE = '22004';
+    END IF;
+
     SELECT * INTO v_task
     FROM public.tasks
     WHERE public.tasks.id = uncomplete_task.id
@@ -78,7 +90,7 @@ BEGIN
         RAISE EXCEPTION 'Task not found or unauthorized';
     END IF;
 
-    IF uncomplete_task.expected_version IS NOT NULL AND v_task.version <> uncomplete_task.expected_version THEN
+    IF v_task.version <> uncomplete_task.expected_version THEN
         RAISE EXCEPTION 'Task version conflict: expected %, found %', uncomplete_task.expected_version, v_task.version
             USING ERRCODE = 'P0003';
     END IF;
@@ -190,7 +202,7 @@ BEGIN
             true
         );
     EXCEPTION WHEN OTHERS THEN
-        RAISE WARNING 'Failed to send broadcast invalidation: %', SQLERRM;
+        RAISE WARNING 'resource invalidation broadcast failed for %: %', v_resource, SQLERRM;
     END;
 
     RETURN COALESCE(NEW, OLD);

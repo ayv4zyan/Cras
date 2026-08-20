@@ -67,6 +67,8 @@ export interface RealtimeSubscription {
   readonly unsubscribe: () => Promise<void> | void;
 }
 
+const topicTeardownPromises = new Map<string, Promise<void>>();
+
 /**
  * Subscribes to the Operator-authorized Realtime channel to receive
  * targeted domain invalidation events and trigger precise cache refetches.
@@ -84,56 +86,113 @@ export function subscribeToInvalidations({
   }
 
   const channelName = `operator:${operatorId}`;
-  let isInitialConnect = true;
+  let isCancelled = false;
+  let currentChannel: RealtimeChannel | null = null;
   let wasDisconnected = false;
+  let isInitialConnect = true;
 
-  const channel: RealtimeChannel = client.channel(channelName, {
-    config: {
-      private: true,
-    },
-  });
-  if (!channel || typeof channel.on !== "function") {
-    return {
-      unsubscribe: () => {},
-    };
-  }
+  const setupChannel = (channel: RealtimeChannel) => {
+    currentChannel = channel;
+    channel
+      .on(
+        "broadcast",
+        { event: "invalidate" },
+        (event: { payload?: unknown }) => {
+          if (isCancelled) return;
+          const parsed = parseInvalidationPayload(event.payload);
+          if (parsed) {
+            onInvalidate(parsed);
+          }
+        },
+      )
+      .subscribe((status: string) => {
+        if (isCancelled) return;
+        if (status === "SUBSCRIBED") {
+          if (!isInitialConnect && wasDisconnected) {
+            onReconnect?.();
+          }
+          isInitialConnect = false;
+          wasDisconnected = false;
+        } else if (
+          status === "CLOSED" ||
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT"
+        ) {
+          wasDisconnected = true;
+        }
+      });
+  };
 
-  channel
-    .on(
-      "broadcast",
-      { event: "invalidate" },
-      (event: { payload?: unknown }) => {
-        const parsed = parseInvalidationPayload(event.payload);
-        if (parsed) {
-          onInvalidate(parsed);
-        }
-      },
-    )
-    .subscribe((status: string) => {
-      if (status === "SUBSCRIBED") {
-        if (!isInitialConnect && wasDisconnected) {
-          onReconnect?.();
-        }
-        isInitialConnect = false;
-        wasDisconnected = false;
-      } else if (
-        status === "CLOSED" ||
-        status === "CHANNEL_ERROR" ||
-        status === "TIMED_OUT"
-      ) {
-        wasDisconnected = true;
+  const pendingTeardown = topicTeardownPromises.get(channelName);
+  let initPromise: Promise<void>;
+
+  if (pendingTeardown) {
+    initPromise = (async () => {
+      try {
+        await pendingTeardown;
+      } catch {
+        // ignore teardown errors
       }
+      if (isCancelled) return;
+      const channel = client.channel(channelName, {
+        config: {
+          private: true,
+        },
+      });
+      if (channel && typeof channel.on === "function") {
+        setupChannel(channel);
+      }
+    })();
+  } else {
+    const channel = client.channel(channelName, {
+      config: {
+        private: true,
+      },
     });
+    if (channel && typeof channel.on === "function") {
+      setupChannel(channel);
+    }
+    initPromise = Promise.resolve();
+  }
 
   return {
     unsubscribe: async () => {
-      if (typeof client.removeChannel === "function") {
-        await client.removeChannel(channel);
-        return;
-      }
-      if (typeof channel.unsubscribe === "function") {
-        await channel.unsubscribe();
-        return;
+      isCancelled = true;
+      const ch = currentChannel;
+      currentChannel = null;
+
+      const teardown = (async () => {
+        let targetChannel = ch;
+        if (!targetChannel) {
+          await initPromise;
+          targetChannel = currentChannel;
+          currentChannel = null;
+        }
+
+        if (targetChannel) {
+          const clientWithRemove = client as {
+            removeChannel?: (ch: RealtimeChannel) => Promise<unknown>;
+          };
+          if (typeof clientWithRemove.removeChannel === "function") {
+            await clientWithRemove.removeChannel(targetChannel);
+          } else {
+            const channelWithUnsub = targetChannel as {
+              unsubscribe?: () => Promise<unknown>;
+            };
+            if (typeof channelWithUnsub.unsubscribe === "function") {
+              await channelWithUnsub.unsubscribe();
+            }
+          }
+        }
+      })();
+
+      topicTeardownPromises.set(channelName, teardown);
+      try {
+        await teardown;
+      } finally {
+        if (topicTeardownPromises.get(channelName) === teardown) {
+          topicTeardownPromises.delete(channelName);
+        }
       }
     },
   };

@@ -518,7 +518,7 @@ describe("Task Domain Service Seam", () => {
   });
 
   describe("completeTask", () => {
-    it("calls complete_task RPC on api schema omitting completed_at when not supplied", async () => {
+    it("calls complete_task RPC on api schema with expected_version", async () => {
       const rawCompleted = {
         id: "550e8400-e29b-41d4-a716-446655440000",
         title: "Draft release notes",
@@ -542,11 +542,13 @@ describe("Task Domain Service Seam", () => {
       const task = await completeTask(
         mockClient,
         "550e8400-e29b-41d4-a716-446655440000",
+        1,
       );
 
       expect(mockSchema).toHaveBeenCalledWith("api");
       expect(mockRpc).toHaveBeenCalledWith("complete_task", {
         id: "550e8400-e29b-41d4-a716-446655440000",
+        expected_version: 1,
       });
       expect(task.completedAt).toBe("2026-08-18T20:15:00.000Z");
       expect(task.version).toBe(2);
@@ -576,51 +578,17 @@ describe("Task Domain Service Seam", () => {
       const task = await completeTask(
         mockClient,
         "550e8400-e29b-41d4-a716-446655440000",
+        1,
         "2026-08-18T20:15:00.000Z",
       );
 
       expect(mockSchema).toHaveBeenCalledWith("api");
       expect(mockRpc).toHaveBeenCalledWith("complete_task", {
         id: "550e8400-e29b-41d4-a716-446655440000",
+        expected_version: 1,
         completed_at: "2026-08-18T20:15:00.000Z",
       });
       expect(task.completedAt).toBe("2026-08-18T20:15:00.000Z");
-      expect(task.version).toBe(2);
-    });
-
-    it("passes expected_version to complete_task RPC when supplied", async () => {
-      const rawCompleted = {
-        id: "550e8400-e29b-41d4-a716-446655440000",
-        title: "Draft release notes",
-        description: null,
-        priority: 4,
-        plan: null,
-        labels: [],
-        parentId: null,
-        completedAt: "2026-08-18T20:15:00.000Z",
-        createdAt: "2026-08-18T20:00:00.000Z",
-        updatedAt: "2026-08-18T20:15:00.000Z",
-        version: 2,
-      };
-
-      const mockRpc = vi
-        .fn()
-        .mockResolvedValue({ data: rawCompleted, error: null });
-      const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
-      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
-
-      const task = await completeTask(
-        mockClient,
-        "550e8400-e29b-41d4-a716-446655440000",
-        "2026-08-18T20:15:00.000Z",
-        1,
-      );
-
-      expect(mockRpc).toHaveBeenCalledWith("complete_task", {
-        id: "550e8400-e29b-41d4-a716-446655440000",
-        completed_at: "2026-08-18T20:15:00.000Z",
-        expected_version: 1,
-      });
       expect(task.version).toBe(2);
     });
 
@@ -636,12 +604,7 @@ describe("Task Domain Service Seam", () => {
       const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
 
       await expect(
-        completeTask(
-          mockClient,
-          "550e8400-e29b-41d4-a716-446655440000",
-          undefined,
-          1,
-        ),
+        completeTask(mockClient, "550e8400-e29b-41d4-a716-446655440000", 1),
       ).rejects.toThrow(/Task version conflict: expected 1, found 2/);
     });
   });
@@ -671,47 +634,15 @@ describe("Task Domain Service Seam", () => {
       const task = await uncompleteTask(
         mockClient,
         "550e8400-e29b-41d4-a716-446655440000",
+        2,
       );
 
       expect(mockSchema).toHaveBeenCalledWith("api");
       expect(mockRpc).toHaveBeenCalledWith("uncomplete_task", {
         id: "550e8400-e29b-41d4-a716-446655440000",
-      });
-      expect(task.completedAt).toBeNull();
-      expect(task.version).toBe(3);
-    });
-
-    it("passes expected_version to uncomplete_task RPC when supplied", async () => {
-      const rawUncompleted = {
-        id: "550e8400-e29b-41d4-a716-446655440000",
-        title: "Draft release notes",
-        description: null,
-        priority: 4,
-        plan: null,
-        labels: [],
-        parentId: null,
-        completedAt: null,
-        createdAt: "2026-08-18T20:00:00.000Z",
-        updatedAt: "2026-08-18T20:20:00.000Z",
-        version: 3,
-      };
-
-      const mockRpc = vi
-        .fn()
-        .mockResolvedValue({ data: rawUncompleted, error: null });
-      const mockSchema = vi.fn().mockReturnValue({ rpc: mockRpc });
-      const mockClient = { schema: mockSchema } as unknown as SupabaseClient;
-
-      const task = await uncompleteTask(
-        mockClient,
-        "550e8400-e29b-41d4-a716-446655440000",
-        2,
-      );
-
-      expect(mockRpc).toHaveBeenCalledWith("uncomplete_task", {
-        id: "550e8400-e29b-41d4-a716-446655440000",
         expected_version: 2,
       });
+      expect(task.completedAt).toBeNull();
       expect(task.version).toBe(3);
     });
 

@@ -157,20 +157,18 @@ export async function updateTask(
 
 /**
  * Completes a task via the api.complete_task RPC, recording a completion timestamp.
- * Supports expectedVersion for optimistic version CAS.
+ * Requires expectedVersion for optimistic version CAS.
  */
 export async function completeTask(
   client: SupabaseClient,
   taskId: string,
+  expectedVersion: number,
   completedAt?: string,
-  expectedVersion?: number,
 ): Promise<Task> {
   const { data, error } = await client.schema("api").rpc("complete_task", {
     id: taskId,
+    expected_version: expectedVersion,
     ...(completedAt !== undefined ? { completed_at: completedAt } : {}),
-    ...(expectedVersion !== undefined
-      ? { expected_version: expectedVersion }
-      : {}),
   });
 
   if (error) {
@@ -188,18 +186,16 @@ export async function completeTask(
 
 /**
  * Uncompletes a task via the api.uncomplete_task RPC, removing completedAt.
- * Supports expectedVersion for optimistic version CAS.
+ * Requires expectedVersion for optimistic version CAS.
  */
 export async function uncompleteTask(
   client: SupabaseClient,
   taskId: string,
-  expectedVersion?: number,
+  expectedVersion: number,
 ): Promise<Task> {
   const { data, error } = await client.schema("api").rpc("uncomplete_task", {
     id: taskId,
-    ...(expectedVersion !== undefined
-      ? { expected_version: expectedVersion }
-      : {}),
+    expected_version: expectedVersion,
   });
 
   if (error) {

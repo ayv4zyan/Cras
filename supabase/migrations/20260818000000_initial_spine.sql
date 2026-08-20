@@ -2,7 +2,7 @@
 -- Dedicated api schema for client contract views and invoker RPCs
 CREATE SCHEMA IF NOT EXISTS api;
 
--- Grant usage to authenticated and anon roles
+-- Grant usage to the authenticated role only; anon has no access
 GRANT USAGE ON SCHEMA api TO authenticated;
 GRANT USAGE ON SCHEMA public TO authenticated;
 
@@ -62,8 +62,8 @@ CREATE POLICY "Operators manage their own settings"
     ON public.settings
     FOR ALL
     TO authenticated
-    USING (operator_id = auth.uid())
-    WITH CHECK (operator_id = auth.uid());
+    USING (operator_id = (select auth.uid()))
+    WITH CHECK (operator_id = (select auth.uid()));
 
 --------------------------------------------------
 -- 3. Tasks, Labels, Comments, and Joins
@@ -85,8 +85,8 @@ CREATE POLICY "Operators manage their own labels"
     ON public.labels
     FOR ALL
     TO authenticated
-    USING (operator_id = auth.uid())
-    WITH CHECK (operator_id = auth.uid());
+    USING (operator_id = (select auth.uid()))
+    WITH CHECK (operator_id = (select auth.uid()));
 
 CREATE TABLE IF NOT EXISTS public.tasks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -107,20 +107,38 @@ CREATE TABLE IF NOT EXISTS public.tasks (
 
 -- Constraint: A subtask cannot itself have children (one-level nesting)
 CREATE OR REPLACE FUNCTION public.check_subtask_nesting()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
 BEGIN
     IF NEW.parent_id IS NOT NULL THEN
+        IF NEW.parent_id = NEW.id THEN
+            RAISE EXCEPTION 'A task cannot be its own parent';
+        END IF;
+
         -- Check if parent is itself a subtask
         IF EXISTS (
             SELECT 1 FROM public.tasks
             WHERE id = NEW.parent_id AND operator_id = NEW.operator_id AND parent_id IS NOT NULL
+            FOR SHARE
         ) THEN
             RAISE EXCEPTION 'Subtasks cannot have children (one-level nesting only)';
+        END IF;
+
+        -- Check if this task already has children
+        IF EXISTS (
+            SELECT 1 FROM public.tasks
+            WHERE parent_id = NEW.id AND operator_id = NEW.operator_id
+            FOR SHARE
+        ) THEN
+            RAISE EXCEPTION 'A task with children cannot become a subtask (one-level nesting only)';
         END IF;
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 CREATE TRIGGER trg_tasks_subtask_nesting
     BEFORE INSERT OR UPDATE OF parent_id ON public.tasks
@@ -133,8 +151,8 @@ CREATE POLICY "Operators manage their own tasks"
     ON public.tasks
     FOR ALL
     TO authenticated
-    USING (operator_id = auth.uid())
-    WITH CHECK (operator_id = auth.uid());
+    USING (operator_id = (select auth.uid()))
+    WITH CHECK (operator_id = (select auth.uid()));
 
 CREATE TABLE IF NOT EXISTS public.task_labels (
     task_id UUID NOT NULL,
@@ -153,8 +171,8 @@ CREATE POLICY "Operators manage their own task labels"
     ON public.task_labels
     FOR ALL
     TO authenticated
-    USING (operator_id = auth.uid())
-    WITH CHECK (operator_id = auth.uid());
+    USING (operator_id = (select auth.uid()))
+    WITH CHECK (operator_id = (select auth.uid()));
 
 CREATE TABLE IF NOT EXISTS public.comments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -172,8 +190,8 @@ CREATE POLICY "Operators manage their own comments"
     ON public.comments
     FOR ALL
     TO authenticated
-    USING (operator_id = auth.uid())
-    WITH CHECK (operator_id = auth.uid());
+    USING (operator_id = (select auth.uid()))
+    WITH CHECK (operator_id = (select auth.uid()));
 
 --------------------------------------------------
 -- 4. Usage-Security Records
@@ -193,8 +211,14 @@ ALTER TABLE public.usage_security_records ENABLE ROW LEVEL SECURITY;
 -- usage_security_records is accessed only by trusted Edge Functions via service_role
 
 --------------------------------------------------
--- 5. Canonical API Views (security_invoker)
+-- 5. Canonical API Views & Indexes (security_invoker)
 --------------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_tasks_operator ON public.tasks (operator_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_operator ON public.tasks (parent_id, operator_id);
+CREATE INDEX IF NOT EXISTS idx_labels_operator ON public.labels (operator_id);
+CREATE INDEX IF NOT EXISTS idx_task_labels_label_operator ON public.task_labels (label_id, operator_id);
+CREATE INDEX IF NOT EXISTS idx_comments_task_operator ON public.comments (task_id, operator_id);
+
 CREATE OR REPLACE VIEW api.tasks
 WITH (security_invoker = true) AS
 SELECT

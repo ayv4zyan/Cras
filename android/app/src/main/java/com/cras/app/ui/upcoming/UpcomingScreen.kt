@@ -331,8 +331,7 @@ private fun UpcomingTaskCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
-                onClick = { onCompleteTask(task.id) },
-                modifier = Modifier.size(24.dp)
+                onClick = { onCompleteTask(task.id) }
             ) {
                 Icon(
                     imageVector = Icons.Default.RadioButtonUnchecked,
@@ -379,7 +378,7 @@ private fun UpcomingTaskCard(
                                 Icon(
                                     imageVector = if (isOverdue) Icons.Default.ErrorOutline else Icons.Default.AccessTime,
                                     contentDescription = null,
-                                    tint = if (isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer,
+                                    tint = if (isOverdue) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -395,7 +394,7 @@ private fun UpcomingTaskCard(
                                 Text(
                                     text = labelText,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer
+                                    color = if (isOverdue) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
                                 )
                             }
                         }

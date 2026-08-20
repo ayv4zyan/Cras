@@ -36,7 +36,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -53,7 +57,10 @@ import com.cras.app.models.Task
 import com.cras.app.ui.inbox.CreateTaskInput
 import com.cras.app.ui.inbox.TodayUiState
 import com.cras.app.ui.labels.TaskLabelBadges
+import kotlinx.coroutines.delay
+import java.time.Duration
 import java.time.LocalDate
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -66,16 +73,30 @@ fun TodayScreen(
     effectiveDefault: TimedPlanType = TimedPlanType.INSTANT,
     isCreatingTask: Boolean = false,
     createTaskError: String? = null,
-    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>, plan: Plan?) -> Unit,
+    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>, plan: Plan?, onSuccess: () -> Unit) -> Unit,
     onCompleteTask: (String) -> Unit,
     onSelectTask: (Task) -> Unit,
     onOpenLabelManager: () -> Unit = {},
     onRefresh: () -> Unit,
     onSignOut: () -> Unit
 ) {
-    val todayDateStr = remember { getDeviceLocalDate() }
-    val todayFormatted = remember {
-        LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE, MMM d", Locale.ENGLISH))
+    var todayDateStr by remember { mutableStateOf(getDeviceLocalDate()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val now = ZonedDateTime.now()
+            val nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay(now.zone)
+            val millisUntilMidnight = Duration.between(now, nextMidnight).toMillis() + 50L
+            delay(millisUntilMidnight.coerceAtLeast(1000L))
+            todayDateStr = getDeviceLocalDate()
+            onRefresh()
+        }
+    }
+    val todayFormatted = remember(todayDateStr) {
+        try {
+            LocalDate.parse(todayDateStr).format(DateTimeFormatter.ofPattern("EEEE, MMM d", Locale.ENGLISH))
+        } catch (_: Exception) {
+            LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE, MMM d", Locale.ENGLISH))
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -240,8 +261,8 @@ fun TodayScreen(
                         contentPadding = PaddingValues(bottom = 80.dp)
                     ) {
                         items(todayState.tasks, key = { it.id }) { task ->
-                            val overdue = isTaskOverdue(task)
-                            val planDisplay = formatPlanDisplay(task.plan)
+                            val overdue = remember(task.plan, todayDateStr) { isTaskOverdue(task) }
+                            val planDisplay = remember(task.plan, todayDateStr) { formatPlanDisplay(task.plan) }
 
                             Card(
                                 modifier = Modifier
@@ -269,8 +290,7 @@ fun TodayScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     IconButton(
-                                        onClick = { onCompleteTask(task.id) },
-                                        modifier = Modifier.size(24.dp)
+                                        onClick = { onCompleteTask(task.id) }
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.RadioButtonUnchecked,
@@ -318,7 +338,7 @@ fun TodayScreen(
                                                             Icon(
                                                                 imageVector = Icons.Default.ErrorOutline,
                                                                 contentDescription = "Overdue",
-                                                                tint = MaterialTheme.colorScheme.error,
+                                                                tint = MaterialTheme.colorScheme.onErrorContainer,
                                                                 modifier = Modifier.size(12.dp)
                                                             )
                                                             Spacer(modifier = Modifier.width(4.dp))
@@ -343,7 +363,7 @@ fun TodayScreen(
                                                         Text(
                                                             text = labelText,
                                                             style = MaterialTheme.typography.labelSmall,
-                                                            color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer
+                                                            color = if (overdue) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
                                                         )
                                                     }
                                                 }

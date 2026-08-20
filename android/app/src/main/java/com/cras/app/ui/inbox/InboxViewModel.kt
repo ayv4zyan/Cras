@@ -23,6 +23,8 @@ import com.cras.app.models.Comment
 import com.cras.app.models.Label
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -101,6 +103,9 @@ class InboxViewModel(
     private val _comments = MutableStateFlow<List<Comment>>(emptyList())
     val comments: StateFlow<List<Comment>> = _comments.asStateFlow()
 
+    private val _commentsError = MutableStateFlow<String?>(null)
+    val commentsError: StateFlow<String?> = _commentsError.asStateFlow()
+
     private val _selectedTask = MutableStateFlow<Task?>(null)
     val selectedTask: StateFlow<Task?> = _selectedTask.asStateFlow()
 
@@ -119,10 +124,14 @@ class InboxViewModel(
     init {
         viewModelScope.launch {
             authService.currentSession.collect { session ->
+                loadJob?.cancel()
+                loadJob = null
                 if (session != null) {
                     _authState.value = AuthUiState.Authenticated(session)
-                    loadTasksInternal(session)
-                    loadSettingsInternal(session)
+                    loadJob = viewModelScope.launch {
+                        loadTasksInternal(session)
+                        loadSettingsInternal(session)
+                    }
                 } else {
                     _authState.value = AuthUiState.Unauthenticated()
                     _allTasks.value = emptyList()
@@ -133,6 +142,7 @@ class InboxViewModel(
                     _effectiveTimedPlanType.value = TimedPlanType.INSTANT
                     _labels.value = emptyList()
                     _comments.value = emptyList()
+                    _commentsError.value = null
                     _selectedTask.value = null
                 }
             }
@@ -152,6 +162,8 @@ class InboxViewModel(
             _authState.value = AuthUiState.Loading
             try {
                 authService.signInWithGoogleIdToken(idToken, nonce)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _authState.value = AuthUiState.Unauthenticated(e.message ?: "Sign in failed")
             }
@@ -159,18 +171,30 @@ class InboxViewModel(
     }
 
     fun signOut() {
+        loadJob?.cancel()
+        loadJob = null
         viewModelScope.launch {
             authService.signOut()
         }
     }
 
+    private var loadJob: Job? = null
+
     fun loadTasks() {
         val currentAuth = _authState.value
         if (currentAuth is AuthUiState.Authenticated) {
-            viewModelScope.launch {
+            loadJob?.cancel()
+            loadJob = viewModelScope.launch {
                 loadTasksInternal(currentAuth.session)
                 loadSettingsInternal(currentAuth.session)
             }
+        }
+    }
+
+    private fun triggerLoadTasks(session: OperatorSession) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            loadTasksInternal(session)
         }
     }
 
@@ -178,24 +202,50 @@ class InboxViewModel(
         if (settingsService == null) return
         try {
             val effective = settingsService.fetchEffectiveTimedPlanType(session)
-            _effectiveTimedPlanType.value = effective
+            val currentAuth = _authState.value
+            if (currentAuth is AuthUiState.Authenticated && currentAuth.session == session) {
+                _effectiveTimedPlanType.value = effective
+            }
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             // Keep current value on error
         }
     }
 
     private suspend fun loadTasksInternal(session: OperatorSession) {
-        _inboxState.value = InboxUiState.Loading
-        _todayState.value = TodayUiState.Loading
-        _upcomingState.value = UpcomingUiState.Loading
-        _completedState.value = CompletedUiState.Loading
+        if (_inboxState.value !is InboxUiState.Success) {
+            _inboxState.value = InboxUiState.Loading
+        }
+        if (_todayState.value !is TodayUiState.Success) {
+            _todayState.value = TodayUiState.Loading
+        }
+        if (_upcomingState.value !is UpcomingUiState.Success) {
+            _upcomingState.value = UpcomingUiState.Loading
+        }
+        if (_completedState.value !is CompletedUiState.Success) {
+            _completedState.value = CompletedUiState.Loading
+        }
         try {
             val allTasksList = taskService.fetchTasks(session)
-            val allLabels = labelService.fetchLabels(session)
+            val labelsResult = runCatching { labelService.fetchLabels(session) }
+                .onFailure { if (it is CancellationException) throw it }
             val commentsResult = runCatching { commentService.fetchComments(session) }
+                .onFailure { if (it is CancellationException) throw it }
+
+            val currentAuth = _authState.value
+            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) {
+                return
+            }
+
             _allTasks.value = allTasksList
-            _labels.value = allLabels
-            commentsResult.onSuccess { _comments.value = it }
+            labelsResult.onSuccess { _labels.value = it }
+            commentsResult.onSuccess {
+                _comments.value = it
+                _commentsError.value = null
+            }.onFailure {
+                _commentsError.value = it.message ?: "Failed to fetch comments"
+            }
 
             val now = nowProvider()
             val zoneId = zoneIdProvider()
@@ -234,7 +284,13 @@ class InboxViewModel(
             if (currentSelected != null) {
                 _selectedTask.value = allTasksList.find { it.id == currentSelected.id }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            val currentAuth = _authState.value
+            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) {
+                return
+            }
             val errorMsg = e.message ?: "Failed to load tasks"
             _inboxState.value = InboxUiState.Error(errorMsg)
             _todayState.value = TodayUiState.Error(errorMsg)
@@ -265,6 +321,8 @@ class InboxViewModel(
                 )
                 _labels.value = _labels.value + created
                 onSuccess(created)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to create label"
                 _createLabelError.value = errorMsg
@@ -295,8 +353,10 @@ class InboxViewModel(
                     params = UpdateLabelParams(id = id, name = name, color = color)
                 )
                 _labels.value = _labels.value.map { if (it.id == id) updated else it }
-                loadTasksInternal(currentAuth.session)
+                triggerLoadTasks(currentAuth.session)
                 onSuccess(updated)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to update label"
                 onError(errorMsg)
@@ -319,8 +379,10 @@ class InboxViewModel(
             try {
                 labelService.deleteLabel(currentAuth.session, id)
                 _labels.value = _labels.value.filterNot { it.id == id }
-                loadTasksInternal(currentAuth.session)
+                triggerLoadTasks(currentAuth.session)
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to delete label"
                 onError(errorMsg)
@@ -354,6 +416,8 @@ class InboxViewModel(
                 )
                 _comments.value = _comments.value + created
                 onSuccess(created)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to create comment"
                 onError(errorMsg)
@@ -394,8 +458,10 @@ class InboxViewModel(
                         parentId = parentId
                     )
                 )
-                loadTasksInternal(currentAuth.session)
+                triggerLoadTasks(currentAuth.session)
                 onSuccess(created)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Failed to create subtask"
                 onError(errorMsg)
@@ -408,7 +474,8 @@ class InboxViewModel(
         description: String? = null,
         priority: Int = 4,
         labels: List<String> = emptyList(),
-        plan: Plan? = null
+        plan: Plan? = null,
+        onSuccess: () -> Unit = {}
     ) {
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
@@ -430,7 +497,10 @@ class InboxViewModel(
                         labels = labels
                     )
                 )
-                loadTasksInternal(currentAuth.session)
+                triggerLoadTasks(currentAuth.session)
+                onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _createTaskError.value = e.message ?: "Failed to create task"
             } finally {
@@ -439,10 +509,11 @@ class InboxViewModel(
         }
     }
 
-    fun updateTask(
-        params: UpdateTaskParams,
-        onSuccess: () -> Unit = {},
-        onError: (String) -> Unit = {}
+    private fun mutateTask(
+        defaultError: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit,
+        mutation: suspend (OperatorSession) -> Task
     ) {
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) {
@@ -452,16 +523,29 @@ class InboxViewModel(
 
         viewModelScope.launch {
             try {
-                val updatedTask = taskService.updateTask(currentAuth.session, params)
-                _selectedTask.value = updatedTask
-                loadTasksInternal(currentAuth.session)
+                val updatedTask = mutation(currentAuth.session)
+                if (_selectedTask.value?.id == updatedTask.id) {
+                    _selectedTask.value = updatedTask
+                }
+                triggerLoadTasks(currentAuth.session)
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                val errorMsg = e.message ?: "Failed to update task"
-                loadTasksInternal(currentAuth.session)
+                val errorMsg = e.message ?: defaultError
+                // Reload to recover canonical state after a conflict or a rejection.
+                triggerLoadTasks(currentAuth.session)
                 onError(errorMsg)
             }
         }
+    }
+
+    fun updateTask(
+        params: UpdateTaskParams,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) = mutateTask("Failed to update task", onSuccess, onError) { session ->
+        taskService.updateTask(session, params)
     }
 
     fun completeTask(
@@ -469,50 +553,16 @@ class InboxViewModel(
         completedAt: String? = null,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
-    ) {
-        val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated) {
-            onError("Not authenticated")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                val completedTask = taskService.completeTask(currentAuth.session, taskId, completedAt)
-                _selectedTask.value = completedTask
-                loadTasksInternal(currentAuth.session)
-                onSuccess()
-            } catch (e: Exception) {
-                val errorMsg = e.message ?: "Failed to complete task"
-                loadTasksInternal(currentAuth.session)
-                onError(errorMsg)
-            }
-        }
+    ) = mutateTask("Failed to complete task", onSuccess, onError) { session ->
+        taskService.completeTask(session, taskId, completedAt)
     }
 
     fun uncompleteTask(
         taskId: String,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
-    ) {
-        val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated) {
-            onError("Not authenticated")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                val uncompletedTask = taskService.uncompleteTask(currentAuth.session, taskId)
-                _selectedTask.value = uncompletedTask
-                loadTasksInternal(currentAuth.session)
-                onSuccess()
-            } catch (e: Exception) {
-                val errorMsg = e.message ?: "Failed to uncomplete task"
-                loadTasksInternal(currentAuth.session)
-                onError(errorMsg)
-            }
-        }
+    ) = mutateTask("Failed to uncomplete task", onSuccess, onError) { session ->
+        taskService.uncompleteTask(session, taskId)
     }
 
     fun updateOperatorTimedPlanType(
@@ -532,6 +582,8 @@ class InboxViewModel(
                 val effective = settingsService.fetchEffectiveTimedPlanType(currentAuth.session)
                 _effectiveTimedPlanType.value = effective
                 onSuccess()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to update default timed plan type")
             }

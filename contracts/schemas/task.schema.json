@@ -6,11 +6,15 @@
   "required": [
     "id",
     "title",
+    "description",
     "priority",
+    "plan",
     "labels",
-    "version",
+    "parentId",
+    "completedAt",
     "createdAt",
-    "updatedAt"
+    "updatedAt",
+    "version"
   ],
   "properties": {
     "id": {
@@ -41,6 +45,7 @@
           "properties": {
             "date": {
               "type": "string",
+              "format": "date",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
             }
           }
@@ -55,6 +60,7 @@
             },
             "date": {
               "type": "string",
+              "format": "date",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
             },
             "time": {

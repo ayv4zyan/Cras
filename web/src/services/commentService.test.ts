@@ -26,9 +26,13 @@ describe("commentService", () => {
         },
       ];
 
-      const selectMock = vi.fn().mockResolvedValue({
+      const orderMock = vi.fn().mockResolvedValue({
         data: mockData,
         error: null,
+      });
+
+      const selectMock = vi.fn().mockReturnValue({
+        order: orderMock,
       });
 
       const fromMock = vi.fn().mockReturnValue({
@@ -44,6 +48,7 @@ describe("commentService", () => {
       expect(mockClient.schema).toHaveBeenCalledWith("api");
       expect(fromMock).toHaveBeenCalledWith("comments");
       expect(selectMock).toHaveBeenCalledWith("*");
+      expect(orderMock).toHaveBeenCalledWith("createdAt", { ascending: true });
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
       expect(result[0].content).toBe("First dated comment");
@@ -65,8 +70,12 @@ describe("commentService", () => {
         error: null,
       });
 
-      const selectMock = vi.fn().mockReturnValue({
+      const orderMock = vi.fn().mockReturnValue({
         eq: eqMock,
+      });
+
+      const selectMock = vi.fn().mockReturnValue({
+        order: orderMock,
       });
 
       const fromMock = vi.fn().mockReturnValue({
@@ -82,6 +91,7 @@ describe("commentService", () => {
         "11111111-1111-1111-1111-111111111111",
       );
 
+      expect(orderMock).toHaveBeenCalledWith("createdAt", { ascending: true });
       expect(eqMock).toHaveBeenCalledWith(
         "taskId",
         "11111111-1111-1111-1111-111111111111",
@@ -90,14 +100,16 @@ describe("commentService", () => {
     });
 
     it("returns empty array when data is null or empty", async () => {
-      const selectMock = vi.fn().mockResolvedValue({
+      const orderMock = vi.fn().mockResolvedValue({
         data: null,
         error: null,
       });
 
       (mockClient.schema as ReturnType<typeof vi.fn>).mockReturnValue({
         from: vi.fn().mockReturnValue({
-          select: selectMock,
+          select: vi.fn().mockReturnValue({
+            order: orderMock,
+          }),
         }),
       });
 
@@ -106,14 +118,16 @@ describe("commentService", () => {
     });
 
     it("throws error when Supabase query fails", async () => {
-      const selectMock = vi.fn().mockResolvedValue({
+      const orderMock = vi.fn().mockResolvedValue({
         data: null,
         error: { message: "Permission denied", code: "42501" },
       });
 
       (mockClient.schema as ReturnType<typeof vi.fn>).mockReturnValue({
         from: vi.fn().mockReturnValue({
-          select: selectMock,
+          select: vi.fn().mockReturnValue({
+            order: orderMock,
+          }),
         }),
       });
 

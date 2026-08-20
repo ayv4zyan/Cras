@@ -161,8 +161,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                     // Check unique constraint: (name, operator_id)
                     const exists = dbLabels.some(
                       (l) =>
-                        l.operator_id === currentUser.id &&
-                        l.name.toLowerCase() === name.toLowerCase(),
+                        l.operator_id === currentUser.id && l.name === name,
                     );
                     if (exists) {
                       return {
@@ -224,12 +223,12 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                         : existing.color;
 
                     // Check unique constraint on rename
-                    if (newName.toLowerCase() !== existing.name.toLowerCase()) {
+                    if (newName !== existing.name) {
                       const duplicate = dbLabels.some(
                         (l) =>
                           l.id !== val &&
                           l.operator_id === currentUser.id &&
-                          l.name.toLowerCase() === newName.toLowerCase(),
+                          l.name === newName,
                       );
                       if (duplicate) {
                         return {
@@ -326,32 +325,43 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                     );
                     return { data: mapped, error: null };
                   };
-                  return {
-                    eq: vi
-                      .fn()
-                      .mockImplementation((col: string, val: string) => {
-                        const runFilter = async () => {
-                          const base = await runQuery();
-                          if (base.error || !base.data) return base;
-                          const filtered = base.data.filter(
+                  const makeChain = (
+                    filterFn?: (item: TaskCommentContract) => boolean,
+                  ) => {
+                    const execute = async () => {
+                      const base = await runQuery();
+                      if (base.error || !base.data) return base;
+                      let data = base.data;
+                      if (filterFn) {
+                        data = data.filter(filterFn);
+                      }
+                      data = [...data].sort(
+                        (a, b) =>
+                          new Date(a.createdAt).getTime() -
+                          new Date(b.createdAt).getTime(),
+                      );
+                      return { data, error: null };
+                    };
+                    return {
+                      eq: vi
+                        .fn()
+                        .mockImplementation((col: string, val: string) => {
+                          return makeChain(
                             (c) =>
                               (c as unknown as Record<string, string>)[col] ===
                               val,
                           );
-                          return { data: filtered, error: null };
-                        };
-                        return {
-                          then: (
-                            resolve: (v: unknown) => unknown,
-                            reject?: (reason: unknown) => unknown,
-                          ) => runFilter().then(resolve, reject),
-                        };
+                        }),
+                      order: vi.fn().mockImplementation(() => {
+                        return makeChain(filterFn);
                       }),
-                    then: (
-                      resolve: (v: unknown) => unknown,
-                      reject?: (reason: unknown) => unknown,
-                    ) => runQuery().then(resolve, reject),
+                      then: (
+                        resolve: (v: unknown) => unknown,
+                        reject?: (reason: unknown) => unknown,
+                      ) => execute().then(resolve, reject),
+                    };
                   };
+                  return makeChain();
                 }),
               };
             }
@@ -510,8 +520,6 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 version: 1,
               };
 
-              dbTasks.push(newRow);
-
               const labelIds = (params.labels as string[] | undefined) ?? [];
               // Enforce foreign key constraints and operator isolation on labels
               for (const labelId of labelIds) {
@@ -528,6 +536,11 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                     },
                   });
                 }
+              }
+
+              dbTasks.push(newRow);
+
+              for (const labelId of labelIds) {
                 dbTaskLabels.push({
                   task_id: newId,
                   label_id: labelId,
@@ -607,34 +620,6 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 });
               }
 
-              const updatedRow: DbRow = {
-                ...existing,
-                title:
-                  params.title !== undefined && params.title !== null
-                    ? (params.title as string).trim()
-                    : existing.title,
-                description:
-                  params.description !== undefined
-                    ? (params.description as string | null)
-                    : existing.description,
-                priority:
-                  params.priority !== undefined && params.priority !== null
-                    ? (params.priority as number)
-                    : existing.priority,
-                plan:
-                  params.clear_plan === true
-                    ? null
-                    : params.plan !== undefined && params.plan !== null
-                      ? (params.plan as Plan)
-                      : existing.plan,
-                parent_id:
-                  params.parent_id !== undefined
-                    ? (params.parent_id as string | null)
-                    : existing.parent_id,
-                updated_at: now,
-                version: existing.version + 1,
-              };
-
               if (params.parent_id !== undefined && params.parent_id !== null) {
                 const parentTask = dbTasks.find(
                   (t) =>
@@ -677,7 +662,36 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 }
               }
 
-              dbTasks[taskIndex] = updatedRow;
+              const updatedRow: DbRow = {
+                ...existing,
+                title:
+                  params.title !== undefined && params.title !== null
+                    ? (params.title as string).trim()
+                    : existing.title,
+                description:
+                  params.clear_description === true
+                    ? null
+                    : params.description !== undefined &&
+                        params.description !== null
+                      ? (params.description as string)
+                      : existing.description,
+                priority:
+                  params.priority !== undefined && params.priority !== null
+                    ? (params.priority as number)
+                    : existing.priority,
+                plan:
+                  params.clear_plan === true
+                    ? null
+                    : params.plan !== undefined && params.plan !== null
+                      ? (params.plan as Plan)
+                      : existing.plan,
+                parent_id:
+                  params.parent_id !== undefined && params.parent_id !== null
+                    ? (params.parent_id as string)
+                    : existing.parent_id,
+                updated_at: now,
+                version: existing.version + 1,
+              };
 
               if (params.labels !== undefined && params.labels !== null) {
                 const labelIds = params.labels as string[];
@@ -713,6 +727,8 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                   });
                 }
               }
+
+              dbTasks[taskIndex] = updatedRow;
 
               const currentLabelIds = dbTaskLabels
                 .filter(
@@ -943,7 +959,10 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     });
 
     // 2. Click the task item to open TaskDetailModal and edit description and priority
-    const taskItem = screen.getByTestId(`task-item-${dbTasks[0].id}`);
+    const createdRow = dbTasks.find(
+      (t) => t.title === "Refactor task pipeline" && t.operator_id === op1.id,
+    )!;
+    const taskItem = screen.getByTestId(`task-item-${createdRow.id}`);
     fireEvent.click(taskItem);
 
     const modal = screen.getByRole("dialog", { name: /task details/i });
@@ -976,9 +995,10 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     });
 
     // Verify persisted record in database
-    expect(dbTasks[0].description).toBe("Updated description for pipeline");
-    expect(dbTasks[0].priority).toBe(1);
-    expect(dbTasks[0].version).toBe(2);
+    const updatedDbRow = dbTasks.find((t) => t.id === createdRow.id)!;
+    expect(updatedDbRow.description).toBe("Updated description for pipeline");
+    expect(updatedDbRow.priority).toBe(1);
+    expect(updatedDbRow.version).toBe(2);
   });
 
   it("proves Issue #41 Criteria 2 & 3: Completing a task records completion timestamp, removes it from Inbox, and lists in Completed view newest-first", async () => {
@@ -1524,7 +1544,10 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
       expect(screen.getByText("Optimize SQL index")).toBeInTheDocument();
     });
 
-    const taskItem = screen.getByTestId(`task-item-${dbTasks[0].id}`);
+    const createdTask = dbTasks.find(
+      (t) => t.title === "Optimize SQL index" && t.operator_id === "op-1",
+    )!;
+    const taskItem = screen.getByTestId(`task-item-${createdTask.id}`);
     expect(within(taskItem).getByText("Backend")).toBeInTheDocument();
     expect(within(taskItem).getByText("Urgent")).toBeInTheDocument();
 
@@ -1586,7 +1609,7 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
 
     // Verify persisted relationship in mock DB
     const taskLabelsInDb = dbTaskLabels.filter(
-      (tl) => tl.task_id === dbTasks[0].id && tl.operator_id === "op-1",
+      (tl) => tl.task_id === createdTask.id && tl.operator_id === "op-1",
     );
     expect(taskLabelsInDb).toHaveLength(3);
     expect(taskLabelsInDb.map((tl) => tl.label_id)).toEqual(
@@ -1632,6 +1655,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     expect(forgedCreateResult.error?.message).toContain(
       "foreign key constraint",
     );
+    expect(dbTasks.some((t) => t.title === "Bob Task with Alice Label")).toBe(
+      false,
+    );
 
     // 3. Bob creates his own task, then tries to update it with Alice's label ID -> Rejected
     const bobTaskPromise = clientOp2.schema("api").rpc("create_task", {
@@ -1649,6 +1675,11 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     expect(forgedUpdateResult.error?.message).toContain(
       "foreign key constraint",
     );
+    const bobTaskInDb = dbTasks.find((t) => t.id === bobTaskResult.data.id);
+    expect(bobTaskInDb?.version).toBe(1);
+    expect(
+      dbTaskLabels.some((tl) => tl.task_id === bobTaskResult.data.id),
+    ).toBe(false);
 
     // 4. Bob tries to update or delete Alice's label directly -> Rejected / not found
     const forgedLabelUpdate = await clientOp2
@@ -1664,6 +1695,13 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
       .select("*")
       .order("created_at");
     expect(unauthedSelect.error?.message).toBe("Unauthorized");
+
+    const unauthedInsert = await unauthedClient
+      .from("labels")
+      .insert({ name: "Ghost", color: "#ef4444" })
+      .select("*")
+      .single();
+    expect(unauthedInsert.error?.message).toBe("Unauthorized");
   });
 
   it("proves Issue #45 Criterion 1: Operator can create and view dated Comments that remain distinct from Description", async () => {
@@ -1822,15 +1860,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     // 4. Acceptance Criterion 4: "Subtasks are excluded from Inbox."
     // In Inbox view, only top-level task "Launch Cras v1" should appear; "Set up CDN" and "Configure custom domain" should NOT appear in main Inbox list!
     expect(screen.getByText("Launch Cras v1")).toBeInTheDocument();
+    expect(screen.queryByText("Set up CDN")).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId(
-        `task-item-${dbTasks.find((t) => t.title === "Set up CDN")?.id}`,
-      ),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByTestId(
-        `task-item-${dbTasks.find((t) => t.title === "Configure custom domain")?.id}`,
-      ),
+      screen.queryByText("Configure custom domain"),
     ).not.toBeInTheDocument();
 
     // 5. Complete a subtask inside modal
@@ -1992,153 +2024,165 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
   });
 
   it("Journey 7 (Issue #47): Plans tasks with temporal semantics and navigates Today and Upcoming views", async () => {
-    const operator: User = {
-      id: "operator-temporal-uuid",
-      email: "planner@example.com",
-    } as User;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 7, 19, 12, 0, 0));
+    try {
+      const operator: User = {
+        id: "operator-temporal-uuid",
+        email: "planner@example.com",
+      } as User;
 
-    const client = createMockSupabaseForOperator(operator);
+      const client = createMockSupabaseForOperator(operator);
 
-    const now = new Date();
-    const todayStr = getDeviceLocalDate(now);
-    const yesterdayDate = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() - 1,
-    );
-    const yesterdayStr = getDeviceLocalDate(yesterdayDate);
-    const futureDate = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() + 6,
-    );
-    const futureStr = getDeviceLocalDate(futureDate);
+      const now = new Date(2026, 7, 19, 12, 0, 0);
+      const todayStr = getDeviceLocalDate(now);
+      const yesterdayDate = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - 1,
+      );
+      const yesterdayStr = getDeviceLocalDate(yesterdayDate);
+      const futureDate = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + 6,
+      );
+      const futureStr = getDeviceLocalDate(futureDate);
 
-    // 1. Pre-seed tasks: 1 inbox task, 1 today task, 1 overdue task, 1 upcoming task
-    await client.schema("api").rpc("create_task", {
-      title: "Inbox Task",
-      plan: null,
-    });
+      // 1. Pre-seed tasks: 1 inbox task, 1 today task, 1 overdue task, 1 upcoming task
+      await client.schema("api").rpc("create_task", {
+        title: "Inbox Task",
+        plan: null,
+      });
 
-    await client.schema("api").rpc("create_task", {
-      title: "Today Urgent Task",
-      plan: { date: todayStr },
-      priority: 1,
-    });
+      await client.schema("api").rpc("create_task", {
+        title: "Today Urgent Task",
+        plan: { date: todayStr },
+        priority: 1,
+      });
 
-    await client.schema("api").rpc("create_task", {
-      title: "Overdue Task",
-      plan: { date: yesterdayStr },
-      priority: 2,
-    });
+      await client.schema("api").rpc("create_task", {
+        title: "Overdue Task",
+        plan: { date: yesterdayStr },
+        priority: 2,
+      });
 
-    await client.schema("api").rpc("create_task", {
-      title: "Future Floating Task",
-      plan: { type: "floating", date: futureStr, time: "14:00" },
-      priority: 3,
-    });
+      await client.schema("api").rpc("create_task", {
+        title: "Future Floating Task",
+        plan: { type: "floating", date: futureStr, time: "14:00" },
+        priority: 3,
+      });
 
-    const { unmount } = render(
-      <AuthProvider client={client}>
-        <CrasApp client={client} />
-      </AuthProvider>,
-    );
+      const { unmount } = render(
+        <AuthProvider client={client}>
+          <CrasApp client={client} />
+        </AuthProvider>,
+      );
 
-    // Initial view is Inbox: should show only Inbox Task
-    await waitFor(() => {
-      expect(screen.getByText("Inbox Task")).toBeInTheDocument();
-    });
-    expect(screen.queryByText("Today Urgent Task")).not.toBeInTheDocument();
-    expect(screen.queryByText("Overdue Task")).not.toBeInTheDocument();
-    expect(screen.queryByText("Future Floating Task")).not.toBeInTheDocument();
-
-    // 2. Navigate to Today View
-    const todayNavBtn = screen.getByRole("button", { name: /today/i });
-    fireEvent.click(todayNavBtn);
-
-    await waitFor(() => {
-      expect(screen.getByText("Today Urgent Task")).toBeInTheDocument();
-      expect(screen.getByText("Overdue Task")).toBeInTheDocument();
-    });
-    expect(screen.queryByText("Inbox Task")).not.toBeInTheDocument();
-    expect(screen.queryByText("Future Floating Task")).not.toBeInTheDocument();
-
-    // 3. Navigate to Upcoming View
-    const upcomingNavBtn = screen.getByRole("button", { name: /upcoming/i });
-    fireEvent.click(upcomingNavBtn);
-
-    await waitFor(() => {
-      // Overdue section
-      expect(screen.getByText(/overdue \(\d+\)/i)).toBeInTheDocument();
-      expect(screen.getByText("Overdue Task")).toBeInTheDocument();
-      // Future tasks
-      expect(screen.getByText("Today Urgent Task")).toBeInTheDocument();
-      expect(screen.getByText("Future Floating Task")).toBeInTheDocument();
-    });
-    expect(screen.queryByText("Inbox Task")).not.toBeInTheDocument();
-
-    // 4. Open Task Detail modal on Future Floating Task and edit plan
-    const futureTaskItem = screen.getByText("Future Floating Task");
-    fireEvent.click(futureTaskItem);
-
-    await waitFor(() => {
+      // Initial view is Inbox: should show only Inbox Task
+      await waitFor(() => {
+        expect(screen.getByText("Inbox Task")).toBeInTheDocument();
+      });
+      expect(screen.queryByText("Today Urgent Task")).not.toBeInTheDocument();
+      expect(screen.queryByText("Overdue Task")).not.toBeInTheDocument();
       expect(
-        screen.getByRole("dialog", { name: /task details/i }),
-      ).toBeInTheDocument();
-    });
-
-    // Remove clock time -> becomes Date-only
-    const timeInput = screen.getByLabelText(/task plan time/i);
-    fireEvent.change(timeInput, { target: { value: "" } });
-
-    const saveChangesBtn = screen.getByRole("button", {
-      name: /save changes/i,
-    });
-    fireEvent.click(saveChangesBtn);
-
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("dialog", { name: /task details/i }),
+        screen.queryByText("Future Floating Task"),
       ).not.toBeInTheDocument();
-    });
 
-    // Check DB state: plan should now be Date-only without type or time
-    const updatedTask = dbTasks.find((t) => t.title === "Future Floating Task");
-    expect(updatedTask?.plan).toEqual({ date: futureStr });
+      // 2. Navigate to Today View
+      const todayNavBtn = screen.getByRole("button", { name: /today/i });
+      fireEvent.click(todayNavBtn);
 
-    // 5. Open modal again and clear date -> moves to Inbox
-    fireEvent.click(screen.getByText("Future Floating Task"));
-    await waitFor(() => {
+      await waitFor(() => {
+        expect(screen.getByText("Today Urgent Task")).toBeInTheDocument();
+        expect(screen.getByText("Overdue Task")).toBeInTheDocument();
+      });
+      expect(screen.queryByText("Inbox Task")).not.toBeInTheDocument();
       expect(
-        screen.getByRole("dialog", { name: /task details/i }),
-      ).toBeInTheDocument();
-    });
-
-    const clearDateBtn = screen.getByRole("button", {
-      name: /clear date \(move to inbox\)/i,
-    });
-    fireEvent.click(clearDateBtn);
-    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
-
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("dialog", { name: /task details/i }),
+        screen.queryByText("Future Floating Task"),
       ).not.toBeInTheDocument();
-    });
 
-    const movedToInboxTask = dbTasks.find(
-      (t) => t.title === "Future Floating Task",
-    );
-    expect(movedToInboxTask?.plan).toBeNull();
+      // 3. Navigate to Upcoming View
+      const upcomingNavBtn = screen.getByRole("button", { name: /upcoming/i });
+      fireEvent.click(upcomingNavBtn);
 
-    // Navigate to Inbox: Future Floating Task is now in Inbox
-    const inboxNavBtn = screen.getByRole("button", { name: /inbox/i });
-    fireEvent.click(inboxNavBtn);
+      await waitFor(() => {
+        // Overdue section
+        expect(screen.getByText(/overdue \(\d+\)/i)).toBeInTheDocument();
+        expect(screen.getByText("Overdue Task")).toBeInTheDocument();
+        // Future tasks
+        expect(screen.getByText("Today Urgent Task")).toBeInTheDocument();
+        expect(screen.getByText("Future Floating Task")).toBeInTheDocument();
+      });
+      expect(screen.queryByText("Inbox Task")).not.toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(screen.getByText("Future Floating Task")).toBeInTheDocument();
-    });
+      // 4. Open Task Detail modal on Future Floating Task and edit plan
+      const futureTaskItem = screen.getByText("Future Floating Task");
+      fireEvent.click(futureTaskItem);
 
-    unmount();
+      await waitFor(() => {
+        expect(
+          screen.getByRole("dialog", { name: /task details/i }),
+        ).toBeInTheDocument();
+      });
+
+      // Remove clock time -> becomes Date-only
+      const timeInput = screen.getByLabelText(/task plan time/i);
+      fireEvent.change(timeInput, { target: { value: "" } });
+
+      const saveChangesBtn = screen.getByRole("button", {
+        name: /save changes/i,
+      });
+      fireEvent.click(saveChangesBtn);
+
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("dialog", { name: /task details/i }),
+        ).not.toBeInTheDocument();
+      });
+
+      // Check DB state: plan should now be Date-only without type or time
+      const updatedTask = dbTasks.find(
+        (t) => t.title === "Future Floating Task",
+      );
+      expect(updatedTask?.plan).toEqual({ date: futureStr });
+
+      // 5. Open modal again and clear date -> moves to Inbox
+      fireEvent.click(screen.getByText("Future Floating Task"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("dialog", { name: /task details/i }),
+        ).toBeInTheDocument();
+      });
+
+      const clearDateBtn = screen.getByRole("button", {
+        name: /clear date \(move to inbox\)/i,
+      });
+      fireEvent.click(clearDateBtn);
+      fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("dialog", { name: /task details/i }),
+        ).not.toBeInTheDocument();
+      });
+
+      const movedToInboxTask = dbTasks.find(
+        (t) => t.title === "Future Floating Task",
+      );
+      expect(movedToInboxTask?.plan).toBeNull();
+
+      // Navigate to Inbox: Future Floating Task is now in Inbox
+      const inboxNavBtn = screen.getByRole("button", { name: /inbox/i });
+      fireEvent.click(inboxNavBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText("Future Floating Task")).toBeInTheDocument();
+      });
+
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

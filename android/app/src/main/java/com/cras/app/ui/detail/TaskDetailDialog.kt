@@ -75,8 +75,50 @@ import com.cras.app.models.TaskPriorities
 import com.cras.app.ui.labels.parseHexColor
 import java.time.Instant
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+internal fun formatDateTime(isoTimestamp: String): String {
+    return try {
+        val instant = try {
+            OffsetDateTime.parse(isoTimestamp).toInstant()
+        } catch (_: Exception) {
+            Instant.parse(isoTimestamp)
+        }
+        val zdt = instant.atZone(ZoneId.systemDefault())
+        val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.getDefault())
+        zdt.format(formatter)
+    } catch (_: Exception) {
+        isoTimestamp
+    }
+}
+
+internal fun formatCompletedAt(isoTimestamp: String): String = formatDateTime(isoTimestamp)
+
+private fun extractPlanTime(plan: Plan?): String = when (plan) {
+    is Plan.Floating -> {
+        val parts = plan.time.split(":")
+        if (parts.size >= 2) "${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}" else plan.time
+    }
+    is Plan.Instant -> {
+        try {
+            val instant = Instant.parse(plan.at)
+            val zdt = instant.atZone(ZoneId.systemDefault())
+            zdt.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm"))
+        } catch (_: Exception) {
+            ""
+        }
+    }
+    else -> ""
+}
+
+private fun extractPlanType(plan: Plan?, effectiveDefault: TimedPlanType): TimedPlanType = when (plan) {
+    is Plan.Floating -> TimedPlanType.FLOATING
+    is Plan.Instant -> TimedPlanType.INSTANT
+    else -> effectiveDefault
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -102,35 +144,8 @@ fun TaskDetailDialog(
     var selectedLabels by remember(task.id, task.labels) { mutableStateOf(task.labels) }
 
     var planDate by remember(task.id, task.plan) { mutableStateOf(getPlanLocalDate(task.plan) ?: "") }
-    var planTime by remember(task.id, task.plan) {
-        mutableStateOf(
-            when (val p = task.plan) {
-                is Plan.Floating -> {
-                    val parts = p.time.split(":")
-                    if (parts.size >= 2) "${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}" else p.time
-                }
-                is Plan.Instant -> {
-                    try {
-                        val instant = Instant.parse(p.at)
-                        val zdt = instant.atZone(ZoneId.systemDefault())
-                        zdt.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm"))
-                    } catch (_: Exception) {
-                        ""
-                    }
-                }
-                else -> ""
-            }
-        )
-    }
-    var planType by remember(task.id, task.plan) {
-        mutableStateOf(
-            when (val p = task.plan) {
-                is Plan.Floating -> TimedPlanType.FLOATING
-                is Plan.Instant -> TimedPlanType.INSTANT
-                else -> effectiveDefault
-            }
-        )
-    }
+    var planTime by remember(task.id, task.plan) { mutableStateOf(extractPlanTime(task.plan)) }
+    var planType by remember(task.id, task.plan) { mutableStateOf(extractPlanType(task.plan, effectiveDefault)) }
     var isTypeMenuExpanded by remember { mutableStateOf(false) }
 
     var newCommentContent by remember(task.id) { mutableStateOf("") }
@@ -147,7 +162,13 @@ fun TaskDetailDialog(
     val isTaskSubtask = task.isSubtask
 
     val todayDate = remember { getDeviceLocalDate() }
-    val tomorrowDate = remember { LocalDate.now().plusDays(1).toString() }
+    val tomorrowDate = remember(todayDate) {
+        try {
+            LocalDate.parse(todayDate).plusDays(1).toString()
+        } catch (_: Exception) {
+            LocalDate.now().plusDays(1).toString()
+        }
+    }
 
     LaunchedEffect(task) {
         title = task.title
@@ -155,27 +176,8 @@ fun TaskDetailDialog(
         priority = task.priority
         selectedLabels = task.labels
         planDate = getPlanLocalDate(task.plan) ?: ""
-        planTime = when (val p = task.plan) {
-            is Plan.Floating -> {
-                val parts = p.time.split(":")
-                if (parts.size >= 2) "${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}" else p.time
-            }
-            is Plan.Instant -> {
-                try {
-                    val instant = Instant.parse(p.at)
-                    val zdt = instant.atZone(ZoneId.systemDefault())
-                    zdt.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm"))
-                } catch (_: Exception) {
-                    ""
-                }
-            }
-            else -> ""
-        }
-        planType = when (val p = task.plan) {
-            is Plan.Floating -> TimedPlanType.FLOATING
-            is Plan.Instant -> TimedPlanType.INSTANT
-            else -> effectiveDefault
-        }
+        planTime = extractPlanTime(task.plan)
+        planType = extractPlanType(task.plan, effectiveDefault)
         newCommentContent = ""
         newSubtaskTitle = ""
         errorMessage = null
@@ -341,7 +343,7 @@ fun TaskDetailDialog(
                                 )
                                 if (task.completedAt != null) {
                                     Text(
-                                        text = "Completed at ${task.completedAt}",
+                                        text = "Completed at ${formatCompletedAt(task.completedAt)}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
                                     )
@@ -781,19 +783,66 @@ fun TaskDetailDialog(
                                     errorMessage = "Task title cannot be empty"
                                     return@Button
                                 }
+
+                                val trimmedDate = planDate.trim()
+                                val trimmedTime = planTime.trim()
+
+                                val computedPlan: Plan?
+                                if (trimmedDate.isNotEmpty()) {
+                                    try {
+                                        LocalDate.parse(trimmedDate, DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+                                    } catch (_: Exception) {
+                                        errorMessage = "Invalid date format. Use YYYY-MM-DD"
+                                        return@Button
+                                    }
+
+                                    if (trimmedTime.isNotEmpty()) {
+                                        val parts = trimmedTime.split(":")
+                                        if (parts.size != 2) {
+                                            errorMessage = "Invalid time format. Use HH:mm"
+                                            return@Button
+                                        }
+                                        val hours = parts[0].toIntOrNull()
+                                        val minutes = parts[1].toIntOrNull()
+                                        if (hours == null || minutes == null || hours !in 0..23 || minutes !in 0..59) {
+                                            errorMessage = "Invalid time format. Use HH:mm"
+                                            return@Button
+                                        }
+
+                                        try {
+                                            computedPlan = createPlanFromInputs(
+                                                CreatePlanParams(
+                                                    date = trimmedDate,
+                                                    time = trimmedTime,
+                                                    type = planType,
+                                                    effectiveDefault = effectiveDefault
+                                                )
+                                            )
+                                            if (computedPlan == null || computedPlan is Plan.DateOnly) {
+                                                errorMessage = "Invalid date or time"
+                                                return@Button
+                                            }
+                                        } catch (e: Exception) {
+                                            errorMessage = "Invalid plan: ${e.message ?: "unknown error"}"
+                                            return@Button
+                                        }
+                                    } else {
+                                        try {
+                                            computedPlan = Plan.DateOnly(date = trimmedDate)
+                                        } catch (e: Exception) {
+                                            errorMessage = "Invalid date: ${e.message ?: "unknown error"}"
+                                            return@Button
+                                        }
+                                    }
+                                } else if (trimmedTime.isNotEmpty()) {
+                                    errorMessage = "Date is required when specifying a time"
+                                    return@Button
+                                } else {
+                                    computedPlan = null
+                                }
+
                                 isSaving = true
                                 errorMessage = null
-
-                                val computedPlan = if (planDate.isNotBlank()) {
-                                    createPlanFromInputs(
-                                        CreatePlanParams(
-                                            date = planDate.trim(),
-                                            time = planTime.trim().ifEmpty { null },
-                                            type = if (planTime.isNotBlank()) planType else null,
-                                            effectiveDefault = effectiveDefault
-                                        )
-                                    )
-                                } else null
 
                                 val shouldClearPlan = computedPlan == null && task.plan != null
 
@@ -1086,7 +1135,7 @@ fun TaskDetailDialog(
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = comment.createdAt,
+                                        text = formatDateTime(comment.createdAt),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                                     )

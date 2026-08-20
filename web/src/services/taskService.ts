@@ -18,6 +18,7 @@ export interface UpdateTaskParams {
   readonly id: string;
   readonly title?: string;
   readonly description?: string | null;
+  readonly clearDescription?: boolean;
   readonly priority?: 1 | 2 | 3 | 4;
   readonly plan?: Plan;
   readonly clearPlan?: boolean;
@@ -124,6 +125,8 @@ export async function updateTask(
     throw new Error("Task title cannot be empty");
   }
 
+  const clearDescription =
+    input.clearDescription ?? (input.description === null ? true : false);
   const clearPlan = input.clearPlan ?? (input.plan === null ? true : false);
 
   const { data, error } = await client.schema("api").rpc("update_task", {
@@ -136,6 +139,7 @@ export async function updateTask(
     expected_version: input.expectedVersion ?? null,
     labels: input.labels !== undefined ? input.labels : null,
     clear_plan: clearPlan,
+    clear_description: clearDescription,
   });
 
   if (error) {
@@ -155,7 +159,7 @@ export async function completeTask(
 ): Promise<Task> {
   const { data, error } = await client.schema("api").rpc("complete_task", {
     id: taskId,
-    completed_at: completedAt ?? new Date().toISOString(),
+    ...(completedAt !== undefined ? { completed_at: completedAt } : {}),
   });
 
   if (error) {

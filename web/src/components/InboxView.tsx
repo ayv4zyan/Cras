@@ -4,6 +4,7 @@ import { CreateTaskInput } from "./CreateTaskInput";
 import { TaskLabelBadges } from "./TaskLabelBadges";
 import { type Priority, type Task, type Label } from "../contracts/task";
 import type { CreateTaskParams } from "../services/taskService";
+import type { TimedPlanType } from "../services/temporalService";
 
 export interface InboxViewProps {
   readonly tasks: readonly Task[];
@@ -16,6 +17,7 @@ export interface InboxViewProps {
   readonly onCompleteTask?: (task: Task) => Promise<void> | void;
   readonly onSelectTask?: (task: Task) => void;
   readonly isLoading?: boolean;
+  readonly effectiveDefault?: TimedPlanType;
 }
 
 export function InboxView({
@@ -25,6 +27,7 @@ export function InboxView({
   onCompleteTask,
   onSelectTask,
   isLoading = false,
+  effectiveDefault,
 }: InboxViewProps): React.JSX.Element {
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto">
@@ -47,6 +50,7 @@ export function InboxView({
           <CreateTaskInput
             onCreateTask={onCreateTask}
             availableLabels={labels}
+            effectiveDefault={effectiveDefault}
           />
         </div>
 
@@ -81,12 +85,14 @@ export function InboxView({
                 onClick={() => onSelectTask?.(task)}
                 className="group flex items-center justify-between p-3.5 rounded-lg border border-border/70 bg-card hover:border-border transition-colors shadow-xs cursor-pointer"
               >
-                <div className="flex items-center space-x-3 min-w-0">
+                <div className="flex items-center space-x-3 min-w-0 flex-1">
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onCompleteTask?.(task);
+                      void Promise.resolve(onCompleteTask?.(task)).catch(
+                        () => {},
+                      );
                     }}
                     aria-label={`Complete task ${task.title}`}
                     title="Complete task"
@@ -94,7 +100,15 @@ export function InboxView({
                   >
                     <Circle className="h-4 w-4" />
                   </button>
-                  <div className="min-w-0 space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectTask?.(task);
+                    }}
+                    aria-label={`Select task ${task.title}`}
+                    className="min-w-0 space-y-0.5 text-left flex-1 bg-transparent border-0 p-0 focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring rounded-xs cursor-pointer"
+                  >
                     <span className="text-sm font-medium text-foreground truncate block">
                       {task.title}
                     </span>
@@ -104,10 +118,10 @@ export function InboxView({
                       </p>
                     )}
                     <TaskLabelBadges labelIds={task.labels} labels={labels} />
-                  </div>
+                  </button>
                 </div>
 
-                <div className="flex items-center space-x-2 shrink-0 text-xs text-muted-foreground">
+                <div className="flex items-center space-x-2 shrink-0 text-xs text-muted-foreground ml-2">
                   {task.priority < 4 && (
                     <span className="px-1.5 py-0.5 rounded-sm bg-secondary text-secondary-foreground font-medium text-[11px]">
                       P{task.priority}

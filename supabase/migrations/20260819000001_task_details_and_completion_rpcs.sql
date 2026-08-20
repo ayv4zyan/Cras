@@ -15,7 +15,7 @@ DECLARE
 BEGIN
     UPDATE public.tasks
     SET
-        completed_at = COALESCE(completed_at, now()),
+        completed_at = COALESCE(complete_task.completed_at, now()),
         updated_at = now(),
         version = version + 1
     WHERE public.tasks.id = complete_task.id
@@ -73,7 +73,8 @@ CREATE OR REPLACE FUNCTION api.update_task(
     priority INTEGER DEFAULT NULL,
     plan JSONB DEFAULT NULL,
     parent_id UUID DEFAULT NULL,
-    expected_version INTEGER DEFAULT NULL
+    expected_version INTEGER DEFAULT NULL,
+    clear_description BOOLEAN DEFAULT false
 )
 RETURNS api.tasks
 LANGUAGE plpgsql
@@ -87,7 +88,8 @@ BEGIN
     SELECT * INTO v_task
     FROM public.tasks
     WHERE public.tasks.id = update_task.id
-      AND public.tasks.operator_id = auth.uid();
+      AND public.tasks.operator_id = auth.uid()
+    FOR UPDATE;
 
     IF v_task.id IS NULL THEN
         RAISE EXCEPTION 'Task not found or unauthorized';
@@ -98,25 +100,29 @@ BEGIN
         RAISE EXCEPTION 'Completed tasks cannot be edited. Uncomplete first.';
     END IF;
 
-    IF expected_version IS NOT NULL AND v_task.version <> expected_version THEN
-        RAISE EXCEPTION 'Task version conflict: expected %, found %', expected_version, v_task.version;
+    IF update_task.expected_version IS NOT NULL AND v_task.version <> update_task.expected_version THEN
+        RAISE EXCEPTION 'Task version conflict: expected %, found %', update_task.expected_version, v_task.version;
     END IF;
 
-    IF title IS NOT NULL AND char_length(trim(title)) = 0 THEN
+    IF update_task.title IS NOT NULL AND char_length(trim(update_task.title)) = 0 THEN
         RAISE EXCEPTION 'Task title cannot be empty';
     END IF;
 
-    IF priority IS NOT NULL AND (priority < 1 OR priority > 4) THEN
+    IF update_task.priority IS NOT NULL AND (update_task.priority < 1 OR update_task.priority > 4) THEN
         RAISE EXCEPTION 'Priority must be between 1 and 4';
     END IF;
 
     UPDATE public.tasks
     SET
-        title = CASE WHEN title IS NOT NULL THEN trim(title) ELSE v_task.title END,
-        description = CASE WHEN description IS NOT NULL THEN description ELSE v_task.description END,
-        priority = CASE WHEN priority IS NOT NULL THEN priority ELSE v_task.priority END,
-        plan = CASE WHEN plan IS NOT NULL THEN plan ELSE v_task.plan END,
-        parent_id = CASE WHEN parent_id IS NOT NULL THEN parent_id ELSE v_task.parent_id END,
+        title = CASE WHEN update_task.title IS NOT NULL THEN trim(update_task.title) ELSE v_task.title END,
+        description = CASE
+            WHEN update_task.clear_description = true THEN NULL
+            WHEN update_task.description IS NOT NULL THEN update_task.description
+            ELSE v_task.description
+        END,
+        priority = CASE WHEN update_task.priority IS NOT NULL THEN update_task.priority ELSE v_task.priority END,
+        plan = CASE WHEN update_task.plan IS NOT NULL THEN update_task.plan ELSE v_task.plan END,
+        parent_id = CASE WHEN update_task.parent_id IS NOT NULL THEN update_task.parent_id ELSE v_task.parent_id END,
         updated_at = now(),
         version = v_task.version + 1
     WHERE public.tasks.id = update_task.id
@@ -128,4 +134,4 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION api.update_task(UUID, TEXT, TEXT, INTEGER, JSONB, UUID, INTEGER) TO authenticated;
+GRANT EXECUTE ON FUNCTION api.update_task(UUID, TEXT, TEXT, INTEGER, JSONB, UUID, INTEGER, BOOLEAN) TO authenticated;

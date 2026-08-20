@@ -117,13 +117,18 @@ describe("LabelManagerModal Component", () => {
     const editInput = screen.getByDisplayValue("Urgent");
     fireEvent.change(editInput, { target: { value: "Critical" } });
 
+    const colorBtns = screen.getAllByRole("button", {
+      name: /select orange color/i,
+    });
+    fireEvent.click(colorBtns[colorBtns.length - 1]);
+
     const saveBtn = screen.getByRole("button", { name: /save label/i });
     fireEvent.click(saveBtn);
 
     expect(onUpdateLabel).toHaveBeenCalledWith({
       id: "22222222-2222-2222-2222-222222222222",
       name: "Critical",
-      color: expect.any(String),
+      color: "#f97316",
     });
   });
 
@@ -149,5 +154,49 @@ describe("LabelManagerModal Component", () => {
     expect(onDeleteLabel).toHaveBeenCalledWith(
       "22222222-2222-2222-2222-222222222222",
     );
+  });
+
+  it("displays delete error when deletion fails", async () => {
+    const onDeleteLabel = vi
+      .fn()
+      .mockRejectedValue(new Error("Cannot delete in-use label"));
+
+    render(
+      <LabelManagerModal
+        isOpen={true}
+        labels={sampleLabels}
+        onClose={vi.fn()}
+        onCreateLabel={vi.fn()}
+        onUpdateLabel={vi.fn()}
+        onDeleteLabel={onDeleteLabel}
+      />,
+    );
+
+    const deleteBtn = screen.getByRole("button", {
+      name: /delete label urgent/i,
+    });
+    fireEvent.click(deleteBtn);
+
+    expect(
+      await screen.findByText(/cannot delete in-use label/i),
+    ).toBeInTheDocument();
+  });
+
+  it("closes modal on Escape key press", () => {
+    const onClose = vi.fn();
+
+    render(
+      <LabelManagerModal
+        isOpen={true}
+        labels={sampleLabels}
+        onClose={onClose}
+        onCreateLabel={vi.fn()}
+        onUpdateLabel={vi.fn()}
+        onDeleteLabel={vi.fn()}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

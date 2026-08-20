@@ -10,17 +10,26 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import java.time.format.ResolverStyle
 import java.util.UUID
 
 private val DATE_REGEX = Regex("""^\d{4}-\d{2}-\d{2}$""")
 private val TIME_REGEX = Regex("""^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$""")
 private val ISO_DATE_TIME_REGEX = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$""")
+private val UUID_REGEX = Regex("""^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$""")
+private val ISO_DATE_TIME_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ISO_OFFSET_DATE_TIME.withResolverStyle(ResolverStyle.STRICT)
 
-private fun isValidUuid(value: String): Boolean {
+fun isValidUuid(value: String): Boolean {
+    if (!UUID_REGEX.matches(value)) return false
     return try {
         UUID.fromString(value)
         true
@@ -30,7 +39,15 @@ private fun isValidUuid(value: String): Boolean {
 }
 
 private fun isValidIsoDateTime(value: String): Boolean {
-    return ISO_DATE_TIME_REGEX.matches(value)
+    if (!ISO_DATE_TIME_REGEX.matches(value)) return false
+    return try {
+        OffsetDateTime.parse(value, ISO_DATE_TIME_FORMATTER)
+        true
+    } catch (_: DateTimeParseException) {
+        false
+    } catch (_: Exception) {
+        false
+    }
 }
 
 @Serializable(with = PlanSerializer::class)
@@ -78,8 +95,9 @@ object PlanSerializer : KSerializer<Plan> {
         val allowedInstantKeys = setOf("type", "at")
         val allowedDateOnlyKeys = setOf("date")
 
-        val hasType = element.containsKey("type")
-        val typePrimitive = element["type"]?.jsonPrimitive?.content
+        val typePrimitive = (element["type"] as? JsonPrimitive)
+            ?.takeUnless { it is JsonNull }
+            ?.content
 
         return when {
             typePrimitive == "floating" -> {
@@ -102,8 +120,13 @@ object PlanSerializer : KSerializer<Plan> {
                     ?: throw SerializationException("Instant plan requires 'at'")
                 Plan.Instant(at = at)
             }
-            !hasType -> {
-                val unknownKeys = element.keys - allowedDateOnlyKeys
+            typePrimitive == null -> {
+                val hasExplicitType = element.containsKey("type")
+                if (hasExplicitType && element["type"] !is JsonNull) {
+                    throw SerializationException("Unknown or invalid plan type: ${element["type"]}")
+                }
+                val allowedKeys = if (hasExplicitType) setOf("date", "type") else allowedDateOnlyKeys
+                val unknownKeys = element.keys - allowedKeys
                 if (unknownKeys.isNotEmpty()) {
                     throw SerializationException("Date-only plan contains unexpected keys: $unknownKeys")
                 }
@@ -140,12 +163,12 @@ object PlanSerializer : KSerializer<Plan> {
 data class Task(
     val id: String,
     val title: String,
-    val description: String? = null,
+    val description: String?,
     val priority: Int,
-    val plan: Plan? = null,
+    val plan: Plan?,
     val labels: List<String> = emptyList(),
-    val parentId: String? = null,
-    val completedAt: String? = null,
+    val parentId: String?,
+    val completedAt: String?,
     val createdAt: String,
     val updatedAt: String,
     val version: Int
@@ -181,7 +204,8 @@ data class Comment(
     }
 }
 
-private val HEX_COLOR_REGEX = Regex("""^#[0-9a-fA-F]{6}$""")
+val HEX_COLOR_REGEX = Regex("""^#[0-9a-fA-F]{6}$""")
+fun isValidHexColor(value: String): Boolean = HEX_COLOR_REGEX.matches(value)
 
 @Serializable(with = LabelSerializer::class)
 data class Label(

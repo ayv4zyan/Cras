@@ -5,7 +5,7 @@ import path from "path";
 
 export default defineConfig({
   envDir: path.resolve(__dirname, ".."),
-  envPrefix: ["VITE_", "SUPABASE_"],
+  envPrefix: ["VITE_"],
   plugins: [react()],
   resolve: {
     alias: {

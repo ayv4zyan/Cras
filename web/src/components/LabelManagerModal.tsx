@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { X, Plus, Trash2, Edit2, Check, Loader2, Tag } from "lucide-react";
 import { LABEL_COLORS, type Label } from "../contracts/task";
 import type {
@@ -35,6 +35,66 @@ export function LabelManagerModal({
   const [editError, setEditError] = useState<string | null>(null);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setCreateError(null);
+      setEditError(null);
+      setDeleteError(null);
+      setEditingId(null);
+      return;
+    }
+
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusableElements =
+          dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          );
+        if (focusableElements.length === 0) return;
+        const first = focusableElements[0];
+        const last = focusableElements[focusableElements.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable && focusable.length > 0) {
+      focusable[0]?.focus();
+    } else {
+      dialogRef.current?.focus();
+    }
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [isOpen, onClose]);
 
   const handleStartEdit = useCallback((label: Label) => {
     setEditingId(label.id);
@@ -109,10 +169,11 @@ export function LabelManagerModal({
   const handleDelete = useCallback(
     async (labelId: string) => {
       setDeletingId(labelId);
+      setDeleteError(null);
       try {
         await onDeleteLabel(labelId);
       } catch (err) {
-        setCreateError(
+        setDeleteError(
           err instanceof Error ? err.message : "Failed to delete label",
         );
       } finally {
@@ -126,10 +187,12 @@ export function LabelManagerModal({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Manage Labels"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 outline-hidden"
     >
       <div className="relative w-full max-w-lg rounded-xl border border-border bg-card p-6 shadow-xl space-y-5 text-foreground animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
@@ -219,6 +282,10 @@ export function LabelManagerModal({
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             Your labels ({labels.length})
           </h3>
+
+          {deleteError && (
+            <p className="text-xs text-destructive">{deleteError}</p>
+          )}
 
           <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
             {labels.length === 0 ? (

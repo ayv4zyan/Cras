@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import com.cras.app.auth.OperatorSession
 import com.cras.app.domain.TimedPlanType
 import com.cras.app.domain.formatPlanDisplay
+import com.cras.app.domain.getDeviceLocalDate
 import com.cras.app.domain.isTaskOverdue
 import com.cras.app.models.Label
 import com.cras.app.models.Plan
@@ -59,7 +61,7 @@ fun InboxScreen(
     effectiveDefault: TimedPlanType = TimedPlanType.INSTANT,
     isCreatingTask: Boolean = false,
     createTaskError: String? = null,
-    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>, plan: Plan?) -> Unit,
+    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>, plan: Plan?, onSuccess: () -> Unit) -> Unit,
     onCompleteTask: (String) -> Unit,
     onSelectTask: (Task) -> Unit,
     onOpenLabelManager: () -> Unit = {},
@@ -248,8 +250,9 @@ fun TaskItemRow(
     onComplete: () -> Unit,
     onClick: () -> Unit
 ) {
-    val overdue = isTaskOverdue(task)
-    val planDisplay = formatPlanDisplay(task.plan)
+    val todayDateStr = getDeviceLocalDate()
+    val overdue = remember(task.plan, todayDateStr) { isTaskOverdue(task) }
+    val planDisplay = remember(task.plan, todayDateStr) { formatPlanDisplay(task.plan) }
 
     Card(
         modifier = Modifier
@@ -277,8 +280,7 @@ fun TaskItemRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
-                onClick = onComplete,
-                modifier = Modifier.size(24.dp)
+                onClick = onComplete
             ) {
                 Icon(
                     imageVector = Icons.Default.RadioButtonUnchecked,
@@ -325,7 +327,7 @@ fun TaskItemRow(
                                 Icon(
                                     imageVector = if (overdue) Icons.Default.ErrorOutline else Icons.Default.AccessTime,
                                     contentDescription = null,
-                                    tint = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer,
+                                    tint = if (overdue) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -341,7 +343,7 @@ fun TaskItemRow(
                                 Text(
                                     text = labelText,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer
+                                    color = if (overdue) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
                                 )
                             }
                         }

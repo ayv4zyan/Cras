@@ -175,12 +175,25 @@ export function isTaskOverdue(task: Task, now: Date = new Date()): boolean {
   return planDay < today;
 }
 
+function getPlanLocalTime(plan: Plan | null | undefined): string {
+  if (plan && "type" in plan) {
+    if (plan.type === "floating") return plan.time.slice(0, 5);
+    if (plan.type === "instant") {
+      const d = new Date(plan.at);
+      if (!Number.isNaN(d.getTime())) {
+        return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      }
+    }
+  }
+  return "";
+}
+
 /**
  * Formats a Plan for display in the UI using relative date semantics.
  */
 export function formatPlanDisplay(
   plan: Plan | null | undefined,
-  options?: { now?: Date; timeZone?: string },
+  options?: { now?: Date },
 ): PlanDisplayInfo | null {
   if (!plan) return null;
 
@@ -264,6 +277,11 @@ export function filterTodayTasks(
       if (dayA !== dayB) {
         return dayA.localeCompare(dayB);
       }
+      const timeA = getPlanLocalTime(a.plan);
+      const timeB = getPlanLocalTime(b.plan);
+      if (timeA !== timeB) {
+        return timeA.localeCompare(timeB);
+      }
       return a.priority - b.priority;
     });
 }
@@ -305,11 +323,19 @@ export function filterUpcomingTasks(
     }
   }
 
-  // Sort overdue tasks by date ascending (oldest overdue first)
+  // Sort overdue tasks by date ascending (oldest overdue first), then time, then priority
   overdue.sort((a, b) => {
     const dayA = getPlanLocalDate(a.plan) || "";
     const dayB = getPlanLocalDate(b.plan) || "";
-    return dayA.localeCompare(dayB);
+    if (dayA !== dayB) {
+      return dayA.localeCompare(dayB);
+    }
+    const timeA = getPlanLocalTime(a.plan);
+    const timeB = getPlanLocalTime(b.plan);
+    if (timeA !== timeB) {
+      return timeA.localeCompare(timeB);
+    }
+    return a.priority - b.priority;
   });
 
   // Sort dates ascending
@@ -317,7 +343,14 @@ export function filterUpcomingTasks(
   const groups: UpcomingDayGroup[] = sortedDates.map((date) => {
     const dateLabel = formatFriendlyDateLabel(date, todayStr, tomorrowStr);
     const groupTasks = futureTasksByDate.get(date) || [];
-    groupTasks.sort((a, b) => a.priority - b.priority);
+    groupTasks.sort((a, b) => {
+      const timeA = getPlanLocalTime(a.plan);
+      const timeB = getPlanLocalTime(b.plan);
+      if (timeA !== timeB) {
+        return timeA.localeCompare(timeB);
+      }
+      return a.priority - b.priority;
+    });
 
     return {
       date,

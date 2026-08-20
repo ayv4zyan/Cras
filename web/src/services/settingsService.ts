@@ -149,9 +149,9 @@ export async function fetchEffectiveTimedPlanType(
         ? deployConfigResult.value
         : null;
 
-    // If both network requests failed, return cached value
+    // Cache only a fully resolved default; otherwise keep the previous cache.
     if (
-      settingsResult.status === "rejected" &&
+      settingsResult.status === "rejected" ||
       deployConfigResult.status === "rejected"
     ) {
       return getCachedEffectiveTimedPlanType();
@@ -185,6 +185,7 @@ export async function updateOperatorTimedPlanType(
   if (type) {
     setCachedEffectiveTimedPlanType(type);
   } else {
+    clearCachedEffectiveTimedPlanType();
     await fetchEffectiveTimedPlanType(client);
   }
 }

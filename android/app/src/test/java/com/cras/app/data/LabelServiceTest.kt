@@ -151,7 +151,7 @@ class LabelServiceTest {
     }
 
     @Test
-    fun `createLabel rejects empty name or color before network call`() = runTest {
+    fun `createLabel rejects empty name or invalid color before network call`() = runTest {
         assertThrows(IllegalArgumentException::class.java) {
             kotlinx.coroutines.runBlocking {
                 labelService.createLabel(
@@ -165,6 +165,67 @@ class LabelServiceTest {
                 labelService.createLabel(
                     session = testSession,
                     params = CreateLabelParams(name = "Urgent", color = "   ")
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                labelService.createLabel(
+                    session = testSession,
+                    params = CreateLabelParams(name = "Urgent", color = "red")
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                labelService.createLabel(
+                    session = testSession,
+                    params = CreateLabelParams(name = "Urgent", color = "#123")
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                labelService.createLabel(
+                    session = testSession,
+                    params = CreateLabelParams(name = "Urgent", color = "#ggg123")
+                )
+            }
+        }
+        assertEquals(0, mockWebServer.requestCount)
+    }
+
+    @Test
+    fun `updateLabel rejects empty name or invalid color before network call`() = runTest {
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                labelService.updateLabel(
+                    session = testSession,
+                    params = UpdateLabelParams(id = "22222222-2222-2222-2222-222222222223", name = "   ")
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                labelService.updateLabel(
+                    session = testSession,
+                    params = UpdateLabelParams(id = "22222222-2222-2222-2222-222222222223", color = "red")
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                labelService.updateLabel(
+                    session = testSession,
+                    params = UpdateLabelParams(id = "22222222-2222-2222-2222-222222222223", color = "#123")
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                labelService.updateLabel(
+                    session = testSession,
+                    params = UpdateLabelParams(id = "22222222-2222-2222-2222-222222222223", color = "#ggg123")
                 )
             }
         }

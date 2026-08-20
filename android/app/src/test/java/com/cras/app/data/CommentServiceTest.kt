@@ -10,7 +10,6 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -105,7 +104,7 @@ class CommentServiceTest {
         assertEquals("550e8400-e29b-41d4-a716-446655440010", result[0].taskId)
 
         val request = mockWebServer.takeRequest()
-        assertEquals("/rest/v1/comments?select=*&taskId=eq.550e8400-e29b-41d4-a716-446655440010", request.path)
+        assertEquals("/rest/v1/comments?select=*&task_id=eq.550e8400-e29b-41d4-a716-446655440010", request.path)
         assertEquals("GET", request.method)
         assertEquals("api", request.getHeader("Accept-Profile"))
     }
@@ -155,28 +154,30 @@ class CommentServiceTest {
 
     @Test
     fun `createComment rejects empty content or empty taskId before network call`() = runTest {
-        assertThrows(IllegalArgumentException::class.java) {
-            kotlinx.coroutines.runBlocking {
-                commentService.createComment(
-                    session = testSession,
-                    params = CreateCommentParams(
-                        taskId = "550e8400-e29b-41d4-a716-446655440010",
-                        content = "   "
-                    )
+        try {
+            commentService.createComment(
+                session = testSession,
+                params = CreateCommentParams(
+                    taskId = "550e8400-e29b-41d4-a716-446655440010",
+                    content = "   "
                 )
-            }
+            )
+            org.junit.Assert.fail("Expected IllegalArgumentException for empty content")
+        } catch (e: IllegalArgumentException) {
+            assertEquals("Comment content cannot be empty", e.message)
         }
 
-        assertThrows(IllegalArgumentException::class.java) {
-            kotlinx.coroutines.runBlocking {
-                commentService.createComment(
-                    session = testSession,
-                    params = CreateCommentParams(
-                        taskId = "   ",
-                        content = "Valid content"
-                    )
+        try {
+            commentService.createComment(
+                session = testSession,
+                params = CreateCommentParams(
+                    taskId = "   ",
+                    content = "Valid content"
                 )
-            }
+            )
+            org.junit.Assert.fail("Expected IllegalArgumentException for empty taskId")
+        } catch (e: IllegalArgumentException) {
+            assertEquals("Comment taskId cannot be empty", e.message)
         }
 
         assertEquals(0, mockWebServer.requestCount)

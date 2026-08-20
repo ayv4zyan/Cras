@@ -2,6 +2,7 @@ package com.cras.app.data
 
 import com.cras.app.auth.OperatorSession
 import com.cras.app.config.PublicSupabaseConfig
+import com.cras.app.models.isValidUuid
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import kotlinx.serialization.json.Json
@@ -26,10 +27,18 @@ data class CreateTaskParams(
     val labels: List<String> = emptyList()
 )
 
+/**
+ * Parameters for updating an existing task via the `update_task` RPC.
+ *
+ * Null optional fields (such as [title], [description], [priority], [plan], [parentId],
+ * [expectedVersion], and [labels]) indicate "no change" and are omitted from the JSON request payload.
+ * To explicitly clear the plan, set [clearPlan] to true. To clear a description, set [clearDescription] to true.
+ */
 data class UpdateTaskParams(
     val id: String,
     val title: String? = null,
     val description: String? = null,
+    val clearDescription: Boolean = false,
     val priority: Int? = null,
     val plan: Plan? = null,
     val clearPlan: Boolean = false,
@@ -53,17 +62,24 @@ class SupabaseTaskService(
 ) : TaskService {
 
     private fun executeRequest(request: Request, operationName: String): String {
-        val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        return httpClient.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string() ?: ""
 
-        if (!response.isSuccessful) {
-            throw IOException("Failed to $operationName: ${response.code} $responseBody")
+            if (!response.isSuccessful) {
+                throw IOException("Failed to $operationName: ${response.code} $responseBody")
+            }
+            responseBody
         }
-        return responseBody
     }
 
-    private fun executeRpc(session: OperatorSession, rpcName: String, bodyObject: JsonObject): Task {
+    private suspend fun executeRpc(
+        session: OperatorSession,
+        rpcName: String,
+        bodyObject: JsonObject
+    ): Task {
         val endpoint = "${config.url}/rest/v1/rpc/$rpcName"
+        val mediaType = "application/json".toMediaType()
+        val requestBody = bodyObject.toString().toRequestBody(mediaType)
 
         val request = Request.Builder()
             .url(endpoint)
@@ -72,10 +88,10 @@ class SupabaseTaskService(
             .addHeader("Accept-Profile", "api")
             .addHeader("Content-Profile", "api")
             .addHeader("Content-Type", "application/json")
-            .post(bodyObject.toString().toRequestBody("application/json".toMediaType()))
+            .post(requestBody)
             .build()
 
-        val responseBody = executeRequest(request, rpcName.replace('_', ' '))
+        val responseBody = executeRequest(request, rpcName)
         return json.decodeFromString<Task>(responseBody)
     }
 
@@ -97,6 +113,11 @@ class SupabaseTaskService(
     override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
         val trimmedTitle = params.title.trim()
         require(trimmedTitle.isNotEmpty()) { "Task title cannot be empty" }
+        val normalizedLabels = params.labels.map { labelId ->
+            require(isValidUuid(labelId)) { "Task label must be a valid UUID: $labelId" }
+            labelId.lowercase()
+        }
+        require(normalizedLabels.distinct().size == normalizedLabels.size) { "Task labels must be unique" }
 
         val bodyObject = buildJsonObject {
             put("title", trimmedTitle)
@@ -111,7 +132,7 @@ class SupabaseTaskService(
                 put("parent_id", params.parentId)
             }
             put("labels", buildJsonArray {
-                params.labels.forEach { add(JsonPrimitive(it)) }
+                normalizedLabels.forEach { add(JsonPrimitive(it)) }
             })
         }
 
@@ -126,8 +147,13 @@ class SupabaseTaskService(
         if (params.priority != null) {
             require(params.priority in 1..4) { "Priority must be between 1 and 4" }
         }
-
-        val clearPlan = params.clearPlan || (params.plan == null && false)
+        val normalizedLabels = params.labels?.map { labelId ->
+            require(isValidUuid(labelId)) { "Task label must be a valid UUID: $labelId" }
+            labelId.lowercase()
+        }
+        if (normalizedLabels != null) {
+            require(normalizedLabels.distinct().size == normalizedLabels.size) { "Task labels must be unique" }
+        }
 
         val bodyObject = buildJsonObject {
             put("id", params.id)
@@ -136,6 +162,9 @@ class SupabaseTaskService(
             }
             if (params.description != null) {
                 put("description", params.description)
+            }
+            if (params.clearDescription) {
+                put("clear_description", true)
             }
             if (params.priority != null) {
                 put("priority", params.priority)
@@ -152,9 +181,9 @@ class SupabaseTaskService(
             if (params.expectedVersion != null) {
                 put("expected_version", params.expectedVersion)
             }
-            if (params.labels != null) {
+            if (normalizedLabels != null) {
                 put("labels", buildJsonArray {
-                    params.labels.forEach { add(JsonPrimitive(it)) }
+                    normalizedLabels.forEach { add(JsonPrimitive(it)) }
                 })
             }
         }

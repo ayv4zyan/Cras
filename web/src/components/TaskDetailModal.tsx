@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   X,
   CheckCircle2,
@@ -78,6 +78,14 @@ export function TaskDetailModal({
   const [isAddingComment, setIsAddingComment] = useState(false);
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [subtaskError, setSubtaskError] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  const effectiveDefaultRef = useRef(effectiveDefault);
+  useEffect(() => {
+    effectiveDefaultRef.current = effectiveDefault;
+  }, [effectiveDefault]);
 
   useEffect(() => {
     if (task) {
@@ -88,6 +96,8 @@ export function TaskDetailModal({
       setNewCommentContent("");
       setNewSubtaskTitle("");
       setError(null);
+      setCommentError(null);
+      setSubtaskError(null);
 
       if (task.plan) {
         if ("type" in task.plan) {
@@ -107,18 +117,69 @@ export function TaskDetailModal({
         } else if ("date" in task.plan) {
           setPlanDate(task.plan.date);
           setPlanTime("");
-          setPlanType(effectiveDefault);
+          setPlanType(effectiveDefaultRef.current);
         }
       } else {
         setPlanDate("");
         setPlanTime("");
-        setPlanType(effectiveDefault);
+        setPlanType(effectiveDefaultRef.current);
       }
     }
-  }, [task, effectiveDefault]);
+  }, [task]);
 
-  const isCompleted = task?.completedAt !== null;
-  const isSubtask = task?.parentId !== null;
+  useEffect(() => {
+    if (!isOpen || !task) return;
+
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key === "Tab" && modalRef.current) {
+        const focusableElements =
+          modalRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          );
+        if (focusableElements.length === 0) return;
+        const first = focusableElements[0];
+        const last = focusableElements[focusableElements.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable && focusable.length > 0) {
+      focusable[0]?.focus();
+    } else {
+      modalRef.current?.focus();
+    }
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [isOpen, task, onClose]);
+
+  const isCompleted = Boolean(task?.completedAt);
+  const isSubtask = Boolean(task?.parentId);
 
   const toggleLabel = useCallback(
     (labelId: string) => {
@@ -213,12 +274,14 @@ export function TaskDetailModal({
       if (!trimmed) return;
 
       setIsAddingComment(true);
-      setError(null);
+      setCommentError(null);
       try {
         await onAddComment(task.id, trimmed);
         setNewCommentContent("");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to add comment");
+        setCommentError(
+          err instanceof Error ? err.message : "Failed to add comment",
+        );
       } finally {
         setIsAddingComment(false);
       }
@@ -235,12 +298,12 @@ export function TaskDetailModal({
       if (!trimmed) return;
 
       setIsAddingSubtask(true);
-      setError(null);
+      setSubtaskError(null);
       try {
         await onCreateSubtask(task.id, trimmed);
         setNewSubtaskTitle("");
       } catch (err) {
-        setError(
+        setSubtaskError(
           err instanceof Error ? err.message : "Failed to create subtask",
         );
       } finally {
@@ -258,10 +321,12 @@ export function TaskDetailModal({
 
   return (
     <div
+      ref={modalRef}
       role="dialog"
       aria-modal="true"
       aria-label="Task details"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto outline-hidden"
     >
       <div className="relative w-full max-w-xl rounded-xl border border-border bg-card p-6 shadow-xl space-y-6 text-foreground animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
         {/* Header */}
@@ -409,6 +474,7 @@ export function TaskDetailModal({
                   <input
                     id="task-plan-date"
                     type="date"
+                    aria-label="Task Plan Date"
                     value={planDate}
                     onChange={(e) => setPlanDate(e.target.value)}
                     disabled={isSaving}
@@ -488,37 +554,40 @@ export function TaskDetailModal({
                 <span>Labels</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {availableLabels.map((label) => {
-                  const isSelected = selectedLabels.includes(label.id);
-                  return (
-                    <label
-                      key={label.id}
-                      className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs border select-none transition-colors ${
-                        isCompleted
-                          ? isSelected
+                {availableLabels
+                  .filter(
+                    (label) =>
+                      !isCompleted || selectedLabels.includes(label.id),
+                  )
+                  .map((label) => {
+                    const isSelected = selectedLabels.includes(label.id);
+                    return (
+                      <label
+                        key={label.id}
+                        className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs border select-none transition-colors ${
+                          isCompleted
                             ? "border-border/80 bg-secondary/80 text-foreground cursor-not-allowed opacity-75"
-                            : "hidden"
-                          : isSelected
-                            ? "border-primary bg-primary/10 text-primary font-medium cursor-pointer"
-                            : "border-border/60 bg-background text-muted-foreground hover:bg-secondary/60 cursor-pointer"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleLabel(label.id)}
-                        disabled={isCompleted || isSaving}
-                        className="sr-only"
-                        aria-label={label.name}
-                      />
-                      <span
-                        className="h-2 w-2 rounded-full shrink-0"
-                        style={{ backgroundColor: label.color }}
-                      />
-                      <span>{label.name}</span>
-                    </label>
-                  );
-                })}
+                            : isSelected
+                              ? "border-primary bg-primary/10 text-primary font-medium cursor-pointer"
+                              : "border-border/60 bg-background text-muted-foreground hover:bg-secondary/60 cursor-pointer"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleLabel(label.id)}
+                          disabled={isCompleted || isSaving}
+                          className="sr-only"
+                          aria-label={label.name}
+                        />
+                        <span
+                          className="h-2 w-2 rounded-full shrink-0"
+                          style={{ backgroundColor: label.color }}
+                        />
+                        <span>{label.name}</span>
+                      </label>
+                    );
+                  })}
                 {isCompleted && selectedLabels.length === 0 && (
                   <span className="text-xs text-muted-foreground italic">
                     No labels attached
@@ -576,16 +645,12 @@ export function TaskDetailModal({
                     <div
                       key={st.id}
                       role="listitem"
-                      onClick={() => onSelectSubtask?.(st)}
-                      className="flex items-center justify-between p-2 rounded-md bg-secondary/30 border border-border/50 text-xs hover:border-border transition-colors cursor-pointer"
+                      className="flex items-center justify-between p-2 rounded-md bg-secondary/30 border border-border/50 text-xs hover:border-border transition-colors"
                     >
-                      <div className="flex items-center space-x-2 min-w-0">
+                      <div className="flex items-center space-x-2 min-w-0 flex-1">
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onToggleSubtaskComplete?.(st);
-                          }}
+                          onClick={() => onToggleSubtaskComplete?.(st)}
                           aria-label={
                             isStCompleted
                               ? `Uncomplete task ${st.title}`
@@ -599,19 +664,21 @@ export function TaskDetailModal({
                             <Circle className="h-3.5 w-3.5" />
                           )}
                         </button>
-                        <span
-                          className={`truncate ${
+                        <button
+                          type="button"
+                          onClick={() => onSelectSubtask?.(st)}
+                          className={`truncate text-left cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-ring rounded-xs ${
                             isStCompleted
                               ? "line-through text-muted-foreground"
-                              : "text-foreground"
+                              : "text-foreground hover:underline"
                           }`}
                         >
                           {st.title}
-                        </span>
+                        </button>
                       </div>
 
                       {st.priority < 4 && (
-                        <span className="px-1.5 py-0.5 rounded-xs bg-secondary text-secondary-foreground text-[10px] font-medium shrink-0">
+                        <span className="px-1.5 py-0.5 rounded-xs bg-secondary text-secondary-foreground text-[10px] font-medium shrink-0 ml-2">
                           P{st.priority}
                         </span>
                       )}
@@ -623,30 +690,33 @@ export function TaskDetailModal({
 
             {/* Add Subtask Form */}
             {!isCompleted && onCreateSubtask && (
-              <form
-                onSubmit={handleAddSubtaskSubmit}
-                className="flex space-x-2"
-              >
-                <input
-                  type="text"
-                  value={newSubtaskTitle}
-                  onChange={(e) => setNewSubtaskTitle(e.target.value)}
-                  placeholder="Add subtask..."
-                  disabled={isAddingSubtask}
-                  className="flex-1 rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
-                />
-                <button
-                  type="submit"
-                  disabled={!newSubtaskTitle.trim() || isAddingSubtask}
-                  className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-md bg-secondary text-secondary-foreground text-xs font-medium hover:bg-secondary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {isAddingSubtask ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Plus className="h-3 w-3" />
-                  )}
-                  <span>Add subtask</span>
-                </button>
+              <form onSubmit={handleAddSubtaskSubmit} className="space-y-1.5">
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={newSubtaskTitle}
+                    onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                    aria-label="Add a subtask"
+                    placeholder="Add subtask..."
+                    disabled={isAddingSubtask}
+                    className="flex-1 rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!newSubtaskTitle.trim() || isAddingSubtask}
+                    className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-md bg-secondary text-secondary-foreground text-xs font-medium hover:bg-secondary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {isAddingSubtask ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Plus className="h-3 w-3" />
+                    )}
+                    <span>Add subtask</span>
+                  </button>
+                </div>
+                {subtaskError && (
+                  <p className="text-xs text-destructive">{subtaskError}</p>
+                )}
               </form>
             )}
           </div>
@@ -694,10 +764,14 @@ export function TaskDetailModal({
                 rows={2}
                 value={newCommentContent}
                 onChange={(e) => setNewCommentContent(e.target.value)}
+                aria-label="Add a comment"
                 placeholder="Add a comment..."
                 disabled={isAddingComment}
                 className="w-full rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring resize-none"
               />
+              {commentError && (
+                <p className="text-xs text-destructive">{commentError}</p>
+              )}
               <div className="flex justify-end">
                 <button
                   type="submit"

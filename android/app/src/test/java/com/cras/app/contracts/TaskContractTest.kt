@@ -195,5 +195,30 @@ class TaskContractTest {
         assertEquals(null, labelMinimal.createdAt)
         assertEquals(null, labelMinimal.updatedAt)
     }
+
+    @Test
+    fun `plan deserialization accepts date-only plan with explicit null type`() {
+        val jsonString = """
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "title": "Date only with null type",
+                "description": null,
+                "priority": 4,
+                "plan": {
+                    "type": null,
+                    "date": "2026-08-20"
+                },
+                "labels": [],
+                "parentId": null,
+                "completedAt": null,
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T00:00:00Z",
+                "version": 1
+            }
+        """.trimIndent()
+        val task = json.decodeFromString<Task>(jsonString)
+        assertTrue("Expected DateOnly plan", task.plan is Plan.DateOnly)
+        assertEquals("2026-08-20", (task.plan as Plan.DateOnly).date)
+    }
 }
 

@@ -21,6 +21,7 @@ CREATE OR REPLACE FUNCTION api.create_comment(
 RETURNS api.comments
 LANGUAGE plpgsql
 SECURITY INVOKER
+SET search_path = ''
 AS $$
 DECLARE
     v_comment_id UUID;
@@ -64,13 +65,22 @@ GRANT EXECUTE ON FUNCTION api.create_comment(UUID, TEXT, UUID) TO authenticated;
 
 -- 3. Enhance subtask nesting check trigger function
 CREATE OR REPLACE FUNCTION public.check_subtask_nesting()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
 BEGIN
     IF NEW.parent_id IS NOT NULL THEN
+        IF NEW.parent_id = NEW.id THEN
+            RAISE EXCEPTION 'A task cannot be its own parent';
+        END IF;
+
         -- Check if target parent is itself a subtask
         IF EXISTS (
             SELECT 1 FROM public.tasks
             WHERE id = NEW.parent_id AND operator_id = NEW.operator_id AND parent_id IS NOT NULL
+            FOR SHARE
         ) THEN
             RAISE EXCEPTION 'Subtasks cannot have children (one-level nesting only)';
         END IF;
@@ -79,10 +89,11 @@ BEGIN
         IF EXISTS (
             SELECT 1 FROM public.tasks
             WHERE parent_id = NEW.id AND operator_id = NEW.operator_id
+            FOR SHARE
         ) THEN
-            RAISE EXCEPTION 'Subtasks cannot have children (one-level nesting only)';
+            RAISE EXCEPTION 'A task with children cannot become a subtask (one-level nesting only)';
         END IF;
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;

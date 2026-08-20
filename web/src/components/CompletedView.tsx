@@ -63,12 +63,14 @@ export function CompletedView({
                 onClick={() => onSelectTask?.(task)}
                 className="group flex items-center justify-between p-3.5 rounded-lg border border-border/70 bg-card hover:border-border transition-colors shadow-xs cursor-pointer"
               >
-                <div className="flex items-center space-x-3 min-w-0">
+                <div className="flex items-center space-x-3 min-w-0 flex-1">
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onUncompleteTask(task);
+                      void Promise.resolve(onUncompleteTask(task)).catch(
+                        () => {},
+                      );
                     }}
                     aria-label={`Uncomplete task ${task.title}`}
                     title="Uncomplete task"
@@ -76,7 +78,15 @@ export function CompletedView({
                   >
                     <CheckCircle2 className="h-4 w-4" />
                   </button>
-                  <div className="min-w-0 space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectTask?.(task);
+                    }}
+                    aria-label={`Select task ${task.title}`}
+                    className="min-w-0 space-y-0.5 text-left flex-1 bg-transparent border-0 p-0 focus:outline-hidden focus-visible:ring-1 focus-visible:ring-ring rounded-xs cursor-pointer"
+                  >
                     <span className="text-sm font-medium text-muted-foreground line-through truncate block">
                       {task.title}
                     </span>
@@ -86,10 +96,10 @@ export function CompletedView({
                       </p>
                     )}
                     <TaskLabelBadges labelIds={task.labels} labels={labels} />
-                  </div>
+                  </button>
                 </div>
 
-                <div className="flex items-center space-x-2 shrink-0 text-xs text-muted-foreground">
+                <div className="flex items-center space-x-2 shrink-0 text-xs text-muted-foreground ml-2">
                   {task.priority < 4 && (
                     <span className="px-1.5 py-0.5 rounded-sm bg-secondary text-secondary-foreground font-medium text-[11px]">
                       P{task.priority}

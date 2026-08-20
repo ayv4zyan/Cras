@@ -60,7 +60,7 @@ import java.time.LocalDate
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CreateTaskInput(
-    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>, plan: Plan?) -> Unit,
+    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>, plan: Plan?, onSuccess: () -> Unit) -> Unit,
     availableLabels: List<Label> = emptyList(),
     isSubmitting: Boolean = false,
     errorMessage: String? = null,
@@ -71,7 +71,7 @@ fun CreateTaskInput(
 ) {
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
-    var priority by remember { mutableIntStateOf(4) }
+    var priority by remember { mutableIntStateOf(TaskPriorities.P4) }
     var selectedLabels by remember { mutableStateOf(emptyList<String>()) }
     var isExpanded by remember { mutableStateOf(false) }
 
@@ -80,9 +80,13 @@ fun CreateTaskInput(
     var selectedTimedType by remember { mutableStateOf<TimedPlanType?>(null) }
     var isTypeMenuExpanded by remember { mutableStateOf(false) }
 
-    val todayDate = remember { getDeviceLocalDate() }
-    val tomorrowDate = remember {
-        LocalDate.now().plusDays(1).toString()
+    val todayDate = remember(defaultDate, isExpanded) { defaultDate ?: getDeviceLocalDate() }
+    val tomorrowDate = remember(todayDate) {
+        try {
+            LocalDate.parse(todayDate).plusDays(1).toString()
+        } catch (_: Exception) {
+            LocalDate.now().plusDays(1).toString()
+        }
     }
 
     val submit = {
@@ -100,15 +104,16 @@ fun CreateTaskInput(
                 )
             } else null
 
-            onCreateTask(trimmedTitle, desc, priority, selectedLabels, plan)
-            title = ""
-            description = ""
-            priority = 4
-            selectedLabels = emptyList()
-            planDate = defaultDate ?: ""
-            planTime = ""
-            selectedTimedType = null
-            isExpanded = false
+            onCreateTask(trimmedTitle, desc, priority, selectedLabels, plan) {
+                title = ""
+                description = ""
+                priority = TaskPriorities.P4
+                selectedLabels = emptyList()
+                planDate = defaultDate ?: ""
+                planTime = ""
+                selectedTimedType = null
+                isExpanded = false
+            }
         }
     }
 

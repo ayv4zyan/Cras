@@ -243,8 +243,7 @@ fun CompletedTaskItemRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
-                onClick = onUncomplete,
-                modifier = Modifier.size(24.dp)
+                onClick = onUncomplete
             ) {
                 Icon(
                     imageVector = Icons.Default.CheckCircle,

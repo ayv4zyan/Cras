@@ -84,6 +84,20 @@ class BlackboxJourneyTest {
         val version: Int
     )
 
+    private fun SimulatedDbRow.toTask(): Task = Task(
+        id = id,
+        title = title,
+        description = description,
+        priority = priority,
+        plan = plan,
+        labels = labels,
+        parentId = parentId,
+        completedAt = completedAt,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        version = version
+    )
+
     private data class SimulatedCommentDbRow(
         val id: String,
         val operatorId: String,
@@ -304,6 +318,9 @@ class BlackboxJourneyTest {
                             )
                             return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
                         }
+                        else -> {
+                            return MockResponse().setResponseCode(405).setBody("""{"code":"42P01","message":"Method Not Allowed"}""")
+                        }
                     }
                 }
 
@@ -354,21 +371,7 @@ class BlackboxJourneyTest {
                     }
 
                     // RLS: operator_id = auth.uid()
-                    val operatorTasks = dbRows.filter { it.operatorId == callerOperatorId }.map { row ->
-                        Task(
-                            id = row.id,
-                            title = row.title,
-                            description = row.description,
-                            priority = row.priority,
-                            plan = row.plan,
-                            labels = row.labels,
-                            parentId = row.parentId,
-                            completedAt = row.completedAt,
-                            createdAt = row.createdAt,
-                            updatedAt = row.updatedAt,
-                            version = row.version
-                        )
-                    }
+                    val operatorTasks = dbRows.filter { it.operatorId == callerOperatorId }.map { it.toTask() }
 
                     val respBody = json.encodeToString(
                         kotlinx.serialization.builtins.ListSerializer(Task.serializer()),
@@ -479,21 +482,7 @@ class BlackboxJourneyTest {
                     )
                     dbRows.add(newRow)
 
-                    val createdTask = Task(
-                        id = newRow.id,
-                        title = newRow.title,
-                        description = newRow.description,
-                        priority = newRow.priority,
-                        plan = newRow.plan,
-                        labels = newRow.labels,
-                        parentId = newRow.parentId,
-                        completedAt = newRow.completedAt,
-                        createdAt = newRow.createdAt,
-                        updatedAt = newRow.updatedAt,
-                        version = newRow.version
-                    )
-
-                    val respBody = json.encodeToString(Task.serializer(), createdTask)
+                    val respBody = json.encodeToString(Task.serializer(), newRow.toTask())
                     return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
                 }
 
@@ -558,21 +547,7 @@ class BlackboxJourneyTest {
                     )
                     dbRows[index] = updatedRow
 
-                    val updatedTask = Task(
-                        id = updatedRow.id,
-                        title = updatedRow.title,
-                        description = updatedRow.description,
-                        priority = updatedRow.priority,
-                        plan = updatedRow.plan,
-                        labels = updatedRow.labels,
-                        parentId = updatedRow.parentId,
-                        completedAt = updatedRow.completedAt,
-                        createdAt = updatedRow.createdAt,
-                        updatedAt = updatedRow.updatedAt,
-                        version = updatedRow.version
-                    )
-
-                    val respBody = json.encodeToString(Task.serializer(), updatedTask)
+                    val respBody = json.encodeToString(Task.serializer(), updatedRow.toTask())
                     return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
                 }
 
@@ -601,21 +576,7 @@ class BlackboxJourneyTest {
                     )
                     dbRows[index] = updatedRow
 
-                    val completedTask = Task(
-                        id = updatedRow.id,
-                        title = updatedRow.title,
-                        description = updatedRow.description,
-                        priority = updatedRow.priority,
-                        plan = updatedRow.plan,
-                        labels = updatedRow.labels,
-                        parentId = updatedRow.parentId,
-                        completedAt = updatedRow.completedAt,
-                        createdAt = updatedRow.createdAt,
-                        updatedAt = updatedRow.updatedAt,
-                        version = updatedRow.version
-                    )
-
-                    val respBody = json.encodeToString(Task.serializer(), completedTask)
+                    val respBody = json.encodeToString(Task.serializer(), updatedRow.toTask())
                     return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
                 }
 
@@ -642,21 +603,7 @@ class BlackboxJourneyTest {
                     )
                     dbRows[index] = updatedRow
 
-                    val uncompletedTask = Task(
-                        id = updatedRow.id,
-                        title = updatedRow.title,
-                        description = updatedRow.description,
-                        priority = updatedRow.priority,
-                        plan = updatedRow.plan,
-                        labels = updatedRow.labels,
-                        parentId = updatedRow.parentId,
-                        completedAt = updatedRow.completedAt,
-                        createdAt = updatedRow.createdAt,
-                        updatedAt = updatedRow.updatedAt,
-                        version = updatedRow.version
-                    )
-
-                    val respBody = json.encodeToString(Task.serializer(), uncompletedTask)
+                    val respBody = json.encodeToString(Task.serializer(), updatedRow.toTask())
                     return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
                 }
 
@@ -826,7 +773,7 @@ class BlackboxJourneyTest {
     }
 
     @Test
-    fun `proves Issue 42 AC 1 - Compose flows edit Description and all Priority states`() = runTest {
+    fun `proves Issue 42 AC 1 - ViewModel edits Description and all Priority states`() = runTest {
         val viewModel = createViewModel()
         advanceUntilIdle()
         viewModel.signInWithGoogleIdToken("google-token-alice")

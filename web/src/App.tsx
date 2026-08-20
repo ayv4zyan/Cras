@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Inbox,
   Calendar,
@@ -49,12 +49,18 @@ import {
 import type { TimedPlanType } from "./services/temporalService";
 import type { Priority, Task, Label, Comment } from "./contracts/task";
 import { supabase } from "./config/supabase";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 
 type ViewMode = "inbox" | "today" | "upcoming" | "completed";
 
 export interface CrasAppProps {
   readonly client?: SupabaseClient;
+}
+
+export interface AuthenticatedAppProps {
+  readonly client: SupabaseClient;
+  readonly user: User;
+  readonly onSignOut: () => Promise<void>;
 }
 
 interface NavItem {
@@ -65,15 +71,11 @@ interface NavItem {
   readonly badge?: number;
 }
 
-export function CrasApp({
-  client = supabase,
-}: CrasAppProps): React.JSX.Element {
-  const {
-    user,
-    isLoading: isAuthLoading,
-    signInWithGoogle,
-    signOut,
-  } = useAuth();
+export function AuthenticatedApp({
+  client,
+  user,
+  onSignOut,
+}: AuthenticatedAppProps): React.JSX.Element {
   const [activeView, setActiveView] = useState<ViewMode>("inbox");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
@@ -86,43 +88,87 @@ export function CrasApp({
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
-    if (!user) {
-      setTasks([]);
-      setLabels([]);
+  const userId = user.id;
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    setTasks([]);
+    setLabels([]);
+    setSelectedTask(null);
+    setIsDetailModalOpen(false);
+    setComments([]);
+    setErrorMessage(null);
+
+    setIsTasksLoading(true);
+    Promise.all([
+      fetchTasks(client),
+      fetchLabels(client).catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error
+              ? `Failed to load labels: ${err.message}`
+              : "Failed to load labels",
+          );
+        }
+        return [] as Label[];
+      }),
+      fetchEffectiveTimedPlanType(client).catch(() =>
+        getCachedEffectiveTimedPlanType(),
+      ),
+    ])
+      .then(([allTasks, allLabels, effectiveType]) => {
+        if (!isCancelled) {
+          setTasks(allTasks);
+          setLabels(allLabels);
+          setEffectiveTimedPlanType(effectiveType);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error ? err.message : "Failed to load data",
+          );
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsTasksLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [userId, client]);
+
+  const selectedTaskId = selectedTask?.id;
+  useEffect(() => {
+    if (!selectedTaskId) {
       setComments([]);
       return;
     }
-    setIsTasksLoading(true);
-    setErrorMessage(null);
-    try {
-      const [allTasks, allLabels, allComments, effectiveType] =
-        await Promise.all([
-          fetchTasks(client),
-          fetchLabels(client).catch(() => [] as Label[]),
-          fetchComments(client).catch(() => [] as Comment[]),
-          fetchEffectiveTimedPlanType(client).catch(() =>
-            getCachedEffectiveTimedPlanType(),
-          ),
-        ]);
-      setTasks(allTasks);
-      setLabels(allLabels);
-      setComments(allComments);
-      setEffectiveTimedPlanType(effectiveType);
-    } catch (err) {
-      setErrorMessage(
-        err instanceof Error ? err.message : "Failed to load data",
-      );
-    } finally {
-      setIsTasksLoading(false);
-    }
-  }, [user, client]);
-
-  useEffect(() => {
-    if (user) {
-      loadData();
-    }
-  }, [user, loadData]);
+    let isCancelled = false;
+    fetchComments(client, selectedTaskId)
+      .then((taskComments) => {
+        if (!isCancelled) {
+          setComments(taskComments);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!isCancelled) {
+          setComments([]);
+          setErrorMessage(
+            err instanceof Error
+              ? `Failed to load comments: ${err.message}`
+              : "Failed to load comments",
+          );
+        }
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, [client, selectedTaskId]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
@@ -158,8 +204,15 @@ export function CrasApp({
   const handleCompleteTask = useCallback(
     async (task: Task) => {
       setErrorMessage(null);
-      const completed = await completeTask(client, task.id);
-      applyTaskUpdate(completed);
+      try {
+        const completed = await completeTask(client, task.id);
+        applyTaskUpdate(completed);
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to complete task";
+        setErrorMessage(msg);
+        throw err;
+      }
     },
     [client, applyTaskUpdate],
   );
@@ -167,8 +220,15 @@ export function CrasApp({
   const handleUncompleteTask = useCallback(
     async (task: Task) => {
       setErrorMessage(null);
-      const uncompleted = await uncompleteTask(client, task.id);
-      applyTaskUpdate(uncompleted);
+      try {
+        const uncompleted = await uncompleteTask(client, task.id);
+        applyTaskUpdate(uncompleted);
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to uncomplete task";
+        setErrorMessage(msg);
+        throw err;
+      }
     },
     [client, applyTaskUpdate],
   );
@@ -215,6 +275,7 @@ export function CrasApp({
 
   const handleCreateLabel = useCallback(
     async (params: CreateLabelParams) => {
+      setErrorMessage(null);
       const newLabel = await createLabel(client, params);
       setLabels((prev) => [...prev, newLabel]);
     },
@@ -223,6 +284,7 @@ export function CrasApp({
 
   const handleUpdateLabel = useCallback(
     async (params: UpdateLabelParams) => {
+      setErrorMessage(null);
       const updated = await updateLabel(client, params);
       setLabels((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
     },
@@ -231,6 +293,7 @@ export function CrasApp({
 
   const handleDeleteLabel = useCallback(
     async (labelId: string) => {
+      setErrorMessage(null);
       await deleteLabel(client, labelId);
       setLabels((prev) => prev.filter((l) => l.id !== labelId));
       // Remove deleted label from loaded tasks
@@ -250,70 +313,64 @@ export function CrasApp({
     [client],
   );
 
-  if (isAuthLoading) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground">
-        <div className="flex flex-col items-center space-y-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary font-bold text-lg text-primary-foreground shadow-xs">
-            C
-          </div>
-          <div className="flex items-center space-x-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            <span>Restoring Operator session...</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const inboxTasks = useMemo(() => filterInboxTasks(tasks), [tasks]);
+  const completedTasks = useMemo(() => filterCompletedTasks(tasks), [tasks]);
+  const todayTasks = useMemo(() => filterTodayTasks(tasks), [tasks]);
+  const upcomingResult = useMemo(() => filterUpcomingTasks(tasks), [tasks]);
+  const totalUpcomingCount = useMemo(
+    () =>
+      upcomingResult.overdue.length +
+      upcomingResult.groups.reduce((acc, g) => acc + g.tasks.length, 0),
+    [upcomingResult],
+  );
 
-  if (!user) {
-    return <SignInScreen onSignInWithGoogle={signInWithGoogle} />;
-  }
+  const selectedTaskComments = useMemo(
+    () =>
+      selectedTask ? comments.filter((c) => c.taskId === selectedTask.id) : [],
+    [selectedTask, comments],
+  );
+  const selectedTaskSubtasks = useMemo(
+    () => (selectedTask ? filterSubtasks(tasks, selectedTask.id) : []),
+    [selectedTask, tasks],
+  );
 
-  const inboxTasks = filterInboxTasks(tasks);
-  const completedTasks = filterCompletedTasks(tasks);
-  const todayTasks = filterTodayTasks(tasks);
-  const upcomingResult = filterUpcomingTasks(tasks);
-  const totalUpcomingCount =
-    upcomingResult.overdue.length +
-    upcomingResult.groups.reduce((acc, g) => acc + g.tasks.length, 0);
-
-  const selectedTaskComments = selectedTask
-    ? comments.filter((c) => c.taskId === selectedTask.id)
-    : [];
-  const selectedTaskSubtasks = selectedTask
-    ? filterSubtasks(tasks, selectedTask.id)
-    : [];
-
-  const navItems: readonly NavItem[] = [
-    {
-      id: "inbox",
-      label: "Inbox",
-      icon: Inbox,
-      badge: inboxTasks.length,
-    },
-    {
-      id: "today",
-      label: "Today",
-      icon: Calendar,
-      iconClassName: "text-emerald-600 dark:text-emerald-400",
-      badge: todayTasks.length,
-    },
-    {
-      id: "upcoming",
-      label: "Upcoming",
-      icon: CalendarDays,
-      iconClassName: "text-blue-600 dark:text-blue-400",
-      badge: totalUpcomingCount > 0 ? totalUpcomingCount : undefined,
-    },
-    {
-      id: "completed",
-      label: "Completed",
-      icon: CheckCircle2,
-      iconClassName: "text-muted-foreground",
-      badge: completedTasks.length,
-    },
-  ];
+  const navItems: readonly NavItem[] = useMemo(
+    () => [
+      {
+        id: "inbox",
+        label: "Inbox",
+        icon: Inbox,
+        badge: inboxTasks.length > 0 ? inboxTasks.length : undefined,
+      },
+      {
+        id: "today",
+        label: "Today",
+        icon: Calendar,
+        iconClassName: "text-emerald-600 dark:text-emerald-400",
+        badge: todayTasks.length > 0 ? todayTasks.length : undefined,
+      },
+      {
+        id: "upcoming",
+        label: "Upcoming",
+        icon: CalendarDays,
+        iconClassName: "text-blue-600 dark:text-blue-400",
+        badge: totalUpcomingCount > 0 ? totalUpcomingCount : undefined,
+      },
+      {
+        id: "completed",
+        label: "Completed",
+        icon: CheckCircle2,
+        iconClassName: "text-muted-foreground",
+        badge: completedTasks.length > 0 ? completedTasks.length : undefined,
+      },
+    ],
+    [
+      inboxTasks.length,
+      todayTasks.length,
+      totalUpcomingCount,
+      completedTasks.length,
+    ],
+  );
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
@@ -437,7 +494,7 @@ export function CrasApp({
 
               <button
                 type="button"
-                onClick={() => signOut()}
+                onClick={() => onSignOut()}
                 aria-label="Sign out"
                 title="Sign out"
                 className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer shrink-0"
@@ -459,6 +516,7 @@ export function CrasApp({
             onCompleteTask={handleCompleteTask}
             onSelectTask={handleSelectTask}
             isLoading={isTasksLoading}
+            effectiveDefault={effectiveTimedPlanType}
           />
         ) : activeView === "today" ? (
           <TodayView
@@ -468,6 +526,7 @@ export function CrasApp({
             onCompleteTask={handleCompleteTask}
             onSelectTask={handleSelectTask}
             isLoading={isTasksLoading}
+            effectiveDefault={effectiveTimedPlanType}
           />
         ) : activeView === "upcoming" ? (
           <UpcomingView
@@ -515,6 +574,46 @@ export function CrasApp({
         onDeleteLabel={handleDeleteLabel}
       />
     </div>
+  );
+}
+
+export function CrasApp({
+  client = supabase,
+}: CrasAppProps): React.JSX.Element {
+  const {
+    user,
+    isLoading: isAuthLoading,
+    signInWithGoogle,
+    signOut,
+  } = useAuth();
+
+  if (isAuthLoading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground">
+        <div className="flex flex-col items-center space-y-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary font-bold text-lg text-primary-foreground shadow-xs">
+            C
+          </div>
+          <div className="flex items-center space-x-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>Restoring Operator session...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <SignInScreen onSignInWithGoogle={signInWithGoogle} />;
+  }
+
+  return (
+    <AuthenticatedApp
+      key={user.id}
+      client={client}
+      user={user}
+      onSignOut={signOut}
+    />
   );
 }
 

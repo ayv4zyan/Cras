@@ -6,6 +6,7 @@ import com.cras.app.models.Comment
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -30,21 +31,25 @@ class SupabaseCommentService(
 ) : CommentService {
 
     private fun executeRequest(request: Request, operationName: String): String {
-        val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        return httpClient.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string() ?: ""
 
-        if (!response.isSuccessful) {
-            throw IOException("Failed to $operationName: ${response.code} $responseBody")
+            if (!response.isSuccessful) {
+                throw IOException("Failed to $operationName: ${response.code} $responseBody")
+            }
+            responseBody
         }
-        return responseBody
     }
 
     override suspend fun fetchComments(session: OperatorSession, taskId: String?): List<Comment> {
-        val endpoint = if (taskId != null) {
-            "${config.url}/rest/v1/comments?select=*&taskId=eq.$taskId"
-        } else {
-            "${config.url}/rest/v1/comments?select=*"
+        val urlBuilder = "${config.url}/rest/v1/comments".toHttpUrl().newBuilder()
+            .addQueryParameter("select", "*")
+
+        if (taskId != null) {
+            urlBuilder.addQueryParameter("task_id", "eq.$taskId")
         }
+
+        val endpoint = urlBuilder.build().toString()
 
         val request = Request.Builder()
             .url(endpoint)

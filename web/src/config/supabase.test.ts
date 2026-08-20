@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { getPublicSupabaseConfig, createSupabaseClient } from "./supabase";
 
 describe("Supabase Public Configuration & Client Seam", () => {
-  it("extracts public Supabase URL and publishable key only", () => {
+  it("extracts public Supabase URL and publishable key from VITE_ variables", () => {
     const config = getPublicSupabaseConfig({
-      SUPABASE_URL: "https://example-project.supabase.co",
-      SUPABASE_ANON_KEY: "sb_publishable_test_key_123",
+      VITE_SUPABASE_URL: "https://example-project.supabase.co",
+      VITE_SUPABASE_ANON_KEY: "sb_publishable_test_key_123",
     });
 
     expect(config.url).toBe("https://example-project.supabase.co");
@@ -14,14 +14,14 @@ describe("Supabase Public Configuration & Client Seam", () => {
     expect(Object.keys(config)).toEqual(["url", "publishableKey"]);
   });
 
-  it("supports legacy VITE_ prefixed keys as fallback", () => {
+  it("supports VITE_SUPABASE_PUBLISHABLE_KEY as fallback", () => {
     const config = getPublicSupabaseConfig({
-      VITE_SUPABASE_URL: "https://legacy-project.supabase.co",
-      VITE_SUPABASE_ANON_KEY: "sb_legacy_key_123",
+      VITE_SUPABASE_URL: "https://example-project.supabase.co",
+      VITE_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_key_456",
     });
 
-    expect(config.url).toBe("https://legacy-project.supabase.co");
-    expect(config.publishableKey).toBe("sb_legacy_key_123");
+    expect(config.url).toBe("https://example-project.supabase.co");
+    expect(config.publishableKey).toBe("sb_publishable_key_456");
   });
 
   it("falls back to default local Supabase credentials when env is empty", () => {

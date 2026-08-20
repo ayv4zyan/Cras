@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TaskDetailModal } from "./TaskDetailModal";
-import type { Task } from "../contracts/task";
+import type { Task, Label } from "../contracts/task";
 
 describe("TaskDetailModal Component", () => {
   const openTask: Task = {
@@ -85,6 +85,42 @@ describe("TaskDetailModal Component", () => {
     });
   });
 
+  it("preserves existing Instant plan when saved without editing plan controls", async () => {
+    const handleSave = vi.fn().mockResolvedValue(undefined);
+    const instantTask: Task = {
+      ...openTask,
+      plan: {
+        type: "instant",
+        at: "2026-08-25T14:30:00.000Z",
+      },
+    };
+
+    render(
+      <TaskDetailModal
+        task={instantTask}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={handleSave}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    const saveButton = screen.getByRole("button", { name: /save changes/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(handleSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: instantTask.id,
+          clearPlan: false,
+          plan: expect.objectContaining({
+            type: "instant",
+          }),
+        }),
+      );
+    });
+  });
+
   it("allows setting and saving a Date-only plan", async () => {
     const handleSave = vi.fn().mockResolvedValue(undefined);
 
@@ -98,7 +134,7 @@ describe("TaskDetailModal Component", () => {
       />,
     );
 
-    const dateInput = screen.getByLabelText(/plan date/i);
+    const dateInput = screen.getByLabelText(/task plan date/i);
     fireEvent.change(dateInput, { target: { value: "2026-08-25" } });
 
     const saveButton = screen.getByRole("button", { name: /save changes/i });
@@ -129,7 +165,7 @@ describe("TaskDetailModal Component", () => {
       />,
     );
 
-    const dateInput = screen.getByLabelText(/plan date/i);
+    const dateInput = screen.getByLabelText(/task plan date/i);
     fireEvent.change(dateInput, { target: { value: "2026-08-25" } });
 
     const timeInput = screen.getByLabelText(/task plan time/i);
@@ -255,16 +291,20 @@ describe("TaskDetailModal Component", () => {
 
   it("renders labels and allows adding and removing labels on an open task", async () => {
     const handleSave = vi.fn().mockResolvedValue(undefined);
-    const availableLabels = [
+    const availableLabels: Label[] = [
       {
         id: "22222222-2222-2222-2222-222222222222",
         name: "Urgent",
         color: "#ef4444",
+        createdAt: "2026-08-18T10:00:00.000Z",
+        updatedAt: "2026-08-18T10:00:00.000Z",
       },
       {
         id: "33333333-3333-3333-3333-333333333333",
         name: "Work",
         color: "#3b82f6",
+        createdAt: "2026-08-18T11:00:00.000Z",
+        updatedAt: "2026-08-18T11:00:00.000Z",
       },
     ];
 
@@ -344,7 +384,7 @@ describe("TaskDetailModal Component", () => {
     expect(screen.getByText("First remark on this task")).toBeInTheDocument();
     expect(screen.getByText(/comments/i)).toBeInTheDocument();
 
-    const commentInput = screen.getByPlaceholderText(/add a comment/i);
+    const commentInput = screen.getByLabelText("Add a comment");
     const addCommentBtn = screen.getByRole("button", { name: /add comment/i });
 
     fireEvent.change(commentInput, {
@@ -360,9 +400,10 @@ describe("TaskDetailModal Component", () => {
     });
   });
 
-  it("renders subtasks under top-level task and allows adding subtasks", async () => {
+  it("renders subtasks under top-level task and allows adding subtasks and navigating to subtask", async () => {
     const handleCreateSubtask = vi.fn().mockResolvedValue(undefined);
     const handleToggleSubtask = vi.fn().mockResolvedValue(undefined);
+    const handleSelectSubtask = vi.fn();
 
     const subtasks: Task[] = [
       {
@@ -384,11 +425,17 @@ describe("TaskDetailModal Component", () => {
         onToggleComplete={vi.fn()}
         onCreateSubtask={handleCreateSubtask}
         onToggleSubtaskComplete={handleToggleSubtask}
+        onSelectSubtask={handleSelectSubtask}
       />,
     );
 
     expect(screen.getByText("Subtask 1")).toBeInTheDocument();
-    const subtaskInput = screen.getByPlaceholderText(/add subtask/i);
+
+    // Clicking subtask title triggers onSelectSubtask
+    fireEvent.click(screen.getByText("Subtask 1"));
+    expect(handleSelectSubtask).toHaveBeenCalledWith(subtasks[0]);
+
+    const subtaskInput = screen.getByLabelText("Add a subtask");
     const addSubtaskBtn = screen.getByRole("button", { name: /add subtask/i });
 
     fireEvent.change(subtaskInput, {
@@ -431,12 +478,95 @@ describe("TaskDetailModal Component", () => {
       />,
     );
 
-    expect(screen.getByText(/subtask/i)).toBeInTheDocument();
+    expect(screen.getByText("Subtask")).toBeInTheDocument();
     expect(
       screen.queryByPlaceholderText(/add subtask/i),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /add subtask/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("surfaces comment and subtask creation errors next to their respective sections", async () => {
+    const handleAddCommentFail = vi
+      .fn()
+      .mockRejectedValue(new Error("Comment server error"));
+    const handleCreateSubtaskFail = vi
+      .fn()
+      .mockRejectedValue(new Error("Subtask limit reached"));
+
+    render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+        onAddComment={handleAddCommentFail}
+        onCreateSubtask={handleCreateSubtaskFail}
+      />,
+    );
+
+    // Trigger comment failure
+    fireEvent.change(screen.getByLabelText("Add a comment"), {
+      target: { value: "Failing comment" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add comment/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Comment server error")).toBeInTheDocument();
+    });
+
+    // Trigger subtask failure
+    fireEvent.change(screen.getByLabelText("Add a subtask"), {
+      target: { value: "Failing subtask" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add subtask/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Subtask limit reached")).toBeInTheDocument();
+      // Comment error should still be visible in its section
+      expect(screen.getByText("Comment server error")).toBeInTheDocument();
+    });
+  });
+
+  it("closes modal on Escape key press", () => {
+    const handleClose = vi.fn();
+    render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={true}
+        onClose={handleClose}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: "Escape", code: "Escape" });
+    expect(handleClose).toHaveBeenCalled();
+  });
+
+  it("returns null when task is null or isOpen is false", () => {
+    const { container: container1 } = render(
+      <TaskDetailModal
+        task={null}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+    expect(container1.firstChild).toBeNull();
+
+    const { container: container2 } = render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={false}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+      />,
+    );
+    expect(container2.firstChild).toBeNull();
   });
 });

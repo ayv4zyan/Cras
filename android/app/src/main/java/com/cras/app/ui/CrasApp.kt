@@ -21,12 +21,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,17 +47,16 @@ import com.cras.app.ui.inbox.InboxViewModel
 import com.cras.app.ui.labels.LabelManagerDialog
 import com.cras.app.ui.today.TodayScreen
 import com.cras.app.ui.upcoming.UpcomingScreen
+import kotlinx.coroutines.launch
 
 enum class AppView(
     val title: String,
-    val icon: ImageVector,
-    val emptyIcon: ImageVector,
-    val emptyMessage: String
+    val icon: ImageVector
 ) {
-    INBOX("Inbox", Icons.Default.Inbox, Icons.Default.Inbox, "No tasks in Inbox"),
-    TODAY("Today", Icons.Default.CalendarToday, Icons.Default.CalendarToday, "No tasks for Today"),
-    UPCOMING("Upcoming", Icons.Default.CalendarMonth, Icons.Default.CalendarMonth, "No upcoming tasks"),
-    COMPLETED("Completed", Icons.Default.CheckCircleOutline, Icons.Default.CheckCircleOutline, "No completed tasks")
+    INBOX("Inbox", Icons.Default.Inbox),
+    TODAY("Today", Icons.Default.CalendarToday),
+    UPCOMING("Upcoming", Icons.Default.CalendarMonth),
+    COMPLETED("Completed", Icons.Default.CheckCircleOutline)
 }
 
 @Composable
@@ -77,6 +79,8 @@ fun CrasApp(
 
     var currentView by remember { mutableStateOf(AppView.INBOX) }
     var isLabelManagerOpen by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     when (val state = authState) {
         is AuthUiState.Loading -> {
@@ -103,6 +107,7 @@ fun CrasApp(
 
         is AuthUiState.Authenticated -> {
             Scaffold(
+                snackbarHost = { SnackbarHost(snackbarHostState) },
                 bottomBar = {
                     NavigationBar(
                         containerColor = MaterialTheme.colorScheme.surface
@@ -132,11 +137,18 @@ fun CrasApp(
                                 effectiveDefault = effectiveTimedPlanType,
                                 isCreatingTask = isCreatingTask,
                                 createTaskError = createTaskError,
-                                onCreateTask = { title, description, priority, taskLabels, plan ->
-                                    viewModel.createTask(title, description, priority, taskLabels, plan)
+                                onCreateTask = { title, description, priority, taskLabels, plan, onSuccess ->
+                                    viewModel.createTask(title, description, priority, taskLabels, plan, onSuccess)
                                 },
                                 onCompleteTask = { taskId ->
-                                    viewModel.completeTask(taskId)
+                                    viewModel.completeTask(
+                                        taskId = taskId,
+                                        onError = { errorMsg ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
+                                    )
                                 },
                                 onSelectTask = { task ->
                                     viewModel.selectTask(task)
@@ -155,11 +167,18 @@ fun CrasApp(
                                 effectiveDefault = effectiveTimedPlanType,
                                 isCreatingTask = isCreatingTask,
                                 createTaskError = createTaskError,
-                                onCreateTask = { title, description, priority, taskLabels, plan ->
-                                    viewModel.createTask(title, description, priority, taskLabels, plan)
+                                onCreateTask = { title, description, priority, taskLabels, plan, onSuccess ->
+                                    viewModel.createTask(title, description, priority, taskLabels, plan, onSuccess)
                                 },
                                 onCompleteTask = { taskId ->
-                                    viewModel.completeTask(taskId)
+                                    viewModel.completeTask(
+                                        taskId = taskId,
+                                        onError = { errorMsg ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
+                                    )
                                 },
                                 onSelectTask = { task ->
                                     viewModel.selectTask(task)
@@ -176,7 +195,14 @@ fun CrasApp(
                                 upcomingState = upcomingState,
                                 labels = labels,
                                 onCompleteTask = { taskId ->
-                                    viewModel.completeTask(taskId)
+                                    viewModel.completeTask(
+                                        taskId = taskId,
+                                        onError = { errorMsg ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
+                                    )
                                 },
                                 onSelectTask = { task ->
                                     viewModel.selectTask(task)
@@ -193,7 +219,14 @@ fun CrasApp(
                                 completedState = completedState,
                                 labels = labels,
                                 onUncompleteTask = { taskId ->
-                                    viewModel.uncompleteTask(taskId)
+                                    viewModel.uncompleteTask(
+                                        taskId = taskId,
+                                        onError = { errorMsg ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
+                                    )
                                 },
                                 onSelectTask = { task ->
                                     viewModel.selectTask(task)
@@ -207,8 +240,12 @@ fun CrasApp(
 
                     if (selectedTask != null) {
                         val currentTaskId = selectedTask!!.id
-                        val taskComments = comments.filter { it.taskId == currentTaskId }
-                        val taskSubtasks = filterSubtasks(allTasks, currentTaskId)
+                        val taskComments = remember(comments, currentTaskId) {
+                            comments.filter { it.taskId == currentTaskId }
+                        }
+                        val taskSubtasks = remember(allTasks, currentTaskId) {
+                            filterSubtasks(allTasks, currentTaskId)
+                        }
 
                         TaskDetailDialog(
                             task = selectedTask,

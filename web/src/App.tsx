@@ -88,51 +88,6 @@ export function CrasApp({
 
   const userId = user?.id;
 
-  const loadData = useCallback(async () => {
-    if (!user) {
-      setTasks([]);
-      setLabels([]);
-      setSelectedTask(null);
-      setIsDetailModalOpen(false);
-      setComments([]);
-      return;
-    }
-    const currentUserId = user.id;
-    setIsTasksLoading(true);
-    setErrorMessage(null);
-    try {
-      const [allTasks, allLabels, effectiveType] = await Promise.all([
-        fetchTasks(client),
-        fetchLabels(client).catch((err: unknown) => {
-          setErrorMessage(
-            err instanceof Error
-              ? `Failed to load labels: ${err.message}`
-              : "Failed to load labels",
-          );
-          return [] as Label[];
-        }),
-        fetchEffectiveTimedPlanType(client).catch(() =>
-          getCachedEffectiveTimedPlanType(),
-        ),
-      ]);
-      if (user.id === currentUserId) {
-        setTasks(allTasks);
-        setLabels(allLabels);
-        setEffectiveTimedPlanType(effectiveType);
-      }
-    } catch (err) {
-      if (user.id === currentUserId) {
-        setErrorMessage(
-          err instanceof Error ? err.message : "Failed to load data",
-        );
-      }
-    } finally {
-      if (user.id === currentUserId) {
-        setIsTasksLoading(false);
-      }
-    }
-  }, [user, client]);
-
   useEffect(() => {
     let isCancelled = false;
 
@@ -143,7 +98,7 @@ export function CrasApp({
     setComments([]);
     setErrorMessage(null);
 
-    if (!user) {
+    if (!userId) {
       setIsTasksLoading(false);
       return;
     }

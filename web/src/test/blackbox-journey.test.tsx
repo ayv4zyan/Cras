@@ -326,32 +326,50 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                     );
                     return { data: mapped, error: null };
                   };
-                  return {
-                    eq: vi
-                      .fn()
-                      .mockImplementation((col: string, val: string) => {
-                        const runFilter = async () => {
-                          const base = await runQuery();
-                          if (base.error || !base.data) return base;
-                          const filtered = base.data.filter(
+                  const makeChain = (
+                    filterFn?: (item: TaskCommentContract) => boolean,
+                  ) => {
+                    const execute = async () => {
+                      const base = await runQuery();
+                      if (base.error || !base.data) return base;
+                      let data = base.data;
+                      if (filterFn) {
+                        data = data.filter(filterFn);
+                      }
+                      data = [...data].sort(
+                        (a, b) =>
+                          new Date(a.createdAt).getTime() -
+                          new Date(b.createdAt).getTime(),
+                      );
+                      return { data, error: null };
+                    };
+                    return {
+                      eq: vi
+                        .fn()
+                        .mockImplementation((col: string, val: string) => {
+                          return makeChain(
                             (c) =>
                               (c as unknown as Record<string, string>)[col] ===
                               val,
                           );
-                          return { data: filtered, error: null };
-                        };
-                        return {
-                          then: (
-                            resolve: (v: unknown) => unknown,
-                            reject?: (reason: unknown) => unknown,
-                          ) => runFilter().then(resolve, reject),
-                        };
-                      }),
-                    then: (
-                      resolve: (v: unknown) => unknown,
-                      reject?: (reason: unknown) => unknown,
-                    ) => runQuery().then(resolve, reject),
+                        }),
+                      order: vi
+                        .fn()
+                        .mockImplementation(
+                          (
+                            _col: string,
+                            _options?: { ascending?: boolean },
+                          ) => {
+                            return makeChain(filterFn);
+                          },
+                        ),
+                      then: (
+                        resolve: (v: unknown) => unknown,
+                        reject?: (reason: unknown) => unknown,
+                      ) => execute().then(resolve, reject),
+                    };
                   };
+                  return makeChain();
                 }),
               };
             }
@@ -610,37 +628,6 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                 });
               }
 
-              const updatedRow: DbRow = {
-                ...existing,
-                title:
-                  params.title !== undefined && params.title !== null
-                    ? (params.title as string).trim()
-                    : existing.title,
-                description:
-                  params.clear_description === true
-                    ? null
-                    : params.description !== undefined &&
-                        params.description !== null
-                      ? (params.description as string)
-                      : existing.description,
-                priority:
-                  params.priority !== undefined && params.priority !== null
-                    ? (params.priority as number)
-                    : existing.priority,
-                plan:
-                  params.clear_plan === true
-                    ? null
-                    : params.plan !== undefined && params.plan !== null
-                      ? (params.plan as Plan)
-                      : existing.plan,
-                parent_id:
-                  params.parent_id !== undefined && params.parent_id !== null
-                    ? (params.parent_id as string)
-                    : existing.parent_id,
-                updated_at: now,
-                version: existing.version + 1,
-              };
-
               if (params.parent_id !== undefined && params.parent_id !== null) {
                 const parentTask = dbTasks.find(
                   (t) =>
@@ -682,6 +669,37 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
                   });
                 }
               }
+
+              const updatedRow: DbRow = {
+                ...existing,
+                title:
+                  params.title !== undefined && params.title !== null
+                    ? (params.title as string).trim()
+                    : existing.title,
+                description:
+                  params.clear_description === true
+                    ? null
+                    : params.description !== undefined &&
+                        params.description !== null
+                      ? (params.description as string)
+                      : existing.description,
+                priority:
+                  params.priority !== undefined && params.priority !== null
+                    ? (params.priority as number)
+                    : existing.priority,
+                plan:
+                  params.clear_plan === true
+                    ? null
+                    : params.plan !== undefined && params.plan !== null
+                      ? (params.plan as Plan)
+                      : existing.plan,
+                parent_id:
+                  params.parent_id !== undefined && params.parent_id !== null
+                    ? (params.parent_id as string)
+                    : existing.parent_id,
+                updated_at: now,
+                version: existing.version + 1,
+              };
 
               if (params.labels !== undefined && params.labels !== null) {
                 const labelIds = params.labels as string[];
@@ -1850,15 +1868,9 @@ describe("Black-box Acceptance & Isolation Suite - Web Client (Issues #39, #41, 
     // 4. Acceptance Criterion 4: "Subtasks are excluded from Inbox."
     // In Inbox view, only top-level task "Launch Cras v1" should appear; "Set up CDN" and "Configure custom domain" should NOT appear in main Inbox list!
     expect(screen.getByText("Launch Cras v1")).toBeInTheDocument();
+    expect(screen.queryByText("Set up CDN")).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId(
-        `task-item-${dbTasks.find((t) => t.title === "Set up CDN")?.id}`,
-      ),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByTestId(
-        `task-item-${dbTasks.find((t) => t.title === "Configure custom domain")?.id}`,
-      ),
+      screen.queryByText("Configure custom domain"),
     ).not.toBeInTheDocument();
 
     // 5. Complete a subtask inside modal

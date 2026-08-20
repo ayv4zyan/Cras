@@ -96,25 +96,22 @@ export function CrasApp({
     setIsTasksLoading(true);
     setErrorMessage(null);
     try {
-      const [allTasks, allLabels, allComments, effectiveType] =
-        await Promise.all([
-          fetchTasks(client),
-          fetchLabels(client).catch((err: unknown) => {
-            setErrorMessage(
-              err instanceof Error
-                ? `Failed to load labels: ${err.message}`
-                : "Failed to load labels",
-            );
-            return [] as Label[];
-          }),
-          fetchComments(client).catch(() => [] as Comment[]),
-          fetchEffectiveTimedPlanType(client).catch(() =>
-            getCachedEffectiveTimedPlanType(),
-          ),
-        ]);
+      const [allTasks, allLabels, effectiveType] = await Promise.all([
+        fetchTasks(client),
+        fetchLabels(client).catch((err: unknown) => {
+          setErrorMessage(
+            err instanceof Error
+              ? `Failed to load labels: ${err.message}`
+              : "Failed to load labels",
+          );
+          return [] as Label[];
+        }),
+        fetchEffectiveTimedPlanType(client).catch(() =>
+          getCachedEffectiveTimedPlanType(),
+        ),
+      ]);
       setTasks(allTasks);
       setLabels(allLabels);
-      setComments(allComments);
       setEffectiveTimedPlanType(effectiveType);
     } catch (err) {
       setErrorMessage(
@@ -130,6 +127,33 @@ export function CrasApp({
       loadData();
     }
   }, [user, loadData]);
+
+  useEffect(() => {
+    if (!selectedTask) {
+      setComments([]);
+      return;
+    }
+    let isCancelled = false;
+    fetchComments(client, selectedTask.id)
+      .then((taskComments) => {
+        if (!isCancelled) {
+          setComments(taskComments);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!isCancelled) {
+          setComments([]);
+          setErrorMessage(
+            err instanceof Error
+              ? `Failed to load comments: ${err.message}`
+              : "Failed to load comments",
+          );
+        }
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, [client, selectedTask?.id]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));

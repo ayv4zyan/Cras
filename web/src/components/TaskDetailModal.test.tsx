@@ -348,7 +348,7 @@ describe("TaskDetailModal Component", () => {
     expect(screen.getByText("First remark on this task")).toBeInTheDocument();
     expect(screen.getByText(/comments/i)).toBeInTheDocument();
 
-    const commentInput = screen.getByPlaceholderText(/add a comment/i);
+    const commentInput = screen.getByLabelText("Add a comment");
     const addCommentBtn = screen.getByRole("button", { name: /add comment/i });
 
     fireEvent.change(commentInput, {
@@ -364,9 +364,10 @@ describe("TaskDetailModal Component", () => {
     });
   });
 
-  it("renders subtasks under top-level task and allows adding subtasks", async () => {
+  it("renders subtasks under top-level task and allows adding subtasks and navigating to subtask", async () => {
     const handleCreateSubtask = vi.fn().mockResolvedValue(undefined);
     const handleToggleSubtask = vi.fn().mockResolvedValue(undefined);
+    const handleSelectSubtask = vi.fn();
 
     const subtasks: Task[] = [
       {
@@ -388,11 +389,17 @@ describe("TaskDetailModal Component", () => {
         onToggleComplete={vi.fn()}
         onCreateSubtask={handleCreateSubtask}
         onToggleSubtaskComplete={handleToggleSubtask}
+        onSelectSubtask={handleSelectSubtask}
       />,
     );
 
     expect(screen.getByText("Subtask 1")).toBeInTheDocument();
-    const subtaskInput = screen.getByPlaceholderText(/add subtask/i);
+
+    // Clicking subtask title triggers onSelectSubtask
+    fireEvent.click(screen.getByText("Subtask 1"));
+    expect(handleSelectSubtask).toHaveBeenCalledWith(subtasks[0]);
+
+    const subtaskInput = screen.getByLabelText("Add a subtask");
     const addSubtaskBtn = screen.getByRole("button", { name: /add subtask/i });
 
     fireEvent.change(subtaskInput, {
@@ -435,13 +442,52 @@ describe("TaskDetailModal Component", () => {
       />,
     );
 
-    expect(screen.getByText(/subtask/i)).toBeInTheDocument();
+    expect(screen.getByText("Subtask")).toBeInTheDocument();
     expect(
       screen.queryByPlaceholderText(/add subtask/i),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /add subtask/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("surfaces comment and subtask creation errors next to their respective sections", async () => {
+    const handleAddCommentFail = vi.fn().mockRejectedValue(new Error("Comment server error"));
+    const handleCreateSubtaskFail = vi.fn().mockRejectedValue(new Error("Subtask limit reached"));
+
+    render(
+      <TaskDetailModal
+        task={openTask}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onToggleComplete={vi.fn()}
+        onAddComment={handleAddCommentFail}
+        onCreateSubtask={handleCreateSubtaskFail}
+      />,
+    );
+
+    // Trigger comment failure
+    fireEvent.change(screen.getByLabelText("Add a comment"), {
+      target: { value: "Failing comment" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add comment/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Comment server error")).toBeInTheDocument();
+    });
+
+    // Trigger subtask failure
+    fireEvent.change(screen.getByLabelText("Add a subtask"), {
+      target: { value: "Failing subtask" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add subtask/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Subtask limit reached")).toBeInTheDocument();
+      // Comment error should still be visible in its section
+      expect(screen.getByText("Comment server error")).toBeInTheDocument();
+    });
   });
 
   it("closes modal on Escape key press", () => {

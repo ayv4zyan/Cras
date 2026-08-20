@@ -21,6 +21,7 @@ CREATE OR REPLACE FUNCTION api.create_comment(
 RETURNS api.comments
 LANGUAGE plpgsql
 SECURITY INVOKER
+SET search_path = ''
 AS $$
 DECLARE
     v_comment_id UUID;

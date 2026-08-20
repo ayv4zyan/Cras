@@ -14,7 +14,11 @@ export async function fetchComments(
   client: SupabaseClient,
   taskId?: string,
 ): Promise<Comment[]> {
-  let query = client.schema("api").from("comments").select("*");
+  let query = client
+    .schema("api")
+    .from("comments")
+    .select("*")
+    .order("createdAt", { ascending: true });
 
   if (taskId) {
     query = query.eq("taskId", taskId);

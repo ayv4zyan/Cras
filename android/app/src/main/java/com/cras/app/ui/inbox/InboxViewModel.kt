@@ -150,9 +150,11 @@ class InboxViewModel(
                             handleInvalidationEvent(session, payload)
                         },
                         onReconnect = {
-                            val currentAuth = _authState.value
-                            if (currentAuth is AuthUiState.Authenticated && currentAuth.session == session) {
-                                triggerLoadTasks(session)
+                            viewModelScope.launch {
+                                val currentAuth = _authState.value
+                                if (currentAuth is AuthUiState.Authenticated && currentAuth.session == session) {
+                                    triggerLoadTasks(session)
+                                }
                             }
                         }
                     )
@@ -299,6 +301,7 @@ class InboxViewModel(
         val reconciled = _allTasks.value
         recalculateViews(reconciled)
 
+        val previousSelected = _selectedTask.value
         _selectedTask.update { currentSelected ->
             if (currentSelected != null) {
                 val freshSelected = reconciled.find { it.id == currentSelected.id }
@@ -311,7 +314,7 @@ class InboxViewModel(
                 null
             }
         }
-        if (_selectedTask.value == null) {
+        if (previousSelected != null && _selectedTask.value == null) {
             _comments.value = emptyList()
         }
     }
@@ -692,9 +695,13 @@ class InboxViewModel(
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        val version = params.expectedVersion ?: _allTasks.value.find { it.id == params.id }?.version
+        if (version == null) {
+            onError("Task state is unavailable. Refresh and try again.")
+            return
+        }
         val effectiveParams = if (params.expectedVersion == null) {
-            val currentVer = _allTasks.value.find { it.id == params.id }?.version
-            params.copy(expectedVersion = currentVer)
+            params.copy(expectedVersion = version)
         } else {
             params
         }

@@ -1309,4 +1309,74 @@ class InboxViewModelTest {
         assertFalse(viewModel.inboxState.value is InboxUiState.Error)
         assertNull(viewModel.commentsError.value)
     }
+
+    @Test
+    fun `loadTasks preserves comments when no task is selected and clears comments when selected task is dropped`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val taskId = UUID.randomUUID().toString()
+        val task1 = Task(id = taskId, title = "Task 1", description = null, priority = 4, plan = null, labels = emptyList(), parentId = null, completedAt = null, createdAt = "2026-08-19T00:00:00Z", updatedAt = "2026-08-19T00:00:00Z", version = 1)
+        taskService.tasksInDb.add(task1)
+        val commentId = UUID.randomUUID().toString()
+        commentService.commentsInDb.add(Comment(id = commentId, taskId = taskId, content = "General comment", createdAt = "2026-08-19T10:00:00Z"))
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        // When no task is selected, loadTasks should NOT clear freshly loaded comments
+        assertEquals(1, viewModel.comments.value.size)
+        assertEquals(commentId, viewModel.comments.value[0].id)
+        assertNull(viewModel.selectedTask.value)
+
+        // Select task-1
+        viewModel.selectTask(task1)
+        advanceUntilIdle()
+        assertNotNull(viewModel.selectedTask.value)
+
+        // Dropping selection via reconcileFreshTasks when task is deleted
+        viewModel.reconcileFreshTasks(emptyList())
+        advanceUntilIdle()
+
+        assertNull(viewModel.selectedTask.value)
+        assertTrue(viewModel.comments.value.isEmpty())
+    }
+
+    @Test
+    fun `updateTask fails with error when expectedVersion is absent and task is not in allTasks`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        var errorMsg: String? = null
+        var updateCalled = false
+        val customTaskService = object : TaskService by taskService {
+            override suspend fun updateTask(session: OperatorSession, params: UpdateTaskParams): Task {
+                updateCalled = true
+                return taskService.updateTask(session, params)
+            }
+        }
+        val vmWithCustomTaskService = InboxViewModel(authService, customTaskService, labelService, commentService)
+        advanceUntilIdle()
+
+        val nonExistentId = UUID.randomUUID().toString()
+        vmWithCustomTaskService.updateTask(
+            UpdateTaskParams(id = nonExistentId, title = "New title"),
+            onError = { errorMsg = it }
+        )
+        advanceUntilIdle()
+
+        assertEquals("Task state is unavailable. Refresh and try again.", errorMsg)
+        assertFalse(updateCalled)
+    }
 }

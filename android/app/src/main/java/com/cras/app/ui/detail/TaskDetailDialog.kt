@@ -75,8 +75,25 @@ import com.cras.app.models.TaskPriorities
 import com.cras.app.ui.labels.parseHexColor
 import java.time.Instant
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+internal fun formatCompletedAt(isoTimestamp: String): String {
+    return try {
+        val instant = try {
+            OffsetDateTime.parse(isoTimestamp).toInstant()
+        } catch (_: Exception) {
+            Instant.parse(isoTimestamp)
+        }
+        val zdt = instant.atZone(ZoneId.systemDefault())
+        val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.getDefault())
+        zdt.format(formatter)
+    } catch (_: Exception) {
+        isoTimestamp
+    }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -341,7 +358,7 @@ fun TaskDetailDialog(
                                 )
                                 if (task.completedAt != null) {
                                     Text(
-                                        text = "Completed at ${task.completedAt}",
+                                        text = "Completed at ${formatCompletedAt(task.completedAt)}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
                                     )

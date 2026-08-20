@@ -423,6 +423,10 @@ class InboxViewModelTest {
 
         val createdTask = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
 
+        viewModel.selectTask(createdTask)
+        advanceUntilIdle()
+        assertEquals("Initial Title", viewModel.selectedTask.value?.title)
+
         // 1. Successful update
         var updateSuccess = false
         var updateError: String? = null
@@ -447,6 +451,8 @@ class InboxViewModelTest {
         assertEquals("Added description", updatedTask.description)
         assertEquals(1, updatedTask.priority)
         assertEquals(2, updatedTask.version)
+        assertEquals("Updated Title", viewModel.selectedTask.value?.title)
+        assertEquals(2, viewModel.selectedTask.value?.version)
 
         // 2. Complete task
         viewModel.completeTask(updatedTask.id)
@@ -740,5 +746,37 @@ class InboxViewModelTest {
         assertTrue(viewModel.inboxState.value is InboxUiState.Success)
         assertTrue(viewModel.todayState.value is TodayUiState.Empty)
         assertTrue(viewModel.upcomingState.value is UpcomingUiState.Empty)
+    }
+
+    @Test
+    fun `signOut clears selectedTask and resets all ui states`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        viewModel.createTask("Sign out test task")
+        advanceUntilIdle()
+
+        val task = (viewModel.inboxState.value as InboxUiState.Success).tasks[0]
+        viewModel.selectTask(task)
+        advanceUntilIdle()
+        assertNotNull(viewModel.selectedTask.value)
+
+        authService.sessionFlow.value = null
+        advanceUntilIdle()
+
+        assertNull(viewModel.selectedTask.value)
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+        assertTrue(viewModel.todayState.value is TodayUiState.Empty)
+        assertTrue(viewModel.upcomingState.value is UpcomingUiState.Empty)
+        assertTrue(viewModel.completedState.value is CompletedUiState.Empty)
+        assertTrue(viewModel.labels.value.isEmpty())
+        assertTrue(viewModel.comments.value.isEmpty())
     }
 }

@@ -72,4 +72,32 @@ class CompletedFilterTest {
         assertEquals(newerCompleted.id, result[0].id)
         assertEquals(olderCompleted.id, result[1].id)
     }
+
+    @Test
+    fun `filterCompletedTasks handles timezone offsets and fractional seconds correctly`() {
+        // 13:00+02:00 corresponds to 11:00 UTC (older than 12:00 UTC)
+        val taskWithOffset = createTask(
+            id = "550e8400-e29b-41d4-a716-446655440010",
+            title = "Offset task",
+            completedAt = "2026-08-19T13:00:00+02:00"
+        )
+        // 12:00:00.900Z is newer than 12:00:00Z
+        val taskWithFracSeconds = createTask(
+            id = "550e8400-e29b-41d4-a716-446655440011",
+            title = "Fractional seconds task",
+            completedAt = "2026-08-19T12:00:00.900Z"
+        )
+        val taskUtc = createTask(
+            id = "550e8400-e29b-41d4-a716-446655440012",
+            title = "UTC task",
+            completedAt = "2026-08-19T12:00:00Z"
+        )
+
+        val result = filterCompletedTasks(listOf(taskWithOffset, taskUtc, taskWithFracSeconds))
+
+        assertEquals(3, result.size)
+        assertEquals(taskWithFracSeconds.id, result[0].id)
+        assertEquals(taskUtc.id, result[1].id)
+        assertEquals(taskWithOffset.id, result[2].id)
+    }
 }

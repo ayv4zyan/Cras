@@ -21,12 +21,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +47,7 @@ import com.cras.app.ui.inbox.InboxViewModel
 import com.cras.app.ui.labels.LabelManagerDialog
 import com.cras.app.ui.today.TodayScreen
 import com.cras.app.ui.upcoming.UpcomingScreen
+import kotlinx.coroutines.launch
 
 enum class AppView(
     val title: String,
@@ -77,6 +81,8 @@ fun CrasApp(
 
     var currentView by remember { mutableStateOf(AppView.INBOX) }
     var isLabelManagerOpen by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     when (val state = authState) {
         is AuthUiState.Loading -> {
@@ -103,6 +109,7 @@ fun CrasApp(
 
         is AuthUiState.Authenticated -> {
             Scaffold(
+                snackbarHost = { SnackbarHost(snackbarHostState) },
                 bottomBar = {
                     NavigationBar(
                         containerColor = MaterialTheme.colorScheme.surface
@@ -132,11 +139,18 @@ fun CrasApp(
                                 effectiveDefault = effectiveTimedPlanType,
                                 isCreatingTask = isCreatingTask,
                                 createTaskError = createTaskError,
-                                onCreateTask = { title, description, priority, taskLabels, plan ->
-                                    viewModel.createTask(title, description, priority, taskLabels, plan)
+                                onCreateTask = { title, description, priority, taskLabels, plan, onSuccess ->
+                                    viewModel.createTask(title, description, priority, taskLabels, plan, onSuccess)
                                 },
                                 onCompleteTask = { taskId ->
-                                    viewModel.completeTask(taskId)
+                                    viewModel.completeTask(
+                                        taskId = taskId,
+                                        onError = { errorMsg ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
+                                    )
                                 },
                                 onSelectTask = { task ->
                                     viewModel.selectTask(task)
@@ -155,11 +169,18 @@ fun CrasApp(
                                 effectiveDefault = effectiveTimedPlanType,
                                 isCreatingTask = isCreatingTask,
                                 createTaskError = createTaskError,
-                                onCreateTask = { title, description, priority, taskLabels, plan ->
-                                    viewModel.createTask(title, description, priority, taskLabels, plan)
+                                onCreateTask = { title, description, priority, taskLabels, plan, onSuccess ->
+                                    viewModel.createTask(title, description, priority, taskLabels, plan, onSuccess)
                                 },
                                 onCompleteTask = { taskId ->
-                                    viewModel.completeTask(taskId)
+                                    viewModel.completeTask(
+                                        taskId = taskId,
+                                        onError = { errorMsg ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
+                                    )
                                 },
                                 onSelectTask = { task ->
                                     viewModel.selectTask(task)
@@ -176,7 +197,14 @@ fun CrasApp(
                                 upcomingState = upcomingState,
                                 labels = labels,
                                 onCompleteTask = { taskId ->
-                                    viewModel.completeTask(taskId)
+                                    viewModel.completeTask(
+                                        taskId = taskId,
+                                        onError = { errorMsg ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
+                                    )
                                 },
                                 onSelectTask = { task ->
                                     viewModel.selectTask(task)
@@ -193,7 +221,14 @@ fun CrasApp(
                                 completedState = completedState,
                                 labels = labels,
                                 onUncompleteTask = { taskId ->
-                                    viewModel.uncompleteTask(taskId)
+                                    viewModel.uncompleteTask(
+                                        taskId = taskId,
+                                        onError = { errorMsg ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
+                                    )
                                 },
                                 onSelectTask = { task ->
                                     viewModel.selectTask(task)

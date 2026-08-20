@@ -5,6 +5,10 @@ import com.cras.app.config.PublicSupabaseConfig
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -230,6 +234,13 @@ class TaskServiceTest {
         assertEquals("POST", request.method)
         assertEquals("api", request.getHeader("Content-Profile"))
         assertEquals("api", request.getHeader("Accept-Profile"))
+
+        val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("550e8400-e29b-41d4-a716-446655440011", body["id"]?.jsonPrimitive?.content)
+        assertEquals("Updated desk cleaning", body["title"]?.jsonPrimitive?.content)
+        assertEquals("Thoroughly wipe down surface", body["description"]?.jsonPrimitive?.content)
+        assertEquals(1, body["priority"]?.jsonPrimitive?.int)
+        assertEquals(1, body["expected_version"]?.jsonPrimitive?.int)
     }
 
     @Test
@@ -383,6 +394,10 @@ class TaskServiceTest {
         assertEquals("/rest/v1/rpc/complete_task", request.path)
         assertEquals("POST", request.method)
         assertEquals("api", request.getHeader("Content-Profile"))
+
+        val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("550e8400-e29b-41d4-a716-446655440011", body["id"]?.jsonPrimitive?.content)
+        assertEquals("2026-08-19T10:00:00Z", body["completed_at"]?.jsonPrimitive?.content)
     }
 
     @Test
@@ -423,5 +438,8 @@ class TaskServiceTest {
         assertEquals("/rest/v1/rpc/uncomplete_task", request.path)
         assertEquals("POST", request.method)
         assertEquals("api", request.getHeader("Content-Profile"))
+
+        val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("550e8400-e29b-41d4-a716-446655440011", body["id"]?.jsonPrimitive?.content)
     }
 }

@@ -23,6 +23,7 @@ import com.cras.app.models.Comment
 import com.cras.app.models.Label
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -164,10 +165,13 @@ class InboxViewModel(
         }
     }
 
+    private var loadJob: Job? = null
+
     fun loadTasks() {
         val currentAuth = _authState.value
         if (currentAuth is AuthUiState.Authenticated) {
-            viewModelScope.launch {
+            loadJob?.cancel()
+            loadJob = viewModelScope.launch {
                 loadTasksInternal(currentAuth.session)
                 loadSettingsInternal(currentAuth.session)
             }
@@ -185,10 +189,18 @@ class InboxViewModel(
     }
 
     private suspend fun loadTasksInternal(session: OperatorSession) {
-        _inboxState.value = InboxUiState.Loading
-        _todayState.value = TodayUiState.Loading
-        _upcomingState.value = UpcomingUiState.Loading
-        _completedState.value = CompletedUiState.Loading
+        if (_inboxState.value !is InboxUiState.Success) {
+            _inboxState.value = InboxUiState.Loading
+        }
+        if (_todayState.value !is TodayUiState.Success) {
+            _todayState.value = TodayUiState.Loading
+        }
+        if (_upcomingState.value !is UpcomingUiState.Success) {
+            _upcomingState.value = UpcomingUiState.Loading
+        }
+        if (_completedState.value !is CompletedUiState.Success) {
+            _completedState.value = CompletedUiState.Loading
+        }
         try {
             val allTasksList = taskService.fetchTasks(session)
             val allLabels = labelService.fetchLabels(session)
@@ -408,7 +420,8 @@ class InboxViewModel(
         description: String? = null,
         priority: Int = 4,
         labels: List<String> = emptyList(),
-        plan: Plan? = null
+        plan: Plan? = null,
+        onSuccess: () -> Unit = {}
     ) {
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
@@ -431,6 +444,7 @@ class InboxViewModel(
                     )
                 )
                 loadTasksInternal(currentAuth.session)
+                onSuccess()
             } catch (e: Exception) {
                 _createTaskError.value = e.message ?: "Failed to create task"
             } finally {
@@ -439,10 +453,11 @@ class InboxViewModel(
         }
     }
 
-    fun updateTask(
-        params: UpdateTaskParams,
-        onSuccess: () -> Unit = {},
-        onError: (String) -> Unit = {}
+    private fun mutateTask(
+        defaultError: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit,
+        mutation: suspend (OperatorSession) -> Task
     ) {
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) {
@@ -452,16 +467,24 @@ class InboxViewModel(
 
         viewModelScope.launch {
             try {
-                val updatedTask = taskService.updateTask(currentAuth.session, params)
-                _selectedTask.value = updatedTask
+                _selectedTask.value = mutation(currentAuth.session)
                 loadTasksInternal(currentAuth.session)
                 onSuccess()
             } catch (e: Exception) {
-                val errorMsg = e.message ?: "Failed to update task"
+                val errorMsg = e.message ?: defaultError
+                // Reload to recover canonical state after a conflict or a rejection.
                 loadTasksInternal(currentAuth.session)
                 onError(errorMsg)
             }
         }
+    }
+
+    fun updateTask(
+        params: UpdateTaskParams,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) = mutateTask("Failed to update task", onSuccess, onError) { session ->
+        taskService.updateTask(session, params)
     }
 
     fun completeTask(
@@ -469,50 +492,16 @@ class InboxViewModel(
         completedAt: String? = null,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
-    ) {
-        val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated) {
-            onError("Not authenticated")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                val completedTask = taskService.completeTask(currentAuth.session, taskId, completedAt)
-                _selectedTask.value = completedTask
-                loadTasksInternal(currentAuth.session)
-                onSuccess()
-            } catch (e: Exception) {
-                val errorMsg = e.message ?: "Failed to complete task"
-                loadTasksInternal(currentAuth.session)
-                onError(errorMsg)
-            }
-        }
+    ) = mutateTask("Failed to complete task", onSuccess, onError) { session ->
+        taskService.completeTask(session, taskId, completedAt)
     }
 
     fun uncompleteTask(
         taskId: String,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
-    ) {
-        val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated) {
-            onError("Not authenticated")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                val uncompletedTask = taskService.uncompleteTask(currentAuth.session, taskId)
-                _selectedTask.value = uncompletedTask
-                loadTasksInternal(currentAuth.session)
-                onSuccess()
-            } catch (e: Exception) {
-                val errorMsg = e.message ?: "Failed to uncomplete task"
-                loadTasksInternal(currentAuth.session)
-                onError(errorMsg)
-            }
-        }
+    ) = mutateTask("Failed to uncomplete task", onSuccess, onError) { session ->
+        taskService.uncompleteTask(session, taskId)
     }
 
     fun updateOperatorTimedPlanType(

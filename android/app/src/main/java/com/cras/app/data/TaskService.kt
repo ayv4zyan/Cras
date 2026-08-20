@@ -26,6 +26,13 @@ data class CreateTaskParams(
     val labels: List<String> = emptyList()
 )
 
+/**
+ * Parameters for updating an existing task via the `update_task` RPC.
+ *
+ * Null optional fields (such as [title], [description], [priority], [plan], [parentId],
+ * [expectedVersion], and [labels]) indicate "no change" and are omitted from the JSON request payload.
+ * To explicitly clear the plan, set [clearPlan] to true. To clear a description, pass an empty string `""`.
+ */
 data class UpdateTaskParams(
     val id: String,
     val title: String? = null,

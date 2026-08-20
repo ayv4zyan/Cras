@@ -66,7 +66,7 @@ fun TodayScreen(
     effectiveDefault: TimedPlanType = TimedPlanType.INSTANT,
     isCreatingTask: Boolean = false,
     createTaskError: String? = null,
-    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>, plan: Plan?) -> Unit,
+    onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>, plan: Plan?, onSuccess: () -> Unit) -> Unit,
     onCompleteTask: (String) -> Unit,
     onSelectTask: (Task) -> Unit,
     onOpenLabelManager: () -> Unit = {},
@@ -269,8 +269,7 @@ fun TodayScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     IconButton(
-                                        onClick = { onCompleteTask(task.id) },
-                                        modifier = Modifier.size(24.dp)
+                                        onClick = { onCompleteTask(task.id) }
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.RadioButtonUnchecked,

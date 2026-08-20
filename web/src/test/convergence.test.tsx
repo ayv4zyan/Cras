@@ -674,4 +674,152 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
     expect(parsed).not.toHaveProperty("description");
     expect(parsed).not.toHaveProperty("raw_sql");
   });
+
+  it("inserts absent task when receiving a task update and discards stale versions without duplicates", async () => {
+    let broadcastCb: ((e: { payload?: unknown }) => void) | null = null;
+
+    const initialTasks: Task[] = [
+      {
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        title: "Existing Task",
+        description: null,
+        priority: 4,
+        plan: null,
+        labels: [],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-19T10:00:00.000Z",
+        updatedAt: "2026-08-19T10:00:00.000Z",
+        version: 2,
+      },
+    ];
+
+    const newTaskFromAnotherSession: Task = {
+      id: "550e8400-e29b-41d4-a716-446655440002",
+      title: "Task From Session B",
+      description: null,
+      priority: 3,
+      plan: null,
+      labels: [],
+      parentId: null,
+      completedAt: null,
+      createdAt: "2026-08-19T10:05:00.000Z",
+      updatedAt: "2026-08-19T10:05:00.000Z",
+      version: 1,
+    };
+
+    const mockChannel = {
+      on: vi
+        .fn()
+        .mockImplementation(
+          (
+            type: string,
+            filter: Record<string, unknown>,
+            cb: (e: { payload?: unknown }) => void,
+          ) => {
+            if (type === "broadcast" && filter.event === "invalidate") {
+              broadcastCb = cb;
+            }
+            return mockChannel;
+          },
+        ),
+      subscribe: vi.fn().mockImplementation((cb: (s: string) => void) => {
+        cb("SUBSCRIBED");
+        return mockChannel;
+      }),
+      unsubscribe: vi.fn().mockResolvedValue("ok"),
+    } as unknown as RealtimeChannel;
+
+    const mockClient = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({
+          data: { session: authSession },
+          error: null,
+        }),
+        onAuthStateChange: vi.fn().mockReturnValue({
+          data: { subscription: { unsubscribe: vi.fn() } },
+        }),
+        signOut: vi.fn(),
+      },
+      channel: vi.fn().mockReturnValue(mockChannel),
+      removeChannel: vi.fn().mockResolvedValue("ok"),
+      schema: vi.fn().mockReturnValue({
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === "tasks") {
+            return {
+              select: vi.fn().mockImplementation(() => ({
+                eq: vi.fn().mockImplementation((col: string, val: string) => {
+                  if (col === "id" && val === newTaskFromAnotherSession.id) {
+                    return {
+                      single: vi.fn().mockResolvedValue({
+                        data: newTaskFromAnotherSession,
+                        error: null,
+                      }),
+                    };
+                  }
+                  return {
+                    single: vi.fn().mockResolvedValue({
+                      data: null,
+                      error: { code: "PGRST116", message: "No rows" },
+                    }),
+                  };
+                }),
+                then: (resolve: (val: unknown) => void) =>
+                  Promise.resolve({ data: initialTasks, error: null }).then(
+                    resolve,
+                  ),
+              })),
+            };
+          }
+          return {
+            select: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
+        }),
+      }),
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "labels") {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi
+                .fn()
+                .mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        };
+      }),
+    } as unknown as SupabaseClient;
+
+    render(
+      <AuthProvider client={mockClient}>
+        <CrasApp client={mockClient} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Existing Task")).toBeInTheDocument();
+    });
+
+    // Broadcast invalidation for the new task from another session
+    act(() => {
+      broadcastCb?.({
+        payload: {
+          resource: "task",
+          id: newTaskFromAnotherSession.id,
+          operation: "updated",
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Task From Session B")).toBeInTheDocument();
+      expect(screen.getByText("Existing Task")).toBeInTheDocument();
+    });
+  });
 });

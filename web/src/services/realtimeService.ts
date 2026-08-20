@@ -189,6 +189,8 @@ export function subscribeToInvalidations({
       topicTeardownPromises.set(channelName, teardown);
       try {
         await teardown;
+      } catch {
+        // Contain teardown errors so unsubscribe resolves cleanly
       } finally {
         if (topicTeardownPromises.get(channelName) === teardown) {
           topicTeardownPromises.delete(channelName);

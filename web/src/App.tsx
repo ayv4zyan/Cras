@@ -150,14 +150,18 @@ export function AuthenticatedApp({
   }, [userId, client]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
-    setTasks((prev) =>
-      prev.map((t) => {
+    setTasks((prev) => {
+      const exists = prev.some((t) => t.id === updated.id);
+      if (!exists) {
+        return [updated, ...prev];
+      }
+      return prev.map((t) => {
         if (t.id === updated.id) {
           return t.version > updated.version ? t : updated;
         }
         return t;
-      }),
-    );
+      });
+    });
     setSelectedTask((prev) => {
       if (prev?.id === updated.id) {
         return prev.version > updated.version ? prev : updated;

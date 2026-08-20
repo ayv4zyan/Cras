@@ -492,7 +492,12 @@ describe("Task Domain Service Seam", () => {
           title: "New Title",
           expectedVersion: 1,
         }),
-      ).rejects.toThrow(/Task version conflict: expected 1, found 2/);
+      ).rejects.toMatchObject({
+        message: expect.stringMatching(
+          /Task version conflict: expected 1, found 2/,
+        ),
+        code: "P0003",
+      });
     });
 
     it("throws when RPC returns an error (e.g. editing completed task)", async () => {
@@ -605,7 +610,12 @@ describe("Task Domain Service Seam", () => {
 
       await expect(
         completeTask(mockClient, "550e8400-e29b-41d4-a716-446655440000", 1),
-      ).rejects.toThrow(/Task version conflict: expected 1, found 2/);
+      ).rejects.toMatchObject({
+        message: expect.stringMatching(
+          /Task version conflict: expected 1, found 2/,
+        ),
+        code: "P0003",
+      });
     });
   });
 
@@ -659,7 +669,12 @@ describe("Task Domain Service Seam", () => {
 
       await expect(
         uncompleteTask(mockClient, "550e8400-e29b-41d4-a716-446655440000", 2),
-      ).rejects.toThrow(/Task version conflict: expected 2, found 3/);
+      ).rejects.toMatchObject({
+        message: expect.stringMatching(
+          /Task version conflict: expected 2, found 3/,
+        ),
+        code: "P0003",
+      });
     });
   });
 

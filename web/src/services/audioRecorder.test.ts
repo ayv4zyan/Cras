@@ -148,8 +148,13 @@ describe("AudioRecorder lifecycle", () => {
       writable: true,
       configurable: true,
     });
-    (globalThis as unknown as { AudioContext: typeof AudioContext }).AudioContext =
-      vi.fn().mockImplementation(() => mockAudioContext) as unknown as typeof AudioContext;
+    (
+      globalThis as unknown as { AudioContext: typeof AudioContext }
+    ).AudioContext = vi
+      .fn()
+      .mockImplementation(
+        () => mockAudioContext,
+      ) as unknown as typeof AudioContext;
   });
 
   afterEach(() => {
@@ -194,6 +199,8 @@ describe("AudioRecorder lifecycle", () => {
 
   it("throws when stopping without recording", async () => {
     const recorder = new AudioRecorder();
-    await expect(recorder.stop()).rejects.toThrow("No active recording to stop.");
+    await expect(recorder.stop()).rejects.toThrow(
+      "No active recording to stop.",
+    );
   });
 });

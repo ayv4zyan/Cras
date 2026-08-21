@@ -190,9 +190,7 @@ describe("Voice Service - API & Error Handling", () => {
       effectiveDefaultTimedPlanType: "instant",
     });
 
-    expect(result.transcript).toBe(
-      "Buy milk tomorrow and call doctor at 3pm",
-    );
+    expect(result.transcript).toBe("Buy milk tomorrow and call doctor at 3pm");
     expect(result.drafts).toHaveLength(2);
     expect(result.drafts[0].title).toBe("Buy milk");
     expect(result.drafts[0].plan).toEqual({ date: "2026-08-22" });
@@ -346,7 +344,8 @@ describe("Voice Service - API & Error Handling", () => {
       ok: false,
       status: 503,
       json: async () => ({
-        error: "Voice capture is temporarily unavailable. Please try again later.",
+        error:
+          "Voice capture is temporarily unavailable. Please try again later.",
         code: "circuit_breaker_daily",
       }),
     });

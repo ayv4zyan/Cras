@@ -74,7 +74,8 @@ export function validateWavAudio(data: Uint8Array): AudioValidationResult {
   if (sizeBytes < 44) {
     return {
       valid: false,
-      error: "Audio payload too small to be a valid WAV file (minimum 44 bytes).",
+      error:
+        "Audio payload too small to be a valid WAV file (minimum 44 bytes).",
     };
   }
 
@@ -179,7 +180,7 @@ export function validateWavAudio(data: Uint8Array): AudioValidationResult {
     };
   }
 
-  const effectiveDataBytes = dataBytes ?? (sizeBytes - 44);
+  const effectiveDataBytes = dataBytes ?? sizeBytes - 44;
   const bytesPerSecond = 16000 * 1 * 2; // 32,000 bytes/sec
   const durationSeconds = effectiveDataBytes / bytesPerSecond;
 
@@ -243,8 +244,7 @@ export function calculateActualSpend(
   completionTokens: number,
 ): number {
   const sttCost = audioSeconds * 0.00005;
-  const gemmaCost =
-    promptTokens * 0.00000007 + completionTokens * 0.00000034;
+  const gemmaCost = promptTokens * 0.00000007 + completionTokens * 0.00000034;
   return Math.round((sttCost + gemmaCost) * 10000) / 10000;
 }
 
@@ -281,7 +281,9 @@ export async function callDeepInfraSTT(
       if (response.ok) {
         const json = await response.json();
         if (typeof json.text !== "string") {
-          throw new Error("Invalid transcription response: missing 'text' property.");
+          throw new Error(
+            "Invalid transcription response: missing 'text' property.",
+          );
         }
         return json.text.trim();
       }
@@ -299,7 +301,10 @@ export async function callDeepInfraSTT(
       }
 
       await new Promise((res) =>
-        setTimeout(res, Math.min(2000, 200 * Math.pow(2, attempt) + Math.random() * 100)),
+        setTimeout(
+          res,
+          Math.min(2000, 200 * Math.pow(2, attempt) + Math.random() * 100),
+        ),
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -307,7 +312,10 @@ export async function callDeepInfraSTT(
         throw lastError;
       }
       await new Promise((res) =>
-        setTimeout(res, Math.min(2000, 200 * Math.pow(2, attempt) + Math.random() * 100)),
+        setTimeout(
+          res,
+          Math.min(2000, 200 * Math.pow(2, attempt) + Math.random() * 100),
+        ),
       );
     }
   }
@@ -503,7 +511,10 @@ export async function callDeepInfraExtractor(
       }
 
       await new Promise((res) =>
-        setTimeout(res, Math.min(2000, 200 * Math.pow(2, attempt) + Math.random() * 100)),
+        setTimeout(
+          res,
+          Math.min(2000, 200 * Math.pow(2, attempt) + Math.random() * 100),
+        ),
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -511,12 +522,17 @@ export async function callDeepInfraExtractor(
         throw lastError;
       }
       await new Promise((res) =>
-        setTimeout(res, Math.min(2000, 200 * Math.pow(2, attempt) + Math.random() * 100)),
+        setTimeout(
+          res,
+          Math.min(2000, 200 * Math.pow(2, attempt) + Math.random() * 100),
+        ),
       );
     }
   }
 
-  throw lastError || new Error("Failed to extract task metadata after retries.");
+  throw (
+    lastError || new Error("Failed to extract task metadata after retries.")
+  );
 }
 
 /**
@@ -597,7 +613,8 @@ export async function processVoiceCapture(
       error: {
         status: 500,
         code: "accounting_unavailable",
-        message: "Voice capture is temporarily unavailable. Please try again later.",
+        message:
+          "Voice capture is temporarily unavailable. Please try again later.",
       },
     };
   }
@@ -613,7 +630,8 @@ export async function processVoiceCapture(
         error: {
           status: 503,
           code: reservation.reason,
-          message: "Voice capture is temporarily unavailable. Please try again later.",
+          message:
+            "Voice capture is temporarily unavailable. Please try again later.",
         },
       };
     }
@@ -747,7 +765,8 @@ export async function handleVoiceCaptureRequest(
       headers: {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+        "Access-Control-Allow-Headers":
+          "authorization, x-client-info, apikey, content-type",
       },
     });
   }

@@ -228,13 +228,16 @@ describe("Edge Function Request Handling & Allowance Enforcement", () => {
     formData.append("recording_start_time", "2026-08-21T10:00:00Z");
     formData.append("timezone", "UTC");
 
-    const req = new Request("https://example.supabase.co/functions/v1/voice-capture", {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer mock-user-jwt",
+    const req = new Request(
+      "https://example.supabase.co/functions/v1/voice-capture",
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer mock-user-jwt",
+        },
+        body: formData,
       },
-      body: formData,
-    });
+    );
 
     const mockFetch = vi
       .fn()
@@ -294,9 +297,12 @@ describe("Edge Function Request Handling & Allowance Enforcement", () => {
   });
 
   it("returns 401 when Authorization header is missing", async () => {
-    const req = new Request("https://example.supabase.co/functions/v1/voice-capture", {
-      method: "POST",
-    });
+    const req = new Request(
+      "https://example.supabase.co/functions/v1/voice-capture",
+      {
+        method: "POST",
+      },
+    );
 
     const env = {
       SUPABASE_URL: "https://example.supabase.co",

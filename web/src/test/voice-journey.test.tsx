@@ -220,24 +220,26 @@ describe("Voice Capture & Task Management Journey on Web (Issue #53)", () => {
   it("Acceptance Criterion: Operator can record voice, receive editable draft, customize fields, and accept create", async () => {
     const handleSignOut = vi.fn().mockResolvedValue(undefined);
 
-    vi.spyOn(taskService, "createTask").mockImplementation(async (_, params) => {
-      const newTask: Task = {
-        id: "new-task-uuid-" + Math.random().toString(36).substring(2, 9),
-        title: typeof params === "string" ? params : params.title,
-        description:
-          typeof params === "object" ? params.description || null : null,
-        priority: typeof params === "object" ? params.priority || 4 : 4,
-        plan: typeof params === "object" ? params.plan || null : null,
-        labels: typeof params === "object" ? params.labels || [] : [],
-        parentId: null,
-        completedAt: null,
-        createdAt: "2026-08-21T10:00:00Z",
-        updatedAt: "2026-08-21T10:00:00Z",
-        version: 1,
-      };
-      mockTasks.push(newTask);
-      return newTask;
-    });
+    vi.spyOn(taskService, "createTask").mockImplementation(
+      async (_, params) => {
+        const newTask: Task = {
+          id: "new-task-uuid-" + Math.random().toString(36).substring(2, 9),
+          title: typeof params === "string" ? params : params.title,
+          description:
+            typeof params === "object" ? params.description || null : null,
+          priority: typeof params === "object" ? params.priority || 4 : 4,
+          plan: typeof params === "object" ? params.plan || null : null,
+          labels: typeof params === "object" ? params.labels || [] : [],
+          parentId: null,
+          completedAt: null,
+          createdAt: "2026-08-21T10:00:00Z",
+          updatedAt: "2026-08-21T10:00:00Z",
+          version: 1,
+        };
+        mockTasks.push(newTask);
+        return newTask;
+      },
+    );
 
     vi.spyOn(voiceService, "sendVoiceCapture").mockResolvedValue({
       transcript: "Buy groceries tomorrow at 5pm and prepare dinner",
@@ -334,21 +336,23 @@ describe("Voice Capture & Task Management Journey on Web (Issue #53)", () => {
   it("Acceptance Criterion: Voice Edit on focused task proposes changes, preserves existing timed type, and allows accept", async () => {
     const handleSignOut = vi.fn().mockResolvedValue(undefined);
 
-    vi.spyOn(taskService, "updateTask").mockImplementation(async (_, params) => {
-      const existing = mockTasks.find((t) => t.id === params.id)!;
-      const updated: Task = {
-        ...existing,
-        title: params.title ?? existing.title,
-        description: params.description ?? existing.description,
-        priority: params.priority ?? existing.priority,
-        plan: params.clearPlan ? null : params.plan ?? existing.plan,
-        version: existing.version + 1,
-        updatedAt: "2026-08-21T11:00:00Z",
-      };
-      const idx = mockTasks.findIndex((t) => t.id === params.id);
-      mockTasks[idx] = updated;
-      return updated;
-    });
+    vi.spyOn(taskService, "updateTask").mockImplementation(
+      async (_, params) => {
+        const existing = mockTasks.find((t) => t.id === params.id)!;
+        const updated: Task = {
+          ...existing,
+          title: params.title ?? existing.title,
+          description: params.description ?? existing.description,
+          priority: params.priority ?? existing.priority,
+          plan: params.clearPlan ? null : (params.plan ?? existing.plan),
+          version: existing.version + 1,
+          updatedAt: "2026-08-21T11:00:00Z",
+        };
+        const idx = mockTasks.findIndex((t) => t.id === params.id);
+        mockTasks[idx] = updated;
+        return updated;
+      },
+    );
 
     vi.spyOn(voiceService, "sendVoiceCapture").mockResolvedValue({
       transcript: "Change priority to urgent and move to tomorrow 2pm",

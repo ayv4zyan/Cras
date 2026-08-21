@@ -34,16 +34,13 @@ export interface VoiceCaptureModalProps {
   readonly client: SupabaseClient;
   readonly effectiveDefaultTimedPlanType: TimedPlanType;
   readonly focusedTask?: Task | null;
-  readonly onAcceptDrafts: (drafts: readonly DraftTask[]) => Promise<void> | void;
+  readonly onAcceptDrafts: (
+    drafts: readonly DraftTask[],
+  ) => Promise<void> | void;
   readonly onAcceptEdit?: (draft: DraftTask) => Promise<void> | void;
 }
 
-type ModalState =
-  | "idle"
-  | "recording"
-  | "processing"
-  | "drafts"
-  | "error";
+type ModalState = "idle" | "recording" | "processing" | "drafts" | "error";
 
 export function VoiceCaptureModal({
   isOpen,
@@ -57,7 +54,8 @@ export function VoiceCaptureModal({
   const [state, setState] = useState<ModalState>("idle");
   const [recordingDurationMs, setRecordingDurationMs] = useState(0);
   const [lastAudioBlob, setLastAudioBlob] = useState<Blob | null>(null);
-  const [recordingStartTimeStr, setRecordingStartTimeStr] = useState<string>("");
+  const [recordingStartTimeStr, setRecordingStartTimeStr] =
+    useState<string>("");
   const [transcript, setTranscript] = useState<string>("");
   const [drafts, setDrafts] = useState<DraftTask[]>([]);
   const [error, setError] = useState<VoiceError | null>(null);
@@ -299,7 +297,9 @@ export function VoiceCaptureModal({
       setError({
         status: 0,
         message:
-          err instanceof Error ? err.message : "Failed to save accepted drafts.",
+          err instanceof Error
+            ? err.message
+            : "Failed to save accepted drafts.",
       });
     } finally {
       setIsSaving(false);
@@ -472,9 +472,7 @@ export function VoiceCaptureModal({
                   <Sparkles className="h-3.5 w-3.5 text-primary" />
                   <span>Heard:</span>
                 </div>
-                <p className="text-xs text-foreground italic">
-                  "{transcript}"
-                </p>
+                <p className="text-xs text-foreground italic">"{transcript}"</p>
               </div>
             )}
 
@@ -601,8 +599,7 @@ export function VoiceCaptureModal({
                                 date: newDate,
                                 time: planTimeStr || null,
                                 type: isTimed ? currentType : null,
-                                effectiveDefault:
-                                  effectiveDefaultTimedPlanType,
+                                effectiveDefault: effectiveDefaultTimedPlanType,
                               });
                               handleUpdateDraft(idx, {
                                 plan,
@@ -709,7 +706,9 @@ export function VoiceCaptureModal({
                 <button
                   type="button"
                   onClick={handleAcceptAll}
-                  disabled={isSaving || hasValidationErrors || drafts.length === 0}
+                  disabled={
+                    isSaving || hasValidationErrors || drafts.length === 0
+                  }
                   className="inline-flex items-center space-x-1.5 px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-xs"
                 >
                   {isSaving ? (
@@ -717,9 +716,7 @@ export function VoiceCaptureModal({
                   ) : (
                     <Check className="h-3.5 w-3.5" />
                   )}
-                  <span>
-                    {focusedTask ? "Accept Changes" : "Accept All"}
-                  </span>
+                  <span>{focusedTask ? "Accept Changes" : "Accept All"}</span>
                 </button>
               </div>
             </div>

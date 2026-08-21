@@ -106,7 +106,8 @@ export function downsampleTo16kHz(
 
     // Linear interpolation
     result[i] =
-      inputBuffer[indexLow] * (1 - fraction) + inputBuffer[indexHigh] * fraction;
+      inputBuffer[indexLow] * (1 - fraction) +
+      inputBuffer[indexHigh] * fraction;
   }
 
   return result;

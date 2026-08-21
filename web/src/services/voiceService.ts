@@ -252,7 +252,8 @@ export async function sendVoiceCapture(
     throw {
       status: 0,
       code: "network_error",
-      message: "Network error: unable to reach Voice service. Your recording is preserved.",
+      message:
+        "Network error: unable to reach Voice service. Your recording is preserved.",
       isNetworkError: true,
     } as VoiceError;
   }
@@ -290,7 +291,8 @@ export async function sendVoiceCapture(
 
   const result = await response.json();
   const transcript: string = result.transcript || "";
-  const mode: "create" | "edit" = result.mode || (focusedTask ? "edit" : "create");
+  const mode: "create" | "edit" =
+    result.mode || (focusedTask ? "edit" : "create");
 
   if (mode === "edit" && focusedTask) {
     const editPayload: ExtractedEditPayload | null = result.edit;
@@ -326,7 +328,9 @@ export async function sendVoiceCapture(
             ? focusedTask.plan.type
             : null;
         const chosenType =
-          editPayload.plan_type ?? existingType ?? effectiveDefaultTimedPlanType;
+          editPayload.plan_type ??
+          existingType ??
+          effectiveDefaultTimedPlanType;
 
         if (time) {
           newPlan = createPlanFromInputs({
@@ -410,11 +414,7 @@ export async function sendVoiceCapture(
     );
     for (const item of newItems) {
       finalDrafts.push(
-        createDraftTaskFromExtracted(
-          item,
-          effectiveDefaultTimedPlanType,
-          null,
-        ),
+        createDraftTaskFromExtracted(item, effectiveDefaultTimedPlanType, null),
       );
     }
   } else {

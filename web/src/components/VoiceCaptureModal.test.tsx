@@ -158,7 +158,9 @@ describe("VoiceCaptureModal Component", () => {
     });
 
     const titleInput = screen.getByLabelText(/draft 1 title/i);
-    fireEvent.change(titleInput, { target: { value: "Manually Edited Title" } });
+    fireEvent.change(titleInput, {
+      target: { value: "Manually Edited Title" },
+    });
 
     const prioritySelect = screen.getByLabelText(/draft 1 priority/i);
     fireEvent.change(prioritySelect, { target: { value: "1" } });
@@ -347,7 +349,8 @@ describe("VoiceCaptureModal Component", () => {
       .mockRejectedValueOnce({
         status: 0,
         code: "network_error",
-        message: "Network error: unable to reach Voice service. Your recording is preserved.",
+        message:
+          "Network error: unable to reach Voice service. Your recording is preserved.",
         isNetworkError: true,
       })
       .mockResolvedValueOnce({

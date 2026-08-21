@@ -54,7 +54,9 @@ export function SettingsModal({
 }: SettingsModalProps): React.JSX.Element | null {
   const [operatorSettings, setOperatorSettings] =
     useState<OperatorSettings | null>(null);
-  const [voiceCatalog, setVoiceCatalog] = useState<VoiceModelCatalogEntry[]>([]);
+  const [voiceCatalog, setVoiceCatalog] = useState<VoiceModelCatalogEntry[]>(
+    [],
+  );
   const [customPrompt, setCustomPrompt] = useState<string>("");
   const [localEnabled, setLocalEnabled] = useState<boolean>(
     getLocalNotificationsEnabled(),

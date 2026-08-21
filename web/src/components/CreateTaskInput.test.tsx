@@ -199,4 +199,40 @@ describe("CreateTaskInput Component", () => {
       }),
     );
   });
+
+  it("restores in-progress draft task input from sessionStorage on mount and clears on submit", async () => {
+    const handleCreate = vi.fn().mockResolvedValue(undefined);
+    sessionStorage.setItem(
+      "cras_draft_task_input",
+      JSON.stringify({
+        title: "Restored Draft Title",
+        description: "Restored Draft Description",
+      }),
+    );
+
+    render(<CreateTaskInput onCreateTask={handleCreate} />);
+
+    const titleInput = screen.getByPlaceholderText(
+      /create a task in inbox/i,
+    ) as HTMLInputElement;
+    expect(titleInput.value).toBe("Restored Draft Title");
+
+    const descInput = screen.getByPlaceholderText(
+      /add description/i,
+    ) as HTMLTextAreaElement;
+    expect(descInput.value).toBe("Restored Draft Description");
+
+    const submitBtn = screen.getByRole("button", { name: /create task/i });
+    fireEvent.click(submitBtn);
+
+    expect(handleCreate).toHaveBeenCalledWith(
+      "Restored Draft Title",
+      "Restored Draft Description",
+      undefined,
+    );
+
+    await waitFor(() => {
+      expect(sessionStorage.getItem("cras_draft_task_input")).toBeNull();
+    });
+  });
 });

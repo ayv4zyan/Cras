@@ -41,7 +41,9 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
     const draft = createDraftTaskFromExtracted(payload, "instant");
 
     expect(draft.plan).not.toBeNull();
-    expect(draft.plan && "type" in draft.plan ? draft.plan.type : null).toBe("instant");
+    expect(draft.plan && "type" in draft.plan ? draft.plan.type : null).toBe(
+      "instant",
+    );
     if (draft.plan && "at" in draft.plan) {
       expect(draft.plan.at).toBeDefined();
     }
@@ -76,7 +78,9 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
 
     const draft = createDraftTaskFromExtracted(payload, "floating");
 
-    expect(draft.plan && "type" in draft.plan ? draft.plan.type : null).toBe("instant");
+    expect(draft.plan && "type" in draft.plan ? draft.plan.type : null).toBe(
+      "instant",
+    );
     if (draft.plan && "at" in draft.plan) {
       expect(draft.plan.at).toBeDefined();
     }
@@ -110,7 +114,11 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
       initialPayload,
       "instant",
     );
-    expect(draftInstant.plan && "type" in draftInstant.plan ? draftInstant.plan.type : null).toBe("instant");
+    expect(
+      draftInstant.plan && "type" in draftInstant.plan
+        ? draftInstant.plan.type
+        : null,
+    ).toBe("instant");
     const displayedDateBefore = formatPlanDate(draftInstant.plan);
     const displayedTimeBefore = formatPlanTime(draftInstant.plan);
 
@@ -119,7 +127,11 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
       "floating",
       "instant",
     );
-    expect(draftFloating.plan && "type" in draftFloating.plan ? draftFloating.plan.type : null).toBe("floating");
+    expect(
+      draftFloating.plan && "type" in draftFloating.plan
+        ? draftFloating.plan.type
+        : null,
+    ).toBe("floating");
     expect(formatPlanDate(draftFloating.plan)).toBe(displayedDateBefore);
     expect(formatPlanTime(draftFloating.plan)).toBe(displayedTimeBefore);
 
@@ -128,7 +140,11 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
       "instant",
       "instant",
     );
-    expect(draftInstantAgain.plan && "type" in draftInstantAgain.plan ? draftInstantAgain.plan.type : null).toBe("instant");
+    expect(
+      draftInstantAgain.plan && "type" in draftInstantAgain.plan
+        ? draftInstantAgain.plan.type
+        : null,
+    ).toBe("instant");
     expect(formatPlanDate(draftInstantAgain.plan)).toBe(displayedDateBefore);
     expect(formatPlanTime(draftInstantAgain.plan)).toBe(displayedTimeBefore);
   });

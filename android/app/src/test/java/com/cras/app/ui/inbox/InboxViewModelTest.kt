@@ -153,10 +153,12 @@ class InboxViewModelTest {
         var failureMessage = "Network error"
         var onFetchTaskById: (suspend (String) -> Unit)? = null
         var onFetchTasks: (suspend () -> Unit)? = null
+        var onCreateTask: (suspend (CreateTaskParams) -> Unit)? = null
+        var fetchFilter: ((OperatorSession, List<Task>) -> List<Task>)? = null
 
         override suspend fun fetchTasks(session: OperatorSession): List<Task> {
             if (shouldFail) throw RuntimeException(failureMessage)
-            val tasks = tasksInDb.toList()
+            val tasks = fetchFilter?.invoke(session, tasksInDb) ?: tasksInDb.toList()
             onFetchTasks?.invoke()
             return tasks
         }
@@ -170,6 +172,7 @@ class InboxViewModelTest {
 
         override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
             if (shouldFail) throw RuntimeException(failureMessage)
+            onCreateTask?.invoke(params)
             if (params.parentId != null) {
                 val parent = tasksInDb.find { it.id == params.parentId }
                 if (parent != null && parent.parentId != null) {
@@ -1778,5 +1781,63 @@ class InboxViewModelTest {
 
         assertEquals(0, outboxStore.getOutbox(session.operatorId).size)
         assertEquals(3, taskService.tasksInDb.size)
+    }
+
+    @Test
+    fun `outbox callbacks do not mutate ViewModel state if account changes during in-flight drain`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val outboxStore = InMemoryOutboxStore()
+
+        val sessionAlice = OperatorSession("op-alice", "alice@cras.app", "token-alice")
+        val sessionBob = OperatorSession("op-bob", "bob@cras.app", "token-bob")
+        authService.sessionFlow.value = sessionAlice
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            outboxStore = outboxStore
+        )
+        advanceUntilIdle()
+
+        val bobTask = Task(
+            id = UUID.randomUUID().toString(),
+            title = "Bob's task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-19T00:00:00Z",
+            updatedAt = "2026-08-19T00:00:00Z",
+            version = 1
+        )
+
+        // Bob only fetches his own tasks from server
+        taskService.fetchFilter = { session, _ ->
+            if (session.operatorId == sessionBob.operatorId) listOf(bobTask) else taskService.tasksInDb
+        }
+
+        // Hook into task creation so that when Alice's task is being created on the network,
+        // the active session changes to Bob before the outbox callback runs.
+        taskService.onCreateTask = {
+            authService.sessionFlow.value = null
+            authService.sessionFlow.value = sessionBob
+        }
+
+        viewModel.createTask("Alice's in-flight task")
+        advanceUntilIdle()
+
+        // Bob should have only his own tasks in his inbox state
+        val bobInboxState = viewModel.inboxState.value
+        assertTrue(bobInboxState is InboxUiState.Success)
+        val bobTasks = (bobInboxState as InboxUiState.Success).tasks
+        assertEquals(listOf(bobTask), bobTasks)
+        assertTrue(bobTasks.none { it.title == "Alice's in-flight task" })
     }
 }

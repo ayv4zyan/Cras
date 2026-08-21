@@ -3,6 +3,9 @@ package com.cras.app.data
 import com.cras.app.auth.OperatorSession
 import com.cras.app.models.Task
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
@@ -84,7 +87,8 @@ class InMemoryOutboxStore : OutboxStore {
 
 class SharedPreferencesOutboxStore(
     private val preferences: android.content.SharedPreferences,
-    private val json: Json = Json { ignoreUnknownKeys = true }
+    private val json: Json = Json { ignoreUnknownKeys = true },
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : OutboxStore {
     private val inMemoryFallback = InMemoryOutboxStore()
     private val staleOperators = mutableSetOf<String>()
@@ -108,8 +112,9 @@ class SharedPreferencesOutboxStore(
     private fun writePersisted(operatorId: String, items: List<OutboxItem>): Boolean {
         return try {
             val serialized = json.encodeToString(items)
-            preferences.edit().putString(getStorageKey(operatorId), serialized).apply()
-            true
+            runBlocking(ioDispatcher) {
+                preferences.edit().putString(getStorageKey(operatorId), serialized).commit()
+            }
         } catch (_: Exception) {
             false
         }
@@ -151,7 +156,9 @@ class SharedPreferencesOutboxStore(
         inMemoryFallback.clear(operatorId)
         staleOperators.remove(operatorId)
         try {
-            preferences.edit().remove(getStorageKey(operatorId)).apply()
+            runBlocking(ioDispatcher) {
+                preferences.edit().remove(getStorageKey(operatorId)).commit()
+            }
         } catch (_: Exception) {
             // Ignore
         }
@@ -309,10 +316,26 @@ class OutboxDrainer(
                             if (isNetworkError(e)) {
                                 break
                             }
-                            outboxStore.remove(session.operatorId, item.id)
                             if (e is TaskConflictException || (e.message?.contains("version conflict", ignoreCase = true) == true)) {
+                                // Check if task is already completed on server (e.g. prior unacknowledged attempt committed before transport failure)
+                                val existing = try {
+                                    taskService.fetchTaskById(session, item.taskId)
+                                } catch (ce: CancellationException) {
+                                    throw ce
+                                } catch (_: Throwable) {
+                                    null
+                                }
+
+                                if (existing != null && existing.completedAt != null) {
+                                    outboxStore.remove(session.operatorId, item.id)
+                                    callbacks.onTaskCompleted(existing)
+                                    continue
+                                }
+
+                                outboxStore.remove(session.operatorId, item.id)
                                 callbacks.onConflict(e, item)
                             } else {
+                                outboxStore.remove(session.operatorId, item.id)
                                 callbacks.onError(e, item)
                             }
                         }

@@ -438,6 +438,57 @@ class OutboxServiceTest {
         assertTrue(conflictReported is TaskConflictException)
     }
 
+    @Test
+    fun testDrainerReconcilesAmbiguousCompletionRetry() = runTest {
+        val store = InMemoryOutboxStore()
+        val taskId = "550e8400-e29b-41d4-a716-446655440001"
+        val completeItem = OutboxItem.Complete(
+            id = UUID.randomUUID().toString(),
+            taskId = taskId,
+            expectedVersion = 1,
+            completedAt = "2026-08-21T10:05:00Z",
+            createdAt = "2026-08-21T10:05:00Z"
+        )
+        store.enqueue(session.operatorId, completeItem)
+
+        val completedTaskOnServer = createTask(
+            id = taskId,
+            title = "Task already completed on server",
+            completedAt = "2026-08-21T10:05:00Z"
+        ).copy(version = 2)
+
+        val fakeTaskService = object : TaskService {
+            override suspend fun fetchTasks(session: OperatorSession): List<Task> = listOf(completedTaskOnServer)
+            override suspend fun fetchTaskById(session: OperatorSession, taskId: String): Task? = completedTaskOnServer
+            override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task = throw NotImplementedError()
+            override suspend fun updateTask(session: OperatorSession, params: UpdateTaskParams): Task = throw NotImplementedError()
+            override suspend fun completeTask(session: OperatorSession, taskId: String, expectedVersion: Int, completedAt: String?): Task {
+                // First request succeeded on server, but client timed out; retry encounters version conflict
+                throw TaskConflictException("Task version conflict: expected 1, found 2")
+            }
+            override suspend fun uncompleteTask(session: OperatorSession, taskId: String, expectedVersion: Int): Task = throw NotImplementedError()
+        }
+
+        val drainer = OutboxDrainer(fakeTaskService, store)
+        var completedReported: Task? = null
+        var conflictReported: Throwable? = null
+        val drainCallbacks = object : OutboxDrainCallbacks {
+            override suspend fun onTaskCompleted(task: Task) {
+                completedReported = task
+            }
+            override suspend fun onConflict(error: Throwable, item: OutboxItem) {
+                conflictReported = error
+            }
+        }
+
+        drainer.drain(session, drainCallbacks)
+
+        // Item is removed from outbox and onTaskCompleted is invoked without reporting conflict
+        assertEquals(0, store.getOutbox(session.operatorId).size)
+        assertEquals(completedTaskOnServer, completedReported)
+        assertEquals(null, conflictReported)
+    }
+
     private class FakeSharedPreferences(
         private val data: MutableMap<String, String?> = mutableMapOf(),
         var shouldFailWrite: Boolean = false,
@@ -481,7 +532,10 @@ class OutboxServiceTest {
                 return this
             }
             override fun commit(): Boolean {
-                apply()
+                if (shouldFailWrite) return false
+                if (clear) data.clear()
+                for (k in toRemove) data.remove(k)
+                for ((k, v) in pending) data[k] = v
                 return true
             }
             override fun apply() {

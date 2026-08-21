@@ -537,15 +537,23 @@ class InboxViewModel(
         outboxDrainer.drain(
             session = session,
             callbacks = object : OutboxDrainCallbacks {
+                private fun isSessionValid(): Boolean {
+                    val current = _authState.value
+                    return current is AuthUiState.Authenticated && current.session == session
+                }
+
                 override suspend fun onTaskCreated(task: Task) {
+                    if (!isSessionValid()) return
                     applyTaskUpdate(task)
                 }
 
                 override suspend fun onTaskCompleted(task: Task) {
+                    if (!isSessionValid()) return
                     applyTaskUpdate(task)
                 }
 
                 override suspend fun onConflict(error: Throwable, item: OutboxItem) {
+                    if (!isSessionValid()) return
                     val errorMsg = error.message ?: "Task version conflict"
                     if (item is OutboxItem.Create) {
                         _createTaskError.value = errorMsg
@@ -555,6 +563,7 @@ class InboxViewModel(
                 }
 
                 override suspend fun onError(error: Throwable, item: OutboxItem) {
+                    if (!isSessionValid()) return
                     val errorMsg = error.message ?: "Failed to process outbox item"
                     if (item is OutboxItem.Create) {
                         _allTasks.update { current -> current.filterNot { it.id == item.task.id } }

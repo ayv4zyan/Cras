@@ -106,10 +106,7 @@ export function classifyFcmSendFailure(
   statusCode: number,
   errorCode?: string,
 ): "permanent_failure" | "cancelled" | "transient_failure" {
-  if (
-    errorCode === "UNREGISTERED" ||
-    errorCode === "SENDER_ID_MISMATCH"
-  ) {
+  if (errorCode === "UNREGISTERED" || errorCode === "SENDER_ID_MISMATCH") {
     return "permanent_failure";
   }
   // A rejected or expired OAuth access token is a retryable delivery

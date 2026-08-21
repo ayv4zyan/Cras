@@ -25,6 +25,7 @@ export interface TodayViewProps {
   readonly isLoading?: boolean;
   readonly now?: Date;
   readonly effectiveDefault?: TimedPlanType;
+  readonly onOpenVoiceCapture?: () => void;
 }
 
 export function TodayView({
@@ -36,6 +37,7 @@ export function TodayView({
   isLoading = false,
   now,
   effectiveDefault,
+  onOpenVoiceCapture,
 }: TodayViewProps): React.JSX.Element {
   const currentDate = useMemo(() => now || new Date(), [now]);
   const todayDateStr = useMemo(
@@ -88,6 +90,7 @@ export function TodayView({
             placeholder="Add a task for Today..."
             defaultDate={todayDateStr}
             effectiveDefault={effectiveDefault}
+            onOpenVoiceCapture={onOpenVoiceCapture}
           />
         </div>
 

@@ -172,9 +172,12 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
     );
 
     // 1. Initial render loads initial canonical task (version 1)
-    await waitFor(() => {
-      expect(screen.getByText("Initial Task Title")).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText("Initial Task Title")).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
 
     // 2. Open task detail modal in Session B
     const taskItem = screen.getByTestId(
@@ -199,16 +202,19 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
     fireEvent.click(saveButton);
 
     // 5. Version CAS rejects the stale mutation, refetches canonical state, and presents conflict
-    await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalledWith(
-        "update_task",
-        expect.objectContaining({
-          expected_version: 1,
-        }),
-      );
-      // Conflict notice is presented
-      expect(screen.getByText(/task version conflict/i)).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(mockRpc).toHaveBeenCalledWith(
+          "update_task",
+          expect.objectContaining({
+            expected_version: 1,
+          }),
+        );
+        // Conflict notice is presented
+        expect(screen.getByText(/task version conflict/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
   });
 
   it("handles two independent equal-title creates by assigning distinct IDs without collision", async () => {
@@ -287,22 +293,28 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
     fireEvent.change(input, { target: { value: "Buy coffee" } });
     fireEvent.submit(input.closest("form")!);
 
-    await waitFor(() => {
-      expect(screen.getAllByText("Buy coffee")).toHaveLength(1);
-    });
+    await waitFor(
+      () => {
+        expect(screen.getAllByText("Buy coffee")).toHaveLength(1);
+      },
+      { timeout: 3000 },
+    );
 
     // Create second independent task with identical title "Buy coffee"
     fireEvent.change(input, { target: { value: "Buy coffee" } });
     fireEvent.submit(input.closest("form")!);
 
-    await waitFor(() => {
-      // Both tasks coexist as separate items
-      expect(screen.getAllByText("Buy coffee")).toHaveLength(2);
-      expect(createdTasks).toHaveLength(2);
-      expect(createdTasks[0].id).not.toBe(createdTasks[1].id);
-      expect(createdTasks[0].version).toBe(1);
-      expect(createdTasks[1].version).toBe(1);
-    });
+    await waitFor(
+      () => {
+        // Both tasks coexist as separate items
+        expect(screen.getAllByText("Buy coffee")).toHaveLength(2);
+        expect(createdTasks).toHaveLength(2);
+        expect(createdTasks[0].id).not.toBe(createdTasks[1].id);
+        expect(createdTasks[0].version).toBe(1);
+        expect(createdTasks[1].version).toBe(1);
+      },
+      { timeout: 3000 },
+    );
   });
 
   it("invalidates only affected resources on private realtime broadcast events", async () => {
@@ -400,9 +412,12 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => {
-      expect(screen.getByText("Initial Task")).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText("Initial Task")).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
 
     const initialTaskFetchCount = fetchTasksMock.mock.calls.length;
     const initialLabelFetchCount = fetchLabelsMock.mock.calls.length;
@@ -418,13 +433,16 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
       });
     });
 
-    await waitFor(() => {
-      // Only tasks refetched, labels was NOT refetched
-      expect(fetchTasksMock.mock.calls.length).toBeGreaterThan(
-        initialTaskFetchCount,
-      );
-      expect(fetchLabelsMock.mock.calls.length).toBe(initialLabelFetchCount);
-    });
+    await waitFor(
+      () => {
+        // Only tasks refetched, labels was NOT refetched
+        expect(fetchTasksMock.mock.calls.length).toBeGreaterThan(
+          initialTaskFetchCount,
+        );
+        expect(fetchLabelsMock.mock.calls.length).toBe(initialLabelFetchCount);
+      },
+      { timeout: 3000 },
+    );
 
     // Trigger label-only invalidation event
     const afterTaskFetchCount = fetchTasksMock.mock.calls.length;
@@ -438,13 +456,16 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
       });
     });
 
-    await waitFor(() => {
-      // Only labels refetched, tasks was NOT refetched
-      expect(fetchLabelsMock.mock.calls.length).toBeGreaterThan(
-        initialLabelFetchCount,
-      );
-      expect(fetchTasksMock.mock.calls.length).toBe(afterTaskFetchCount);
-    });
+    await waitFor(
+      () => {
+        // Only labels refetched, tasks was NOT refetched
+        expect(fetchLabelsMock.mock.calls.length).toBeGreaterThan(
+          initialLabelFetchCount,
+        );
+        expect(fetchTasksMock.mock.calls.length).toBe(afterTaskFetchCount);
+      },
+      { timeout: 3000 },
+    );
   });
 
   it("reconnects and refetches canonical state upon connection restoration", async () => {
@@ -519,9 +540,12 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => {
-      expect(screen.getByText("Initial Task")).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText("Initial Task")).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
 
     const preDisconnectCallCount = fetchTasksMock.mock.calls.length;
 
@@ -535,12 +559,15 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
       statusCallback?.("SUBSCRIBED");
     });
 
-    await waitFor(() => {
-      // Reconnect triggers refetch of canonical tasks
-      expect(fetchTasksMock.mock.calls.length).toBeGreaterThan(
-        preDisconnectCallCount,
-      );
-    });
+    await waitFor(
+      () => {
+        // Reconnect triggers refetch of canonical tasks
+        expect(fetchTasksMock.mock.calls.length).toBeGreaterThan(
+          preDisconnectCallCount,
+        );
+      },
+      { timeout: 3000 },
+    );
   });
 
   it("handles stale task completion: rejects via version CAS, refetches canonical state, and presents conflict", async () => {
@@ -634,9 +661,12 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => {
-      expect(screen.getByText("Task to complete")).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText("Task to complete")).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
 
     // Simulate another session bumping server version to 3
     canonicalVersion = 3;
@@ -647,16 +677,19 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
     });
     fireEvent.click(completeBtn);
 
-    await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalledWith(
-        "complete_task",
-        expect.objectContaining({
-          id: baseTask.id,
-          expected_version: 2,
-        }),
-      );
-      expect(screen.getByText(/task version conflict/i)).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(mockRpc).toHaveBeenCalledWith(
+          "complete_task",
+          expect.objectContaining({
+            id: baseTask.id,
+            expected_version: 2,
+          }),
+        );
+        expect(screen.getByText(/task version conflict/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
   });
 
   it("verifies private realtime invalidation payloads do not leak sensitive task content", () => {
@@ -810,9 +843,12 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
       </AuthProvider>,
     );
 
-    await waitFor(() => {
-      expect(screen.getByText("Existing Task")).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText("Existing Task")).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
 
     // Broadcast invalidation for the new task from another session
     act(() => {
@@ -825,9 +861,12 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
       });
     });
 
-    await waitFor(() => {
-      expect(screen.getByText("Task From Session B")).toBeInTheDocument();
-      expect(screen.getByText("Existing Task")).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText("Task From Session B")).toBeInTheDocument();
+        expect(screen.getByText("Existing Task")).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
   });
 });

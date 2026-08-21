@@ -8,9 +8,10 @@ import {
   Tag,
   MessageSquare,
   ListTree,
-  Plus,
   Calendar,
   Clock,
+  Mic,
+  Plus,
 } from "lucide-react";
 import {
   PRIORITY_OPTIONS,
@@ -37,6 +38,7 @@ export interface TaskDetailModalProps {
   readonly onClose: () => void;
   readonly onSave: (params: UpdateTaskParams) => Promise<void> | void;
   readonly onToggleComplete: (task: Task) => Promise<void> | void;
+  readonly onOpenVoiceEdit?: (task: Task) => void;
   readonly onAddComment?: (
     taskId: string,
     content: string,
@@ -59,6 +61,7 @@ export function TaskDetailModal({
   onClose,
   onSave,
   onToggleComplete,
+  onOpenVoiceEdit,
   onAddComment,
   onCreateSubtask,
   onToggleSubtaskComplete,
@@ -358,6 +361,19 @@ export function TaskDetailModal({
                 <ListTree className="h-3 w-3" />
                 <span>Subtask</span>
               </span>
+            )}
+
+            {!isCompleted && onOpenVoiceEdit && (
+              <button
+                type="button"
+                onClick={() => onOpenVoiceEdit(task)}
+                aria-label="Voice edit task"
+                title="Dictate changes to this task"
+                className="flex items-center space-x-1 px-2 py-1 rounded-md text-xs font-medium border border-border text-muted-foreground hover:text-primary hover:bg-secondary transition-colors cursor-pointer"
+              >
+                <Mic className="h-3.5 w-3.5" />
+                <span>Voice Edit</span>
+              </button>
             )}
           </div>
 

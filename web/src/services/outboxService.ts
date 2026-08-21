@@ -124,6 +124,7 @@ export function removeOutboxItem(operatorId: string, itemId: string): void {
  */
 export function clearOutbox(operatorId: string): void {
   inMemoryOutbox.delete(operatorId);
+  activeDrains.delete(operatorId);
   try {
     if (typeof localStorage !== "undefined") {
       localStorage.removeItem(getStorageKey(operatorId));

@@ -5,6 +5,9 @@ export interface OperatorSettings {
   readonly operator_id?: string;
   readonly default_timed_plan_type?: TimedPlanType | null;
   readonly missed_delivery_enabled?: boolean;
+  readonly stt_model_key?: string | null;
+  readonly extractor_model_key?: string | null;
+  readonly custom_extractor_prompt?: string | null;
 }
 
 export interface DeploymentConfig {
@@ -99,7 +102,9 @@ export async function fetchOperatorSettings(
 ): Promise<OperatorSettings | null> {
   const { data, error } = await client
     .from("settings")
-    .select("operator_id, default_timed_plan_type, missed_delivery_enabled")
+    .select(
+      "operator_id, default_timed_plan_type, missed_delivery_enabled, stt_model_key, extractor_model_key, custom_extractor_prompt",
+    )
     .maybeSingle();
 
   if (error) {

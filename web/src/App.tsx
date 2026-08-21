@@ -267,6 +267,7 @@ export function AuthenticatedApp({
         setTasks(tasksWithOutbox);
         setLabels(allLabels);
         setEffectiveTimedPlanType(effectiveType);
+        setIsTasksLoading(false);
 
         // Serialize: startup draining runs after initial loading completes
         await drainOutbox({
@@ -291,10 +292,6 @@ export function AuthenticatedApp({
           setErrorMessage(
             err instanceof Error ? err.message : "Failed to load data",
           );
-        }
-      })
-      .finally(() => {
-        if (!isCancelled) {
           setIsTasksLoading(false);
         }
       });
@@ -606,20 +603,11 @@ export function AuthenticatedApp({
           onConflict: handleDrainConflict,
           onError: handleDrainError,
         });
-      } catch (err) {
-        if (isVersionConflictError(err)) {
-          await handleVersionConflict(task.id);
-        }
+      } catch {
+        // Retained in outbox on network error
       }
     },
-    [
-      userId,
-      client,
-      applyTaskUpdate,
-      handleDrainConflict,
-      handleDrainError,
-      handleVersionConflict,
-    ],
+    [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError],
   );
 
   const handleUncompleteTask = useCallback(

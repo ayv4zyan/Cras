@@ -45,7 +45,7 @@ const OUTBOX_STORAGE_PREFIX = "cras_outbox_";
 const inMemoryOutbox = new Map<string, OutboxItem[]>();
 const activeDrains = new Map<string, Promise<void>>();
 
-function getStorageKey(operatorId: string): string {
+export function getStorageKey(operatorId: string): string {
   return `${OUTBOX_STORAGE_PREFIX}${operatorId}`;
 }
 

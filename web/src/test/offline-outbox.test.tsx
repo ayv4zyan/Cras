@@ -11,6 +11,7 @@ import { AuthProvider } from "../contexts/AuthContext";
 import {
   getOutbox,
   clearOutbox,
+  getStorageKey,
   type OutboxItem,
 } from "../services/outboxService";
 import {
@@ -597,7 +598,7 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
 
     // Pre-populate outbox before App mounts
     localStorage.setItem(
-      `cras_outbox_${operatorUser.id}`,
+      getStorageKey(operatorUser.id),
       JSON.stringify([
         {
           id: "550e8400-e29b-41d4-a716-446655440001",
@@ -632,10 +633,11 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Task From Startup Drain")).toBeInTheDocument();
       expect(mockRpc).toHaveBeenCalledWith("create_task", expect.anything());
       expect(getOutbox(operatorUser.id)).toEqual([]);
     });
+
+    expect(screen.getByText("Task From Startup Drain")).toBeInTheDocument();
   });
 
   it("removes optimistic task and displays error message on permanent startup create drain failure", async () => {
@@ -654,7 +656,7 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
     };
 
     localStorage.setItem(
-      `cras_outbox_${operatorUser.id}`,
+      getStorageKey(operatorUser.id),
       JSON.stringify([
         {
           id: "550e8400-e29b-41d4-a716-446655440001",

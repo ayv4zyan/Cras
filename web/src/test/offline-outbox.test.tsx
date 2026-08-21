@@ -45,12 +45,20 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
     unsubscribe: vi.fn().mockResolvedValue("ok"),
   } as unknown as RealtimeChannel;
 
-  function createStandardMockClient(options: {
-    rpcHandler?: (fnName: string, params: Record<string, unknown>) => Promise<unknown>;
-    tasksProvider?: () => Promise<{ data: Task[] | null; error: unknown }>;
-    labelsProvider?: () => Promise<{ data: unknown[] | null; error: unknown }>;
-    isOffline?: boolean;
-  } = {}) {
+  function createStandardMockClient(
+    options: {
+      rpcHandler?: (
+        fnName: string,
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
+      tasksProvider?: () => Promise<{ data: Task[] | null; error: unknown }>;
+      labelsProvider?: () => Promise<{
+        data: unknown[] | null;
+        error: unknown;
+      }>;
+      isOffline?: boolean;
+    } = {},
+  ) {
     const {
       rpcHandler = vi.fn().mockResolvedValue({ data: null, error: null }),
       tasksProvider = vi.fn().mockResolvedValue({ data: [], error: null }),
@@ -80,13 +88,17 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
               select: vi.fn().mockImplementation(() => {
                 const p = tasksProvider();
                 return Object.assign(p, {
-                  eq: vi.fn().mockImplementation((_col: string, id: string) => ({
-                    single: vi.fn().mockImplementation(async () => {
-                      const res = await tasksProvider();
-                      const found = (res.data || []).find((t: Task) => t.id === id);
-                      return { data: found || null, error: null };
-                    }),
-                  })),
+                  eq: vi
+                    .fn()
+                    .mockImplementation((_col: string, id: string) => ({
+                      single: vi.fn().mockImplementation(async () => {
+                        const res = await tasksProvider();
+                        const found = (res.data || []).find(
+                          (t: Task) => t.id === id,
+                        );
+                        return { data: found || null, error: null };
+                      }),
+                    })),
                 });
               }),
             };
@@ -101,9 +113,13 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
           return {
             select: vi.fn().mockReturnValue({
               order: vi.fn().mockRejectedValue(new Error("Failed to fetch")),
-              maybeSingle: vi.fn().mockRejectedValue(new Error("Failed to fetch")),
+              maybeSingle: vi
+                .fn()
+                .mockRejectedValue(new Error("Failed to fetch")),
               eq: vi.fn().mockReturnValue({
-                maybeSingle: vi.fn().mockRejectedValue(new Error("Failed to fetch")),
+                maybeSingle: vi
+                  .fn()
+                  .mockRejectedValue(new Error("Failed to fetch")),
               }),
             }),
           };
@@ -118,9 +134,13 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
         if (table === "settings" || table === "deployment_config") {
           return {
             select: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              maybeSingle: vi
+                .fn()
+                .mockResolvedValue({ data: null, error: null }),
               eq: vi.fn().mockReturnValue({
-                maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+                maybeSingle: vi
+                  .fn()
+                  .mockResolvedValue({ data: null, error: null }),
               }),
             }),
           };
@@ -129,7 +149,9 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
           select: vi.fn().mockReturnValue({
             order: vi.fn().mockResolvedValue({ data: [], error: null }),
             eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              maybeSingle: vi
+                .fn()
+                .mockResolvedValue({ data: null, error: null }),
             }),
             maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
           }),
@@ -150,29 +172,32 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
     const createdTasks: Task[] = [];
     const mockRpc = vi
       .fn()
-      .mockImplementation(async (fnName: string, params: Record<string, unknown>) => {
-        if (fnName === "create_task") {
-          // Verify outbox has the item during in-flight network call
-          outboxStateBeforeAck = getOutbox(operatorUser.id);
+      .mockImplementation(
+        async (fnName: string, params: Record<string, unknown>) => {
+          if (fnName === "create_task") {
+            // Verify outbox has the item during in-flight network call
+            outboxStateBeforeAck = getOutbox(operatorUser.id);
 
-          const newTask: Task = {
-            id: (params.id as string) || "550e8400-e29b-41d4-a716-446655440001",
-            title: params.title as string,
-            description: null,
-            priority: 4,
-            plan: null,
-            labels: [],
-            parentId: null,
-            completedAt: null,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            version: 1,
-          };
-          createdTasks.push(newTask);
-          return { data: newTask, error: null };
-        }
-        return { data: null, error: null };
-      });
+            const newTask: Task = {
+              id:
+                (params.id as string) || "550e8400-e29b-41d4-a716-446655440001",
+              title: params.title as string,
+              description: null,
+              priority: 4,
+              plan: null,
+              labels: [],
+              parentId: null,
+              completedAt: null,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              version: 1,
+            };
+            createdTasks.push(newTask);
+            return { data: newTask, error: null };
+          }
+          return { data: null, error: null };
+        },
+      );
 
     const mockClient = createStandardMockClient({
       rpcHandler: mockRpc,
@@ -428,32 +453,32 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
       version: 1,
     };
 
-    const mockRpc = vi
-      .fn()
-      .mockImplementation((fnName: string) => {
-        if (fnName === "complete_task") {
-          callCount += 1;
-          if (callCount === 1) {
-            // First attempt: network error while offline
-            return Promise.reject(new Error("Failed to fetch"));
-          }
-          // Second attempt on reconnect: server task was modified in another session (version 2)
-          return Promise.resolve({
-            data: null,
-            error: {
-              code: "P0003",
-              message: "Task version conflict: expected 1, found 2",
-            },
-          });
+    const mockRpc = vi.fn().mockImplementation((fnName: string) => {
+      if (fnName === "complete_task") {
+        callCount += 1;
+        if (callCount === 1) {
+          // First attempt: network error while offline
+          return Promise.reject(new Error("Failed to fetch"));
         }
-        return Promise.resolve({ data: null, error: null });
-      });
+        // Second attempt on reconnect: server task was modified in another session (version 2)
+        return Promise.resolve({
+          data: null,
+          error: {
+            code: "P0003",
+            message: "Task version conflict: expected 1, found 2",
+          },
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
 
     const mockClient = createStandardMockClient({
       rpcHandler: mockRpc,
       tasksProvider: () =>
         Promise.resolve({
-          data: [{ ...baseTask, version: canonicalVersion, title: canonicalTitle }],
+          data: [
+            { ...baseTask, version: canonicalVersion, title: canonicalTitle },
+          ],
           error: null,
         }),
     });

@@ -47,7 +47,10 @@ function getStorageKey(operatorId: string): string {
 }
 
 export function generateTaskId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
   // Fallback RFC4122 v4 UUID generator
@@ -88,10 +91,7 @@ export function saveOutbox(
   inMemoryOutbox.set(operatorId, [...items]);
   try {
     if (typeof localStorage !== "undefined") {
-      localStorage.setItem(
-        getStorageKey(operatorId),
-        JSON.stringify(items),
-      );
+      localStorage.setItem(getStorageKey(operatorId), JSON.stringify(items));
     }
   } catch {
     // Ignore storage write errors (e.g. quota exceeded)
@@ -101,10 +101,7 @@ export function saveOutbox(
 /**
  * Appends an item to the persistent Outbox.
  */
-export function enqueueOutboxItem(
-  operatorId: string,
-  item: OutboxItem,
-): void {
+export function enqueueOutboxItem(operatorId: string, item: OutboxItem): void {
   const current = getOutbox(operatorId);
   const updated = [...current, item];
   saveOutbox(operatorId, updated);
@@ -113,10 +110,7 @@ export function enqueueOutboxItem(
 /**
  * Removes an item from the Outbox by its unique ID.
  */
-export function removeOutboxItem(
-  operatorId: string,
-  itemId: string,
-): void {
+export function removeOutboxItem(operatorId: string, itemId: string): void {
   const current = getOutbox(operatorId);
   const updated = current.filter((item) => item.id !== itemId);
   saveOutbox(operatorId, updated);

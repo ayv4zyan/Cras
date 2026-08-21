@@ -357,7 +357,13 @@ export function AuthenticatedApp({
     return () => {
       subscription.unsubscribe();
     };
-  }, [client, userId, applyTaskUpdate, reconcileFreshTasks, handleVersionConflict]);
+  }, [
+    client,
+    userId,
+    applyTaskUpdate,
+    reconcileFreshTasks,
+    handleVersionConflict,
+  ]);
 
   // Window online event listener to drain queued outbox work on reconnect
   useEffect(() => {
@@ -387,7 +393,13 @@ export function AuthenticatedApp({
     return () => {
       window.removeEventListener("online", handleOnline);
     };
-  }, [client, userId, applyTaskUpdate, handleVersionConflict, reconcileFreshTasks]);
+  }, [
+    client,
+    userId,
+    applyTaskUpdate,
+    handleVersionConflict,
+    reconcileFreshTasks,
+  ]);
 
   const selectedTaskId = selectedTask?.id;
   useEffect(() => {

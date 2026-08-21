@@ -123,10 +123,10 @@ describe("OutboxService", () => {
       createdAt: "2026-08-21T10:10:00.000Z",
     };
 
-    const overlaid = applyOutboxToTasks([canonicalTask], [
-      createItem,
-      completeItem,
-    ]);
+    const overlaid = applyOutboxToTasks(
+      [canonicalTask],
+      [createItem, completeItem],
+    );
 
     expect(overlaid).toHaveLength(2);
     // New create is present
@@ -138,9 +138,15 @@ describe("OutboxService", () => {
 
   it("identifies network errors accurately", () => {
     expect(isNetworkError(new Error("Failed to fetch"))).toBe(true);
-    expect(isNetworkError(new Error("NetworkError when attempting to fetch resource"))).toBe(true);
+    expect(
+      isNetworkError(
+        new Error("NetworkError when attempting to fetch resource"),
+      ),
+    ).toBe(true);
     expect(isNetworkError(new Error("The operation timed out"))).toBe(true);
-    expect(isNetworkError(new Error("Task version conflict: expected 1, found 2"))).toBe(false);
+    expect(
+      isNetworkError(new Error("Task version conflict: expected 1, found 2")),
+    ).toBe(false);
     expect(isNetworkError(new Error("Task title cannot be empty"))).toBe(false);
   });
 
@@ -166,7 +172,11 @@ describe("OutboxService", () => {
       }
       if (fnName === "complete_task") {
         return Promise.resolve({
-          data: { ...createdTask, completedAt: "2026-08-21T10:05:00Z", version: 2 },
+          data: {
+            ...createdTask,
+            completedAt: "2026-08-21T10:05:00Z",
+            version: 2,
+          },
           error: null,
         });
       }
@@ -179,7 +189,9 @@ describe("OutboxService", () => {
         from: vi.fn().mockReturnValue({
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: createdTask, error: null }),
+              single: vi
+                .fn()
+                .mockResolvedValue({ data: createdTask, error: null }),
             }),
           }),
         }),

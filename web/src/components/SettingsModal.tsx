@@ -8,6 +8,7 @@ import {
   XCircle,
   Clock,
   Loader2,
+  Mic,
 } from "lucide-react";
 import {
   BEST_EFFORT_RELIABILITY_COPY,
@@ -28,6 +29,11 @@ import {
   updateOperatorMissedDelivery,
   type OperatorSettings,
 } from "../services/settingsService";
+import {
+  fetchVoiceModelCatalog,
+  updateOperatorVoiceSettings,
+  type VoiceModelCatalogEntry,
+} from "../services/voiceService";
 import type { TimedPlanType } from "../services/temporalService";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -48,6 +54,8 @@ export function SettingsModal({
 }: SettingsModalProps): React.JSX.Element | null {
   const [operatorSettings, setOperatorSettings] =
     useState<OperatorSettings | null>(null);
+  const [voiceCatalog, setVoiceCatalog] = useState<VoiceModelCatalogEntry[]>([]);
+  const [customPrompt, setCustomPrompt] = useState<string>("");
   const [localEnabled, setLocalEnabled] = useState<boolean>(
     getLocalNotificationsEnabled(),
   );
@@ -70,12 +78,15 @@ export function SettingsModal({
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const [settings, reg] = await Promise.all([
+      const [settings, reg, catalog] = await Promise.all([
         fetchOperatorSettings(client).catch(() => null),
         registerServiceWorker().catch(() => null),
+        fetchVoiceModelCatalog(client).catch(() => []),
       ]);
 
       setOperatorSettings(settings);
+      setCustomPrompt(settings?.custom_extractor_prompt || "");
+      setVoiceCatalog(catalog);
       setLocalEnabled(getLocalNotificationsEnabled());
       setPermissionState(getBrowserPermissionState());
 
@@ -244,6 +255,64 @@ export function SettingsModal({
         err instanceof Error
           ? err.message
           : "Failed to update missed delivery setting",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSttModelChange = async (key: string | "inherit") => {
+    setIsSaving(true);
+    try {
+      const explicit = key === "inherit" ? null : key;
+      await updateOperatorVoiceSettings(client, { stt_model_key: explicit });
+      setOperatorSettings((prev) => ({
+        ...prev,
+        stt_model_key: explicit,
+      }));
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to update STT model",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleExtractorModelChange = async (key: string | "inherit") => {
+    setIsSaving(true);
+    try {
+      const explicit = key === "inherit" ? null : key;
+      await updateOperatorVoiceSettings(client, {
+        extractor_model_key: explicit,
+      });
+      setOperatorSettings((prev) => ({
+        ...prev,
+        extractor_model_key: explicit,
+      }));
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to update extractor model",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveCustomPrompt = async () => {
+    setIsSaving(true);
+    try {
+      const explicit = customPrompt.trim() || null;
+      await updateOperatorVoiceSettings(client, {
+        custom_extractor_prompt: explicit,
+      });
+      setOperatorSettings((prev) => ({
+        ...prev,
+        custom_extractor_prompt: explicit,
+      }));
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to update custom prompt",
       );
     } finally {
       setIsSaving(false);
@@ -467,6 +536,105 @@ export function SettingsModal({
                     <div className="w-9 h-5 bg-secondary peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
                   </label>
                 </div>
+              </div>
+            </div>
+
+            {/* Voice Configuration Section */}
+            <div className="rounded-lg border border-border/80 bg-background/50 p-4 space-y-3">
+              <div className="flex items-center space-x-2">
+                <Mic className="h-4 w-4 text-primary" />
+                <span className="text-sm font-medium text-foreground">
+                  Voice Configuration
+                </span>
+              </div>
+
+              {/* STT Model */}
+              <div className="space-y-1.5 text-xs">
+                <label
+                  htmlFor="voice-stt-model"
+                  className="font-medium text-muted-foreground"
+                >
+                  Speech-to-Text Model:
+                </label>
+                <select
+                  id="voice-stt-model"
+                  value={operatorSettings?.stt_model_key ?? "inherit"}
+                  onChange={(e) => handleSttModelChange(e.target.value)}
+                  disabled={isSaving}
+                  className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring cursor-pointer"
+                >
+                  <option value="inherit">
+                    Inherit Deployment Default (Voxtral Small)
+                  </option>
+                  {voiceCatalog
+                    .filter((m) => m.type === "stt")
+                    .map((m) => (
+                      <option key={m.key} value={m.key}>
+                        {m.name} {m.is_default ? "(Deployment default)" : ""}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* Extractor Model */}
+              <div className="space-y-1.5 text-xs">
+                <label
+                  htmlFor="voice-extractor-model"
+                  className="font-medium text-muted-foreground"
+                >
+                  Extraction Model:
+                </label>
+                <select
+                  id="voice-extractor-model"
+                  value={operatorSettings?.extractor_model_key ?? "inherit"}
+                  onChange={(e) => handleExtractorModelChange(e.target.value)}
+                  disabled={isSaving}
+                  className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring cursor-pointer"
+                >
+                  <option value="inherit">
+                    Inherit Deployment Default (Gemma 4 26B-A4B-it)
+                  </option>
+                  {voiceCatalog
+                    .filter((m) => m.type === "extractor")
+                    .map((m) => (
+                      <option key={m.key} value={m.key}>
+                        {m.name} {m.is_default ? "(Deployment default)" : ""}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* Custom Extractor Prompt */}
+              <div className="space-y-1.5 pt-1 text-xs">
+                <div className="flex items-center justify-between">
+                  <label
+                    htmlFor="voice-custom-prompt"
+                    className="font-medium text-muted-foreground"
+                  >
+                    Custom Extractor Prompt (Optional):
+                  </label>
+                  {customPrompt !==
+                    (operatorSettings?.custom_extractor_prompt || "") && (
+                    <button
+                      type="button"
+                      onClick={handleSaveCustomPrompt}
+                      disabled={isSaving}
+                      className="text-[11px] font-semibold text-primary underline hover:no-underline cursor-pointer"
+                    >
+                      Save Prompt
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  id="voice-custom-prompt"
+                  value={customPrompt}
+                  onChange={(e) => setCustomPrompt(e.target.value)}
+                  onBlur={handleSaveCustomPrompt}
+                  placeholder="Inherit Deployment default prompt..."
+                  rows={2}
+                  disabled={isSaving}
+                  className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring resize-none font-mono"
+                />
               </div>
             </div>
 

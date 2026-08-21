@@ -18,6 +18,7 @@ export interface InboxViewProps {
   readonly onSelectTask?: (task: Task) => void;
   readonly isLoading?: boolean;
   readonly effectiveDefault?: TimedPlanType;
+  readonly onOpenVoiceCapture?: () => void;
 }
 
 export function InboxView({
@@ -28,6 +29,7 @@ export function InboxView({
   onSelectTask,
   isLoading = false,
   effectiveDefault,
+  onOpenVoiceCapture,
 }: InboxViewProps): React.JSX.Element {
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto">
@@ -51,6 +53,7 @@ export function InboxView({
             onCreateTask={onCreateTask}
             availableLabels={labels}
             effectiveDefault={effectiveDefault}
+            onOpenVoiceCapture={onOpenVoiceCapture}
           />
         </div>
 

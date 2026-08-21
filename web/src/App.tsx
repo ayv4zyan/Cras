@@ -12,6 +12,7 @@ import {
   Settings as SettingsIcon,
   WifiOff,
   RefreshCw,
+  Mic,
 } from "lucide-react";
 import { AuthProvider } from "./contexts/AuthContext";
 import { useAuth } from "./contexts/useAuth";
@@ -24,6 +25,8 @@ import { TaskDetailModal } from "./components/TaskDetailModal";
 import { LabelManagerModal } from "./components/LabelManagerModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { NotificationPermissionModal } from "./components/NotificationPermissionModal";
+import { VoiceCaptureModal } from "./components/VoiceCaptureModal";
+import type { DraftTask } from "./services/voiceService";
 import {
   hasExplainedPermission,
   getBrowserPermissionState,
@@ -119,6 +122,8 @@ export function AuthenticatedApp({
   const [isLabelManagerOpen, setIsLabelManagerOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isPermissionModalOpen, setIsPermissionModalOpen] = useState(false);
+  const [isVoiceCaptureOpen, setIsVoiceCaptureOpen] = useState(false);
+  const [voiceFocusedTask, setVoiceFocusedTask] = useState<Task | null>(null);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(() => getIsOnline());
@@ -854,6 +859,45 @@ export function AuthenticatedApp({
     [handleCreateTask],
   );
 
+  const handleOpenVoiceCapture = useCallback((focused?: Task | null) => {
+    setVoiceFocusedTask(focused || null);
+    setIsVoiceCaptureOpen(true);
+  }, []);
+
+  const handleAcceptVoiceDrafts = useCallback(
+    async (drafts: readonly DraftTask[]) => {
+      for (const draft of drafts) {
+        await handleCreateTask({
+          title: draft.title,
+          description: draft.description,
+          priority: draft.priority,
+          plan: draft.plan,
+          labels: draft.labels,
+        });
+      }
+    },
+    [handleCreateTask],
+  );
+
+  const handleAcceptVoiceEdit = useCallback(
+    async (draft: DraftTask) => {
+      if (!draft.originalTaskId) return;
+      const target =
+        tasks.find((t) => t.id === draft.originalTaskId) || selectedTask;
+      await handleUpdateTask({
+        id: draft.originalTaskId,
+        title: draft.title,
+        description: draft.description,
+        priority: draft.priority,
+        plan: draft.plan,
+        labels: draft.labels,
+        clearPlan: !draft.plan,
+        expectedVersion: target?.version ?? 1,
+      });
+    },
+    [tasks, selectedTask, handleUpdateTask],
+  );
+
   const handleCreateLabel = useCallback(
     async (params: CreateLabelParams) => {
       setErrorMessage(null);
@@ -1049,6 +1093,19 @@ export function AuthenticatedApp({
               })}
             </nav>
 
+            {/* Quick Action: Voice Capture */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => handleOpenVoiceCapture(null)}
+                aria-label="Voice capture"
+                className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-md text-sm font-medium text-primary hover:bg-primary/10 border border-primary/20 transition-colors cursor-pointer"
+              >
+                <Mic className="h-4 w-4" />
+                <span>Voice Capture</span>
+              </button>
+            </div>
+
             {/* Labels Section */}
             <div className="space-y-2 pt-2 border-t border-border/60">
               <div className="flex items-center justify-between px-3">
@@ -1184,6 +1241,7 @@ export function AuthenticatedApp({
               onSelectTask={handleSelectTask}
               isLoading={isTasksLoading}
               effectiveDefault={effectiveTimedPlanType}
+              onOpenVoiceCapture={() => handleOpenVoiceCapture(null)}
             />
           ) : activeView === "today" ? (
             <TodayView
@@ -1194,6 +1252,7 @@ export function AuthenticatedApp({
               onSelectTask={handleSelectTask}
               isLoading={isTasksLoading}
               effectiveDefault={effectiveTimedPlanType}
+              onOpenVoiceCapture={() => handleOpenVoiceCapture(null)}
             />
           ) : activeView === "upcoming" ? (
             <UpcomingView
@@ -1227,6 +1286,7 @@ export function AuthenticatedApp({
         onClose={handleCloseDetailModal}
         onSave={handleUpdateTask}
         onToggleComplete={handleToggleCompleteInModal}
+        onOpenVoiceEdit={(t) => handleOpenVoiceCapture(t)}
         onAddComment={handleAddComment}
         onCreateSubtask={handleCreateSubtask}
         onToggleSubtaskComplete={handleToggleCompleteInModal}
@@ -1257,6 +1317,20 @@ export function AuthenticatedApp({
         isOpen={isPermissionModalOpen}
         onClose={() => setIsPermissionModalOpen(false)}
         client={client}
+      />
+
+      {/* Voice Capture Modal */}
+      <VoiceCaptureModal
+        isOpen={isVoiceCaptureOpen}
+        onClose={() => {
+          setIsVoiceCaptureOpen(false);
+          setVoiceFocusedTask(null);
+        }}
+        client={client}
+        effectiveDefaultTimedPlanType={effectiveTimedPlanType}
+        focusedTask={voiceFocusedTask}
+        onAcceptDrafts={handleAcceptVoiceDrafts}
+        onAcceptEdit={handleAcceptVoiceEdit}
       />
     </div>
   );

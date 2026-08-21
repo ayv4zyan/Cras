@@ -7,6 +7,7 @@ import {
   Tag,
   Calendar,
   Clock,
+  Mic,
 } from "lucide-react";
 import { PRIORITY_OPTIONS, type Priority, type Label } from "../contracts/task";
 import type { CreateTaskParams } from "../services/taskService";
@@ -32,6 +33,7 @@ export interface CreateTaskInputProps {
   readonly className?: string;
   readonly defaultDate?: string | null;
   readonly effectiveDefault?: TimedPlanType;
+  readonly onOpenVoiceCapture?: () => void;
 }
 
 export function CreateTaskInput({
@@ -41,6 +43,7 @@ export function CreateTaskInput({
   className = "",
   defaultDate = null,
   effectiveDefault = "instant",
+  onOpenVoiceCapture,
 }: CreateTaskInputProps): React.JSX.Element {
   const initialUnsubmitted = useMemo(() => loadUnsubmittedTaskInput(), []);
   const [title, setTitle] = useState(initialUnsubmitted?.title ?? "");
@@ -217,6 +220,18 @@ export function CreateTaskInput({
             className="flex-1 bg-transparent py-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden disabled:opacity-50"
             data-testid="create-task-input"
           />
+
+          {onOpenVoiceCapture && (
+            <button
+              type="button"
+              onClick={onOpenVoiceCapture}
+              aria-label="Voice capture"
+              title="Voice capture (dictate tasks)"
+              className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary transition-colors cursor-pointer"
+            >
+              <Mic className="h-4 w-4" />
+            </button>
+          )}
 
           <button
             type="button"

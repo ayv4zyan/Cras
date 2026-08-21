@@ -364,3 +364,30 @@ export function filterUpcomingTasks(
     groups,
   };
 }
+
+/**
+ * Formats a plan's calendar date as YYYY-MM-DD.
+ */
+export function formatPlanDate(plan: Plan | null | undefined): string | null {
+  return getPlanLocalDate(plan);
+}
+
+/**
+ * Formats a plan's local time as HH:mm.
+ */
+export function formatPlanTime(plan: Plan | null | undefined): string | null {
+  const time = getPlanLocalTime(plan);
+  return time || null;
+}
+
+/**
+ * Returns the device's IANA timezone identifier.
+ */
+export function getDeviceTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+

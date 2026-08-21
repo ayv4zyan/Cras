@@ -35,10 +35,7 @@ export interface WebPushOptions {
 export function base64UrlToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData =
-    typeof atob === "function"
-      ? atob(base64)
-      : Buffer.from(base64, "base64").toString("binary");
+  const rawData = globalThis.atob(base64);
   const outputArray = new Uint8Array(rawData.length);
   for (let i = 0; i < rawData.length; ++i) {
     outputArray[i] = rawData.charCodeAt(i);
@@ -51,10 +48,7 @@ export function uint8ArrayToBase64Url(bytes: Uint8Array): string {
   for (let i = 0; i < bytes.byteLength; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
-  const b64 =
-    typeof btoa === "function"
-      ? btoa(binary)
-      : Buffer.from(binary, "binary").toString("base64");
+  const b64 = globalThis.btoa(binary);
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
@@ -292,8 +286,18 @@ export async function generateVapidHeader(
   }
 }
 
+/** Statuses that prove the subscription itself is gone. */
+export function isEndpointGoneStatus(statusCode: number): boolean {
+  return [404, 410].includes(statusCode);
+}
+
+/** Statuses that will not change on retry, but do not invalidate the endpoint. */
+export function isNonRetryableStatus(statusCode: number): boolean {
+  return [400, 401, 403, 413].includes(statusCode);
+}
+
 export function isPermanentFailureStatus(statusCode: number): boolean {
-  return [400, 401, 403, 404, 410, 413].includes(statusCode);
+  return isEndpointGoneStatus(statusCode);
 }
 
 export async function recordResult(
@@ -405,15 +409,10 @@ export async function processNotificationJob(
       console.error(
         `Failed to generate VAPID header for job ${job.job_id}: invalid VAPID configuration or key`,
       );
-      await recordResult(
-        supabase,
-        job.job_id,
-        job.lease_token,
-        "permanent_failure",
-      );
+      await recordResult(supabase, job.job_id, job.lease_token, "cancelled");
       return {
         jobId: job.job_id,
-        result: "permanent_failure",
+        result: "cancelled",
         error: "VAPID header generation failed",
       };
     }
@@ -487,8 +486,8 @@ export async function processNotificationJob(
         result: "delivered",
         statusCode: response.status,
       };
-    } else if (isPermanentFailureStatus(response.status)) {
-      // Permanent failure (400, 401, 403, 404, 410, 413)
+    } else if (isEndpointGoneStatus(response.status)) {
+      // Endpoint gone / unsubscribed (404, 410) - deactivates installation
       await recordResult(
         supabase,
         job.job_id,
@@ -499,6 +498,20 @@ export async function processNotificationJob(
       return {
         jobId: job.job_id,
         result: "permanent_failure",
+        statusCode: response.status,
+      };
+    } else if (isNonRetryableStatus(response.status)) {
+      // Non-retryable request/configuration rejection (400, 401, 403, 413) - cancels job without deactivating installation
+      await recordResult(
+        supabase,
+        job.job_id,
+        job.lease_token,
+        "cancelled",
+        response.status,
+      );
+      return {
+        jobId: job.job_id,
+        result: "cancelled",
         statusCode: response.status,
       };
     } else {

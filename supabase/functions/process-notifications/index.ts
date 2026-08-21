@@ -12,6 +12,8 @@ export {
   deriveTopic,
   encryptWebPushPayload,
   generateVapidHeader,
+  isEndpointGoneStatus,
+  isNonRetryableStatus,
   isPermanentFailureStatus,
   recordResult,
   processNotificationJob,

@@ -4,6 +4,11 @@ import {
   generateVapidHeader,
   encryptWebPushPayload,
   deriveTopic,
+  isEndpointGoneStatus,
+  isNonRetryableStatus,
+  isPermanentFailureStatus,
+  base64UrlToUint8Array,
+  uint8ArrayToBase64Url,
   type LeasedJob,
 } from "./notificationWorker";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -261,7 +266,7 @@ describe("processNotificationJob Worker Logic", () => {
       /^vapid t=[^,]+, k=test-vapid-public-key$/,
     );
 
-    // Fail closed if VAPID keys are misconfigured
+    // Fail closed if VAPID keys are misconfigured without deactivating installation
     const mockFetch2 = vi.fn();
     const result2 = await processNotificationJob(
       mockSupabase,
@@ -273,18 +278,18 @@ describe("processNotificationJob Worker Logic", () => {
       },
     );
 
-    expect(result2.result).toBe("permanent_failure");
+    expect(result2.result).toBe("cancelled");
     expect(mockFetch2).not.toHaveBeenCalled();
     expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
       p_job_id: "job-123",
       p_lease_token: "lease-token-abc",
-      p_result: "permanent_failure",
+      p_result: "cancelled",
       p_status_code: null,
     });
   });
 
-  it("handles non-retryable statuses (400, 401, 403, 404, 410, 413) as permanent failures", async () => {
-    for (const status of [400, 401, 403, 404, 410, 413]) {
+  it("handles endpoint gone statuses (404, 410) as permanent failures to deactivate subscription", async () => {
+    for (const status of [404, 410]) {
       mockRpc.mockClear();
       const mockFetch = vi.fn().mockResolvedValue({ status });
 
@@ -300,6 +305,28 @@ describe("processNotificationJob Worker Logic", () => {
         p_job_id: "job-123",
         p_lease_token: "lease-token-abc",
         p_result: "permanent_failure",
+        p_status_code: status,
+      });
+    }
+  });
+
+  it("handles non-retryable config/request statuses (400, 401, 403, 413) as cancelled without deactivating subscription", async () => {
+    for (const status of [400, 401, 403, 413]) {
+      mockRpc.mockClear();
+      const mockFetch = vi.fn().mockResolvedValue({ status });
+
+      const result = await processNotificationJob(
+        mockSupabase,
+        baseJob,
+        mockFetch as unknown as typeof fetch,
+      );
+
+      expect(result.result).toBe("cancelled");
+      expect(result.statusCode).toBe(status);
+      expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
+        p_job_id: "job-123",
+        p_lease_token: "lease-token-abc",
+        p_result: "cancelled",
         p_status_code: status,
       });
     }
@@ -399,5 +426,38 @@ describe("processNotificationJob Worker Logic", () => {
       "vapid-pub-key",
     );
     expect(header).toMatch(/^vapid t=[^,]+, k=vapid-pub-key$/);
+  });
+
+  it("correctly classifies status codes", () => {
+    expect(isEndpointGoneStatus(404)).toBe(true);
+    expect(isEndpointGoneStatus(410)).toBe(true);
+    expect(isEndpointGoneStatus(400)).toBe(false);
+    expect(isEndpointGoneStatus(401)).toBe(false);
+    expect(isEndpointGoneStatus(403)).toBe(false);
+    expect(isEndpointGoneStatus(413)).toBe(false);
+    expect(isEndpointGoneStatus(500)).toBe(false);
+
+    expect(isNonRetryableStatus(400)).toBe(true);
+    expect(isNonRetryableStatus(401)).toBe(true);
+    expect(isNonRetryableStatus(403)).toBe(true);
+    expect(isNonRetryableStatus(413)).toBe(true);
+    expect(isNonRetryableStatus(404)).toBe(false);
+    expect(isNonRetryableStatus(410)).toBe(false);
+    expect(isNonRetryableStatus(500)).toBe(false);
+
+    expect(isPermanentFailureStatus(404)).toBe(true);
+    expect(isPermanentFailureStatus(410)).toBe(true);
+    expect(isPermanentFailureStatus(400)).toBe(false);
+  });
+
+  it("converts url-safe base64 strings to Uint8Array and back without Buffer", () => {
+    const original = new Uint8Array([0, 1, 2, 250, 255, 64, 128]);
+    const b64Url = uint8ArrayToBase64Url(original);
+    expect(b64Url).not.toContain("+");
+    expect(b64Url).not.toContain("/");
+    expect(b64Url).not.toContain("=");
+
+    const decoded = base64UrlToUint8Array(b64Url);
+    expect(decoded).toEqual(original);
   });
 });

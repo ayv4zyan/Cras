@@ -210,7 +210,10 @@ class NotificationInstallationSync(
                 null
             }
             _status.value = AndroidNotificationStatus.EndpointUnavailable
-            if (deactivated == null) {
+            // Only an explicit server confirmation counts as success; both a
+            // thrown error and a false response leave an active row behind,
+            // so the identity and parked endpoint survive for a retried sign-out.
+            if (deactivated != true) {
                 return@withLock
             }
             preferences.clearInstallationId()

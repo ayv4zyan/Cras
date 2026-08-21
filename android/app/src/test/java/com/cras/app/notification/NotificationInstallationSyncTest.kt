@@ -179,6 +179,29 @@ class NotificationInstallationSyncTest {
     }
 
     @Test
+    fun `sign-out deactivation returning false keeps the installation identity and endpoint`() = runTest {
+        val sync = createSync()
+        sync.reconcile(sessionA)
+        val installationId = preferences.getOrCreateInstallationId()
+        service.deactivateResult = false
+
+        sync.deactivateForSignOut(sessionA)
+
+        // Without a confirmed removal of the active row, the retry state
+        // must survive exactly as it does for a thrown error.
+        assertEquals(installationId, preferences.getOrCreateInstallationId())
+        assertEquals("fcm-token-initial", preferences.getPendingEndpoint())
+        assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.status.value)
+
+        // A later confirmed deactivation completes sign-out and resets the installation.
+        service.deactivateResult = true
+        sync.deactivateForSignOut(sessionA)
+
+        assertNotEquals(installationId, preferences.getOrCreateInstallationId())
+        assertNull(preferences.getPendingEndpoint())
+    }
+
+    @Test
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun `concurrent reconciliation is serialized so registrations cannot interleave`() = runTest {
         val releaseFirstCall = CompletableDeferred<Unit>()
@@ -364,6 +387,7 @@ private class FakeInstallationService : InstallationService {
     val deactivatedIds = mutableListOf<String>()
     var nextRecordOverride: InstallationRecord? = null
     var deactivateError: Exception? = null
+    var deactivateResult: Boolean = true
 
     override suspend fun registerOrUpdate(
         session: OperatorSession,
@@ -383,6 +407,6 @@ private class FakeInstallationService : InstallationService {
     override suspend fun deactivate(session: OperatorSession, installationId: String): Boolean {
         deactivateError?.let { throw it }
         deactivatedIds.add(installationId)
-        return true
+        return deactivateResult
     }
 }

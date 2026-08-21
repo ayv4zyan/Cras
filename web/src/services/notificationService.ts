@@ -177,23 +177,15 @@ export function arrayBufferToBase64(buffer: ArrayBuffer | null): string | null {
   return window.btoa(binary);
 }
 
-export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
-  if (
-    typeof window === "undefined" ||
-    !("serviceWorker" in navigator) ||
-    typeof window.navigator.serviceWorker?.register !== "function"
-  ) {
-    return null;
-  }
+import {
+  registerOfflineShell,
+  type RegisterOfflineShellOptions,
+} from "./offlineShellService";
 
-  try {
-    const reg = await navigator.serviceWorker.register("/sw.js", {
-      scope: "/",
-    });
-    return reg;
-  } catch {
-    return null;
-  }
+export async function registerServiceWorker(
+  options?: RegisterOfflineShellOptions,
+): Promise<ServiceWorkerRegistration | null> {
+  return registerOfflineShell(options);
 }
 
 export async function getExistingPushSubscription(

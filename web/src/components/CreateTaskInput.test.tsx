@@ -199,4 +199,40 @@ describe("CreateTaskInput Component", () => {
       }),
     );
   });
+
+  it("restores in-progress unsubmitted task input from sessionStorage on mount and clears on submit", async () => {
+    const handleCreate = vi.fn().mockResolvedValue(undefined);
+    sessionStorage.setItem(
+      "cras_unsubmitted_task_input",
+      JSON.stringify({
+        title: "Restored Title",
+        description: "Restored Description",
+      }),
+    );
+
+    render(<CreateTaskInput onCreateTask={handleCreate} />);
+
+    const titleInput = screen.getByPlaceholderText(
+      /create a task in inbox/i,
+    ) as HTMLInputElement;
+    expect(titleInput.value).toBe("Restored Title");
+
+    const descInput = screen.getByPlaceholderText(
+      /add description/i,
+    ) as HTMLTextAreaElement;
+    expect(descInput.value).toBe("Restored Description");
+
+    const submitBtn = screen.getByRole("button", { name: /create task/i });
+    fireEvent.click(submitBtn);
+
+    expect(handleCreate).toHaveBeenCalledWith(
+      "Restored Title",
+      "Restored Description",
+      undefined,
+    );
+
+    await waitFor(() => {
+      expect(sessionStorage.getItem("cras_unsubmitted_task_input")).toBeNull();
+    });
+  });
 });

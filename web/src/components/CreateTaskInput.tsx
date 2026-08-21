@@ -15,6 +15,11 @@ import {
   getDeviceLocalDate,
   type TimedPlanType,
 } from "../services/temporalService";
+import {
+  loadUnsubmittedTaskInput,
+  saveUnsubmittedTaskInput,
+  clearUnsubmittedTaskInput,
+} from "../services/offlineShellService";
 
 export interface CreateTaskInputProps {
   readonly onCreateTask: (
@@ -37,8 +42,11 @@ export function CreateTaskInput({
   defaultDate = null,
   effectiveDefault = "instant",
 }: CreateTaskInputProps): React.JSX.Element {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const initialUnsubmitted = useMemo(() => loadUnsubmittedTaskInput(), []);
+  const [title, setTitle] = useState(initialUnsubmitted?.title ?? "");
+  const [description, setDescription] = useState(
+    initialUnsubmitted?.description ?? "",
+  );
   const [priority, setPriority] = useState<Priority>(4);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [planDate, setPlanDate] = useState<string>(defaultDate ?? "");
@@ -46,9 +54,35 @@ export function CreateTaskInput({
   const [timedType, setTimedType] = useState<"default" | TimedPlanType>(
     "default",
   );
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(
+    Boolean(initialUnsubmitted?.description),
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleTitleChange = useCallback(
+    (newTitle: string) => {
+      setTitle(newTitle);
+      if (newTitle || description) {
+        saveUnsubmittedTaskInput({ title: newTitle, description });
+      } else {
+        clearUnsubmittedTaskInput();
+      }
+    },
+    [description],
+  );
+
+  const handleDescriptionChange = useCallback(
+    (newDesc: string) => {
+      setDescription(newDesc);
+      if (title || newDesc) {
+        saveUnsubmittedTaskInput({ title, description: newDesc });
+      } else {
+        clearUnsubmittedTaskInput();
+      }
+    },
+    [title],
+  );
 
   const lastDefaultDate = useRef(defaultDate);
   if (lastDefaultDate.current !== defaultDate) {
@@ -130,7 +164,9 @@ export function CreateTaskInput({
 
         setTitle("");
         setDescription("");
+        clearUnsubmittedTaskInput();
         setPriority(4);
+
         setSelectedLabels([]);
         setPlanDate(defaultDate ?? "");
         setPlanTime("");
@@ -174,7 +210,7 @@ export function CreateTaskInput({
           <input
             type="text"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => handleTitleChange(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             disabled={isSubmitting}
@@ -217,7 +253,7 @@ export function CreateTaskInput({
               <textarea
                 aria-label="Task description"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={(e) => handleDescriptionChange(e.target.value)}
                 placeholder="Add description..."
                 rows={2}
                 disabled={isSubmitting}

@@ -112,7 +112,7 @@ export async function handleVoiceCaptureRequest(
   let recordingStartTime = new Date().toISOString();
   let timezone = "UTC";
   let focusedTask: any = null;
-  let existingDrafts: any[] | null = null;
+  let existingDrafts: any[] | undefined = undefined;
 
   try {
     const contentType = req.headers.get("content-type") || "";

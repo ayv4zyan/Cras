@@ -172,11 +172,13 @@ describe("AudioRecorder lifecycle", () => {
     // Simulate audio chunks arriving
     const fakeChunk = new Float32Array(4096);
     fakeChunk[0] = 0.25;
-    mockScriptProcessor.onaudioprocess({
-      inputBuffer: {
-        getChannelData: () => fakeChunk,
-      },
-    });
+    if (mockScriptProcessor.onaudioprocess) {
+      mockScriptProcessor.onaudioprocess({
+        inputBuffer: {
+          getChannelData: () => fakeChunk,
+        } as unknown as AudioBuffer,
+      } as unknown as AudioProcessingEvent);
+    }
 
     const result = await recorder.stop();
     expect(recorder.isRecording()).toBe(false);

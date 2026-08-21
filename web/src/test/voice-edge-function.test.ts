@@ -210,7 +210,7 @@ describe("Edge Function Request Handling & Allowance Enforcement", () => {
           error: null,
         }),
       },
-    };
+    } as unknown as SupabaseClient;
   });
 
   it("handles valid HTTP request through handleVoiceCaptureRequest", async () => {

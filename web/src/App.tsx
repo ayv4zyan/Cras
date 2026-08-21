@@ -872,7 +872,7 @@ export function AuthenticatedApp({
           description: draft.description,
           priority: draft.priority,
           plan: draft.plan,
-          labels: draft.labels,
+          labels: [...draft.labels],
         });
       }
     },
@@ -890,7 +890,7 @@ export function AuthenticatedApp({
         description: draft.description,
         priority: draft.priority,
         plan: draft.plan,
-        labels: draft.labels,
+        labels: [...draft.labels],
         clearPlan: !draft.plan,
         expectedVersion: target?.version ?? 1,
       });

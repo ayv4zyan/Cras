@@ -839,7 +839,7 @@ export async function handleVoiceCaptureRequest(
       readonly time?: string;
     } | null;
   } | null = null;
-  let existingDrafts: ExtractedDraft[] | null = null;
+  let existingDrafts: ExtractedDraft[] | undefined = undefined;
 
   try {
     const contentType = req.headers.get("content-type") || "";

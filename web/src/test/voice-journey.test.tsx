@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import React from "react";
 import { AuthenticatedApp } from "../App";
 import type { Task, Label } from "../contracts/task";
 import * as voiceService from "../services/voiceService";
@@ -58,7 +57,7 @@ describe("Voice Capture & Task Management Journey on Web (Issue #53)", () => {
     mockUser = {
       id: "operator-uuid-1",
       email: "operator@example.com",
-    };
+    } as unknown as User;
 
     mockClient = {
       supabaseUrl: "https://example.supabase.co",
@@ -159,7 +158,7 @@ describe("Voice Capture & Task Management Journey on Web (Issue #53)", () => {
         on: vi.fn().mockReturnThis(),
         subscribe: vi.fn().mockReturnValue({ unsubscribe: vi.fn() }),
       }),
-    };
+    } as unknown as SupabaseClient;
 
     mockRecorder = {
       start: vi.fn().mockResolvedValue(undefined),

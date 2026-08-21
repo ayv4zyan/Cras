@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Task, Priority, TaskPlan } from "../contracts/task";
+import type { Task, Priority, Plan } from "../contracts/task";
 import {
   createPlanFromInputs,
   formatPlanDate,
@@ -42,8 +42,8 @@ export interface DraftTask {
   readonly title: string;
   readonly description: string | null;
   readonly priority: Priority;
-  readonly plan: TaskPlan | null;
-  readonly labels: string[];
+  readonly plan: Plan;
+  readonly labels: readonly string[];
   readonly parentId: string | null;
   readonly originalTaskId?: string | null;
   readonly validationError: string | null;
@@ -91,7 +91,7 @@ export function createDraftTaskFromExtracted(
       : 4
   ) as Priority;
 
-  let plan: TaskPlan | null = null;
+  let plan: Plan = null;
   let validationError: string | null = null;
 
   const date = payload.plan_date?.trim() || null;
@@ -410,6 +410,7 @@ export async function sendVoiceCapture(
     const newItems = extractedDrafts.filter(
       (ed) =>
         ed.target_draft_index === undefined ||
+        ed.target_draft_index === null ||
         ed.target_draft_index >= existingDrafts.length,
     );
     for (const item of newItems) {

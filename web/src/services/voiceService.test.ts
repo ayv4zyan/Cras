@@ -41,7 +41,7 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
     const draft = createDraftTaskFromExtracted(payload, "instant");
 
     expect(draft.plan).not.toBeNull();
-    expect(draft.plan?.type).toBe("instant");
+    expect(draft.plan && "type" in draft.plan ? draft.plan.type : null).toBe("instant");
     if (draft.plan && "at" in draft.plan) {
       expect(draft.plan.at).toBeDefined();
     }
@@ -76,7 +76,7 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
 
     const draft = createDraftTaskFromExtracted(payload, "floating");
 
-    expect(draft.plan?.type).toBe("instant");
+    expect(draft.plan && "type" in draft.plan ? draft.plan.type : null).toBe("instant");
     if (draft.plan && "at" in draft.plan) {
       expect(draft.plan.at).toBeDefined();
     }
@@ -110,7 +110,7 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
       initialPayload,
       "instant",
     );
-    expect(draftInstant.plan?.type).toBe("instant");
+    expect(draftInstant.plan && "type" in draftInstant.plan ? draftInstant.plan.type : null).toBe("instant");
     const displayedDateBefore = formatPlanDate(draftInstant.plan);
     const displayedTimeBefore = formatPlanTime(draftInstant.plan);
 
@@ -119,7 +119,7 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
       "floating",
       "instant",
     );
-    expect(draftFloating.plan?.type).toBe("floating");
+    expect(draftFloating.plan && "type" in draftFloating.plan ? draftFloating.plan.type : null).toBe("floating");
     expect(formatPlanDate(draftFloating.plan)).toBe(displayedDateBefore);
     expect(formatPlanTime(draftFloating.plan)).toBe(displayedTimeBefore);
 
@@ -128,7 +128,7 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
       "instant",
       "instant",
     );
-    expect(draftInstantAgain.plan?.type).toBe("instant");
+    expect(draftInstantAgain.plan && "type" in draftInstantAgain.plan ? draftInstantAgain.plan.type : null).toBe("instant");
     expect(formatPlanDate(draftInstantAgain.plan)).toBe(displayedDateBefore);
     expect(formatPlanTime(draftInstantAgain.plan)).toBe(displayedTimeBefore);
   });
@@ -196,7 +196,11 @@ describe("Voice Service - API & Error Handling", () => {
     expect(result.drafts[0].plan).toEqual({ date: "2026-08-22" });
     expect(result.drafts[1].title).toBe("Call doctor");
     expect(result.drafts[1].priority).toBe(2);
-    expect(result.drafts[1].plan?.type).toBe("instant");
+    expect(
+      result.drafts[1].plan && "type" in result.drafts[1].plan
+        ? result.drafts[1].plan.type
+        : null,
+    ).toBe("instant");
   });
 
   it("handles voice edit when focused task is provided, preserving existing timed type unless changed", async () => {
@@ -248,7 +252,9 @@ describe("Voice Service - API & Error Handling", () => {
     const editDraft = result.drafts[0];
     expect(editDraft.originalTaskId).toBe("task-1234");
     expect(editDraft.title).toBe("Existing Task");
-    expect(editDraft.plan?.type).toBe("floating"); // Preserved floating!
+    expect(
+      editDraft.plan && "type" in editDraft.plan ? editDraft.plan.type : null,
+    ).toBe("floating"); // Preserved floating!
     expect(
       editDraft.plan && "time" in editDraft.plan ? editDraft.plan.time : null,
     ).toBe("11:00");

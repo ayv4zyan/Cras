@@ -189,3 +189,21 @@ export async function updateOperatorTimedPlanType(
     await fetchEffectiveTimedPlanType(client);
   }
 }
+
+/**
+ * Updates the Operator's missed delivery enabled setting.
+ */
+export async function updateOperatorMissedDelivery(
+  client: SupabaseClient,
+  enabled: boolean,
+): Promise<void> {
+  const { error } = await client.from("settings").upsert({
+    missed_delivery_enabled: enabled,
+  });
+
+  if (error) {
+    throw new Error(
+      `Failed to update operator settings: ${error.message} (${error.code})`,
+    );
+  }
+}

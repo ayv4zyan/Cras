@@ -9,6 +9,7 @@ import {
   Loader2,
   Tag,
   Plus,
+  Settings as SettingsIcon,
 } from "lucide-react";
 import { AuthProvider } from "./contexts/AuthContext";
 import { useAuth } from "./contexts/useAuth";
@@ -19,6 +20,17 @@ import { UpcomingView } from "./components/UpcomingView";
 import { CompletedView } from "./components/CompletedView";
 import { TaskDetailModal } from "./components/TaskDetailModal";
 import { LabelManagerModal } from "./components/LabelManagerModal";
+import { SettingsModal } from "./components/SettingsModal";
+import { NotificationPermissionModal } from "./components/NotificationPermissionModal";
+import {
+  hasExplainedPermission,
+  getBrowserPermissionState,
+  syncInstallationWithServer,
+  deactivateInstallation,
+  registerServiceWorker,
+  getExistingPushSubscription,
+  arrayBufferToBase64,
+} from "./services/notificationService";
 import {
   fetchTasks,
   fetchTaskById,
@@ -96,6 +108,8 @@ export function AuthenticatedApp({
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isLabelManagerOpen, setIsLabelManagerOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isPermissionModalOpen, setIsPermissionModalOpen] = useState(false);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -104,6 +118,92 @@ export function AuthenticatedApp({
   useEffect(() => {
     selectedTaskRef.current = selectedTask;
   }, [selectedTask]);
+
+  // Initialize service worker and sync installation
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initInstallation() {
+      try {
+        const reg = await registerServiceWorker();
+        let endpoint: string | null = null;
+        let p256dh: string | null = null;
+        let auth: string | null = null;
+
+        if (reg) {
+          const sub = await getExistingPushSubscription(reg);
+          if (sub) {
+            endpoint = sub.endpoint;
+            p256dh = arrayBufferToBase64(sub.getKey("p256dh"));
+            auth = arrayBufferToBase64(sub.getKey("auth"));
+          }
+        }
+
+        if (isMounted) {
+          await syncInstallationWithServer(client, {
+            endpoint,
+            p256dh,
+            auth,
+          });
+        }
+      } catch {
+        // Best effort
+      }
+    }
+
+    initInstallation();
+
+    // Handle deep links from notifications
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const initialTaskId = params.get("taskId");
+      if (initialTaskId) {
+        fetchTaskById(client, initialTaskId)
+          .then((t) => {
+            if (t && isMounted) {
+              setSelectedTask(t);
+              setIsDetailModalOpen(true);
+            }
+          })
+          .catch(() => {});
+      }
+    }
+
+    // Listen for service worker messages
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === "CRAS_OPEN_TASK" && event.data.taskId) {
+        fetchTaskById(client, event.data.taskId)
+          .then((t) => {
+            if (t && isMounted) {
+              setSelectedTask(t);
+              setIsDetailModalOpen(true);
+            }
+          })
+          .catch(() => {});
+      } else if (event.data?.type === "CRAS_PUSH_SUBSCRIPTION_CHANGE") {
+        syncInstallationWithServer(client).catch(() => {});
+      }
+    };
+
+    if (
+      typeof navigator !== "undefined" &&
+      "serviceWorker" in navigator &&
+      navigator.serviceWorker
+    ) {
+      navigator.serviceWorker.addEventListener("message", handleMessage);
+    }
+
+    return () => {
+      isMounted = false;
+      if (
+        typeof navigator !== "undefined" &&
+        "serviceWorker" in navigator &&
+        navigator.serviceWorker
+      ) {
+        navigator.serviceWorker.removeEventListener("message", handleMessage);
+      }
+    };
+  }, [client]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
     setTasks((prev) => {
@@ -524,6 +624,7 @@ export function AuthenticatedApp({
       });
 
       // 3. Attempt drain
+      let createRejected = false;
       try {
         await drainOutbox({
           client,
@@ -535,10 +636,31 @@ export function AuthenticatedApp({
             applyTaskUpdate(completed);
           },
           onConflict: handleDrainConflict,
-          onError: handleDrainError,
+          onError: (err, item) => {
+            if (item.type === "create" && item.task.id === taskId) {
+              createRejected = true;
+            }
+            handleDrainError(err, item);
+          },
         });
       } catch {
         // Retained in outbox on network error
+      }
+
+      // 4. In-context permission explanation for first timed task
+      if (
+        !createRejected &&
+        optimisticTask.plan &&
+        "type" in optimisticTask.plan &&
+        (optimisticTask.plan.type === "instant" ||
+          optimisticTask.plan.type === "floating")
+      ) {
+        if (
+          !hasExplainedPermission() &&
+          getBrowserPermissionState() !== "granted"
+        ) {
+          setIsPermissionModalOpen(true);
+        }
       }
     },
     [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError],
@@ -550,6 +672,19 @@ export function AuthenticatedApp({
       try {
         const updated = await updateTask(client, params);
         applyTaskUpdate(updated);
+
+        if (
+          params.plan &&
+          "type" in params.plan &&
+          (params.plan.type === "instant" || params.plan.type === "floating")
+        ) {
+          if (
+            !hasExplainedPermission() &&
+            getBrowserPermissionState() !== "granted"
+          ) {
+            setIsPermissionModalOpen(true);
+          }
+        }
       } catch (err) {
         if (isVersionConflictError(err)) {
           const conflictErr = await handleVersionConflict(params.id);
@@ -888,15 +1023,52 @@ export function AuthenticatedApp({
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => onSignOut()}
-                aria-label="Sign out"
-                title="Sign out"
-                className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer shrink-0"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-              </button>
+              <div className="flex items-center space-x-1">
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsModalOpen(true)}
+                  aria-label="Settings"
+                  title="Settings"
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer shrink-0"
+                >
+                  <SettingsIcon className="h-3.5 w-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await deactivateInstallation(client);
+                    } catch (deactivateErr) {
+                      console.error(
+                        "Failed to deactivate installation during sign out:",
+                        deactivateErr,
+                      );
+                      setErrorMessage(
+                        deactivateErr instanceof Error
+                          ? deactivateErr.message
+                          : "Failed to deactivate installation during sign out",
+                      );
+                    } finally {
+                      try {
+                        await onSignOut();
+                      } catch (signOutErr) {
+                        console.error("Failed to sign out:", signOutErr);
+                        setErrorMessage(
+                          signOutErr instanceof Error
+                            ? signOutErr.message
+                            : "Failed to sign out",
+                        );
+                      }
+                    }
+                  }}
+                  aria-label="Sign out"
+                  title="Sign out"
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer shrink-0"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -968,6 +1140,22 @@ export function AuthenticatedApp({
         onCreateLabel={handleCreateLabel}
         onUpdateLabel={handleUpdateLabel}
         onDeleteLabel={handleDeleteLabel}
+      />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        client={client}
+        effectiveDefaultTimedPlanType={effectiveTimedPlanType}
+        onTimedPlanTypeChanged={(type) => setEffectiveTimedPlanType(type)}
+      />
+
+      {/* Notification Permission In-Context Modal */}
+      <NotificationPermissionModal
+        isOpen={isPermissionModalOpen}
+        onClose={() => setIsPermissionModalOpen(false)}
+        client={client}
       />
     </div>
   );

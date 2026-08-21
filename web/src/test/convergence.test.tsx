@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   render,
   screen,
@@ -9,6 +9,7 @@ import {
 import { CrasApp } from "../App";
 import { AuthProvider } from "../contexts/AuthContext";
 import { parseInvalidationPayload } from "../services/realtimeService";
+import { clearOutbox } from "../services/outboxService";
 import type { Task } from "../contracts/task";
 import type {
   SupabaseClient,
@@ -22,6 +23,11 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
     id: "550e8400-e29b-41d4-a716-446655440099",
     email: "operator@example.com",
   } as User;
+
+  beforeEach(() => {
+    localStorage.clear();
+    clearOutbox(operatorUser.id);
+  });
 
   const authSession: Session = {
     user: operatorUser,
@@ -213,7 +219,9 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
       .mockImplementation((fnName: string, params: Record<string, unknown>) => {
         if (fnName === "create_task") {
           const newTask: Task = {
-            id: `550e8400-e29b-41d4-a716-44665544000${createdTasks.length + 1}`,
+            id:
+              (params.id as string) ||
+              `550e8400-e29b-41d4-a716-44665544000${createdTasks.length + 1}`,
             title: params.title as string,
             description: null,
             priority: (params.priority as 1 | 2 | 3 | 4) || 4,

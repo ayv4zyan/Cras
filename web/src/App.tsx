@@ -22,9 +22,7 @@ import { LabelManagerModal } from "./components/LabelManagerModal";
 import {
   fetchTasks,
   fetchTaskById,
-  createTask,
   updateTask,
-  completeTask,
   uncompleteTask,
   isVersionConflictError,
   filterInboxTasks,
@@ -48,6 +46,16 @@ import {
   fetchEffectiveTimedPlanType,
   getCachedEffectiveTimedPlanType,
 } from "./services/settingsService";
+import {
+  getOutbox,
+  enqueueOutboxItem,
+  drainOutbox,
+  applyOutboxToTasks,
+  generateTaskId,
+  type CreateOutboxItem,
+  type CompleteOutboxItem,
+  type OutboxItem,
+} from "./services/outboxService";
 import { subscribeToInvalidations } from "./services/realtimeService";
 import type { TimedPlanType } from "./services/temporalService";
 import type { Priority, Task, Label, Comment } from "./contracts/task";
@@ -97,58 +105,6 @@ export function AuthenticatedApp({
     selectedTaskRef.current = selectedTask;
   }, [selectedTask]);
 
-  useEffect(() => {
-    let isCancelled = false;
-
-    setTasks([]);
-    setLabels([]);
-    setSelectedTask(null);
-    setIsDetailModalOpen(false);
-    setComments([]);
-    setErrorMessage(null);
-
-    setIsTasksLoading(true);
-    Promise.all([
-      fetchTasks(client),
-      fetchLabels(client).catch((err: unknown) => {
-        if (!isCancelled) {
-          setErrorMessage(
-            err instanceof Error
-              ? `Failed to load labels: ${err.message}`
-              : "Failed to load labels",
-          );
-        }
-        return [] as Label[];
-      }),
-      fetchEffectiveTimedPlanType(client).catch(() =>
-        getCachedEffectiveTimedPlanType(),
-      ),
-    ])
-      .then(([allTasks, allLabels, effectiveType]) => {
-        if (!isCancelled) {
-          setTasks(allTasks);
-          setLabels(allLabels);
-          setEffectiveTimedPlanType(effectiveType);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!isCancelled) {
-          setErrorMessage(
-            err instanceof Error ? err.message : "Failed to load data",
-          );
-        }
-      })
-      .finally(() => {
-        if (!isCancelled) {
-          setIsTasksLoading(false);
-        }
-      });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [userId, client]);
-
   const applyTaskUpdate = useCallback((updated: Task) => {
     setTasks((prev) => {
       const exists = prev.some((t) => t.id === updated.id);
@@ -170,33 +126,180 @@ export function AuthenticatedApp({
     });
   }, []);
 
-  const reconcileFreshTasks = useCallback((freshTasks: Task[]) => {
-    setTasks((prev) => {
-      const prevMap = new Map(prev.map((t) => [t.id, t]));
-      return freshTasks.map((fresh) => {
-        const existing = prevMap.get(fresh.id);
-        return existing && existing.version > fresh.version ? existing : fresh;
-      });
-    });
+  const reconcileFreshTasks = useCallback(
+    (freshTasks: Task[]) => {
+      const outbox = getOutbox(userId);
+      const withOutbox = applyOutboxToTasks(freshTasks, outbox);
 
-    const currentSelected = selectedTaskRef.current;
-    if (currentSelected) {
-      const freshSelected = freshTasks.find((t) => t.id === currentSelected.id);
-      if (freshSelected) {
-        setSelectedTask((prev) =>
-          prev &&
-          prev.id === freshSelected.id &&
-          prev.version > freshSelected.version
-            ? prev
-            : freshSelected,
+      setTasks((prev) => {
+        const prevMap = new Map(prev.map((t) => [t.id, t]));
+        return withOutbox.map((fresh) => {
+          const existing = prevMap.get(fresh.id);
+          return existing && existing.version > fresh.version
+            ? existing
+            : fresh;
+        });
+      });
+
+      const currentSelected = selectedTaskRef.current;
+      if (currentSelected) {
+        const freshSelected = withOutbox.find(
+          (t) => t.id === currentSelected.id,
         );
-      } else {
-        setSelectedTask(null);
-        setComments([]);
-        setIsDetailModalOpen(false);
+        if (freshSelected) {
+          setSelectedTask((prev) =>
+            prev &&
+            prev.id === freshSelected.id &&
+            prev.version > freshSelected.version
+              ? prev
+              : freshSelected,
+          );
+        } else {
+          setSelectedTask(null);
+          setComments([]);
+          setIsDetailModalOpen(false);
+        }
       }
-    }
-  }, []);
+    },
+    [userId],
+  );
+
+  const handleVersionConflict = useCallback(
+    async (taskId: string) => {
+      const [freshTasks, freshTask] = await Promise.all([
+        fetchTasks(client).catch(() => null),
+        fetchTaskById(client, taskId).catch(() => null),
+      ]);
+      if (freshTasks !== null) {
+        reconcileFreshTasks(freshTasks);
+      }
+      if (freshTask) {
+        applyTaskUpdate(freshTask);
+      } else if (freshTasks !== null) {
+        const matching = freshTasks.find((t) => t.id === taskId);
+        if (matching) {
+          applyTaskUpdate(matching);
+        } else {
+          const currentSelected = selectedTaskRef.current;
+          if (currentSelected?.id === taskId) {
+            setSelectedTask(null);
+            setComments([]);
+            setIsDetailModalOpen(false);
+          }
+        }
+      }
+      const conflictMsg =
+        "Task version conflict: modified in another session. Refetched latest state.";
+      setErrorMessage(conflictMsg);
+      return new Error(conflictMsg);
+    },
+    [client, applyTaskUpdate, reconcileFreshTasks],
+  );
+
+  const handleDrainConflict = useCallback(
+    async (_err: unknown, item: OutboxItem) => {
+      if (item.type === "complete") {
+        await handleVersionConflict(item.taskId);
+      }
+    },
+    [handleVersionConflict],
+  );
+
+  const handleDrainError = useCallback(
+    async (err: unknown, item: OutboxItem) => {
+      if (item.type === "create") {
+        setTasks((prev) => prev.filter((t) => t.id !== item.task.id));
+        setSelectedTask((prev) => (prev?.id === item.task.id ? null : prev));
+      } else if (item.type === "complete") {
+        await handleVersionConflict(item.taskId);
+      }
+      setErrorMessage(
+        err instanceof Error
+          ? err.message
+          : item.type === "create"
+            ? "Failed to create task"
+            : "Failed to complete task",
+      );
+    },
+    [handleVersionConflict],
+  );
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    setTasks([]);
+    setLabels([]);
+    setSelectedTask(null);
+    setIsDetailModalOpen(false);
+    setComments([]);
+    setErrorMessage(null);
+
+    setIsTasksLoading(true);
+    Promise.all([
+      fetchTasks(client).catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error
+              ? `Failed to load tasks: ${err.message}`
+              : "Failed to load tasks",
+          );
+        }
+        return [] as Task[];
+      }),
+      fetchLabels(client).catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error
+              ? `Failed to load labels: ${err.message}`
+              : "Failed to load labels",
+          );
+        }
+        return [] as Label[];
+      }),
+      fetchEffectiveTimedPlanType(client).catch(() =>
+        getCachedEffectiveTimedPlanType(),
+      ),
+    ])
+      .then(async ([allTasks, allLabels, effectiveType]) => {
+        if (isCancelled) return;
+        const outbox = getOutbox(userId);
+        const tasksWithOutbox = applyOutboxToTasks(allTasks, outbox);
+        setTasks(tasksWithOutbox);
+        setLabels(allLabels);
+        setEffectiveTimedPlanType(effectiveType);
+        setIsTasksLoading(false);
+
+        // Serialize: startup draining runs after initial loading completes
+        await drainOutbox({
+          client,
+          operatorId: userId,
+          onTaskCreated: (created) => {
+            if (!isCancelled) applyTaskUpdate(created);
+          },
+          onTaskCompleted: (completed) => {
+            if (!isCancelled) applyTaskUpdate(completed);
+          },
+          onConflict: (_err, item) => {
+            if (!isCancelled) handleDrainConflict(_err, item);
+          },
+          onError: (err, item) => {
+            if (!isCancelled) handleDrainError(err, item);
+          },
+        }).catch(() => {});
+      })
+      .catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error ? err.message : "Failed to load data",
+          );
+          setIsTasksLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError]);
 
   // Realtime subscription for Operator domain invalidations
   useEffect(() => {
@@ -250,37 +353,89 @@ export function AuthenticatedApp({
         }
       },
       onReconnect: () => {
-        Promise.all([
-          fetchTasks(client).catch(() => null),
-          fetchLabels(client).catch(() => null),
-        ])
-          .then(([freshTasks, freshLabels]) => {
-            if (freshTasks !== null) {
-              reconcileFreshTasks(freshTasks);
-              const currentSelected = selectedTaskRef.current;
-              if (
-                currentSelected &&
-                freshTasks.some((t) => t.id === currentSelected.id)
-              ) {
-                fetchComments(client, currentSelected.id)
-                  .then((freshComments) => {
-                    setComments(freshComments);
-                  })
-                  .catch(() => {});
-              }
-            }
-            if (freshLabels !== null) {
-              setLabels(freshLabels);
-            }
-          })
-          .catch(() => {});
+        drainOutbox({
+          client,
+          operatorId: userId,
+          onTaskCreated: (created) => applyTaskUpdate(created),
+          onTaskCompleted: (completed) => applyTaskUpdate(completed),
+          onConflict: handleDrainConflict,
+          onError: handleDrainError,
+        })
+          .catch(() => {})
+          .finally(() => {
+            Promise.all([
+              fetchTasks(client).catch(() => null),
+              fetchLabels(client).catch(() => null),
+            ])
+              .then(([freshTasks, freshLabels]) => {
+                if (freshTasks !== null) {
+                  reconcileFreshTasks(freshTasks);
+                  const currentSelected = selectedTaskRef.current;
+                  if (
+                    currentSelected &&
+                    freshTasks.some((t) => t.id === currentSelected.id)
+                  ) {
+                    fetchComments(client, currentSelected.id)
+                      .then((freshComments) => {
+                        setComments(freshComments);
+                      })
+                      .catch(() => {});
+                  }
+                }
+                if (freshLabels !== null) {
+                  setLabels(freshLabels);
+                }
+              })
+              .catch(() => {});
+          });
       },
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, [client, userId, applyTaskUpdate, reconcileFreshTasks]);
+  }, [
+    client,
+    userId,
+    applyTaskUpdate,
+    reconcileFreshTasks,
+    handleDrainConflict,
+    handleDrainError,
+  ]);
+
+  // Window online event listener to drain queued outbox work on reconnect
+  useEffect(() => {
+    const handleOnline = () => {
+      drainOutbox({
+        client,
+        operatorId: userId,
+        onTaskCreated: (created) => applyTaskUpdate(created),
+        onTaskCompleted: (completed) => applyTaskUpdate(completed),
+        onConflict: handleDrainConflict,
+        onError: handleDrainError,
+      })
+        .catch(() => {})
+        .finally(() => {
+          fetchTasks(client)
+            .then((freshTasks) => {
+              reconcileFreshTasks(freshTasks);
+            })
+            .catch(() => {});
+        });
+    };
+
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [
+    client,
+    userId,
+    applyTaskUpdate,
+    handleDrainConflict,
+    handleDrainError,
+    reconcileFreshTasks,
+  ]);
 
   const selectedTaskId = selectedTask?.id;
   useEffect(() => {
@@ -310,38 +465,6 @@ export function AuthenticatedApp({
     };
   }, [client, selectedTaskId]);
 
-  const handleVersionConflict = useCallback(
-    async (taskId: string) => {
-      const [freshTasks, freshTask] = await Promise.all([
-        fetchTasks(client).catch(() => null),
-        fetchTaskById(client, taskId).catch(() => null),
-      ]);
-      if (freshTasks !== null) {
-        reconcileFreshTasks(freshTasks);
-      }
-      if (freshTask) {
-        applyTaskUpdate(freshTask);
-      } else if (freshTasks !== null) {
-        const matching = freshTasks.find((t) => t.id === taskId);
-        if (matching) {
-          applyTaskUpdate(matching);
-        } else {
-          const currentSelected = selectedTaskRef.current;
-          if (currentSelected?.id === taskId) {
-            setSelectedTask(null);
-            setComments([]);
-            setIsDetailModalOpen(false);
-          }
-        }
-      }
-      const conflictMsg =
-        "Task version conflict: modified in another session. Refetched latest state.";
-      setErrorMessage(conflictMsg);
-      return new Error(conflictMsg);
-    },
-    [client, applyTaskUpdate, reconcileFreshTasks],
-  );
-
   const handleCreateTask = useCallback(
     async (
       params: CreateTaskParams | string,
@@ -349,14 +472,76 @@ export function AuthenticatedApp({
       priority?: Priority,
     ) => {
       setErrorMessage(null);
-      const createPayload: CreateTaskParams =
+      const parsedParams: CreateTaskParams =
         typeof params === "string"
           ? { title: params, description, priority }
           : params;
-      const newTask = await createTask(client, createPayload);
-      setTasks((prev) => [newTask, ...prev]);
+
+      const trimmedTitle = parsedParams.title.trim();
+      if (trimmedTitle.length === 0) {
+        throw new Error("Task title cannot be empty");
+      }
+
+      const taskId = parsedParams.id || generateTaskId();
+      const nowIso = new Date().toISOString();
+      const optimisticTask: Task = {
+        id: taskId,
+        title: trimmedTitle,
+        description: parsedParams.description ?? null,
+        priority: parsedParams.priority ?? 4,
+        plan: parsedParams.plan ?? null,
+        parentId: parsedParams.parentId ?? null,
+        labels: parsedParams.labels ?? [],
+        completedAt: null,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        version: 1,
+      };
+
+      const outboxParams: CreateTaskParams = {
+        ...parsedParams,
+        id: taskId,
+        title: trimmedTitle,
+      };
+
+      const outboxItem: CreateOutboxItem = {
+        id: taskId,
+        type: "create",
+        task: optimisticTask,
+        params: outboxParams,
+        createdAt: nowIso,
+      };
+
+      // 1. Enter persistent Outbox before network acknowledgement
+      enqueueOutboxItem(userId, outboxItem);
+
+      // 2. Optimistic UI update
+      setTasks((prev) => {
+        if (prev.some((t) => t.id === taskId)) {
+          return prev;
+        }
+        return [optimisticTask, ...prev];
+      });
+
+      // 3. Attempt drain
+      try {
+        await drainOutbox({
+          client,
+          operatorId: userId,
+          onTaskCreated: (created) => {
+            applyTaskUpdate(created);
+          },
+          onTaskCompleted: (completed) => {
+            applyTaskUpdate(completed);
+          },
+          onConflict: handleDrainConflict,
+          onError: handleDrainError,
+        });
+      } catch {
+        // Retained in outbox on network error
+      }
     },
-    [client],
+    [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError],
   );
 
   const handleUpdateTask = useCallback(
@@ -382,21 +567,47 @@ export function AuthenticatedApp({
   const handleCompleteTask = useCallback(
     async (task: Task) => {
       setErrorMessage(null);
+      const completedAt = new Date().toISOString();
+
+      const outboxItem: CompleteOutboxItem = {
+        id: generateTaskId(),
+        type: "complete",
+        taskId: task.id,
+        expectedVersion: task.version,
+        completedAt,
+        createdAt: completedAt,
+      };
+
+      // 1. Enter persistent Outbox before network acknowledgement
+      enqueueOutboxItem(userId, outboxItem);
+
+      // 2. Optimistic local update
+      const optimisticCompletedTask: Task = {
+        ...task,
+        completedAt,
+        updatedAt: completedAt,
+      };
+      applyTaskUpdate(optimisticCompletedTask);
+
+      // 3. Attempt drain
       try {
-        const completed = await completeTask(client, task.id, task.version);
-        applyTaskUpdate(completed);
-      } catch (err) {
-        if (isVersionConflictError(err)) {
-          const conflictErr = await handleVersionConflict(task.id);
-          throw conflictErr;
-        }
-        const msg =
-          err instanceof Error ? err.message : "Failed to complete task";
-        setErrorMessage(msg);
-        throw err;
+        await drainOutbox({
+          client,
+          operatorId: userId,
+          onTaskCreated: (created) => {
+            applyTaskUpdate(created);
+          },
+          onTaskCompleted: (completed) => {
+            applyTaskUpdate(completed);
+          },
+          onConflict: handleDrainConflict,
+          onError: handleDrainError,
+        });
+      } catch {
+        // Retained in outbox on network error
       }
     },
-    [client, applyTaskUpdate, handleVersionConflict],
+    [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError],
   );
 
   const handleUncompleteTask = useCallback(
@@ -450,13 +661,12 @@ export function AuthenticatedApp({
 
   const handleCreateSubtask = useCallback(
     async (parentId: string, title: string) => {
-      const newSubtask = await createTask(client, {
+      await handleCreateTask({
         title,
         parentId,
       });
-      setTasks((prev) => [...prev, newSubtask]);
     },
-    [client],
+    [handleCreateTask],
   );
 
   const handleCreateLabel = useCallback(

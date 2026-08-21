@@ -32,6 +32,172 @@ export interface WebPushOptions {
   vapidSubject?: string;
 }
 
+export interface FcmOptions {
+  projectId?: string;
+  clientEmail?: string;
+  privateKey?: string;
+}
+
+export type NotificationDeliveryOptions = WebPushOptions & {
+  fcm?: FcmOptions;
+};
+
+const FCM_SEND_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
+const FCM_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+interface CachedFcmToken {
+  token: string;
+  expiresAtMs: number;
+}
+
+const fcmTokenCache = new Map<string, CachedFcmToken>();
+
+/** Builds the FCM v1 notification message for an Android job: Task title plus opaque routing data only. */
+export function buildFcmMessage(
+  job: LeasedJob,
+  ttlSeconds: number,
+): {
+  message: {
+    notification: { title: string };
+    data: { taskId: string; occurrenceKey: string };
+    android: {
+      priority: string;
+      ttl: string;
+      tag: string;
+    };
+  };
+} {
+  return {
+    message: {
+      notification: {
+        title: job.task_title,
+      },
+      data: {
+        taskId: job.task_id,
+        occurrenceKey: job.occurrence_key,
+      },
+      android: {
+        priority: "HIGH",
+        ttl: `${Math.max(0, Math.floor(ttlSeconds))}s`,
+        tag: job.occurrence_key,
+      },
+    },
+  };
+}
+
+/**
+ * Classifies an FCM send failure. UNREGISTERED / SENDER_ID_MISMATCH are
+ * permanent rejections that disable the endpoint; invalid requests are
+ * cancelled without disabling; quota/availability errors retry within deadline.
+ */
+export function classifyFcmSendFailure(
+  statusCode: number,
+  errorCode?: string,
+): "permanent_failure" | "cancelled" | "transient_failure" {
+  if (
+    errorCode === "UNREGISTERED" ||
+    errorCode === "SENDER_ID_MISMATCH" ||
+    isEndpointGoneStatus(statusCode)
+  ) {
+    return "permanent_failure";
+  }
+  if (isNonRetryableStatus(statusCode)) {
+    return "cancelled";
+  }
+  return "transient_failure";
+}
+
+function pemPrivateKeyToPkcs8(pem: string): Uint8Array {
+  const body = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\s+/g, "");
+  const binary = globalThis.atob(body);
+  const der = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; ++i) {
+    der[i] = binary.charCodeAt(i);
+  }
+  return der;
+}
+
+async function signFcmJwt(fcm: FcmOptions): Promise<string> {
+  const enc = new TextEncoder();
+  const header = uint8ArrayToBase64Url(
+    enc.encode(JSON.stringify({ alg: "RS256", typ: "JWT" })),
+  );
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const payload = uint8ArrayToBase64Url(
+    enc.encode(
+      JSON.stringify({
+        iss: fcm.clientEmail,
+        scope: FCM_SEND_SCOPE,
+        aud: FCM_OAUTH_TOKEN_URL,
+        iat: nowSeconds,
+        exp: nowSeconds + 3600,
+      }),
+    ),
+  );
+
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    pemPrivateKeyToPkcs8(fcm.privateKey!),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    { name: "RSASSA-PKCS1-v1_5" },
+    key,
+    enc.encode(`${header}.${payload}`),
+  );
+  return `${header}.${payload}.${uint8ArrayToBase64Url(new Uint8Array(signature))}`;
+}
+
+async function getFcmAccessToken(
+  fcm: FcmOptions,
+  fetchFn: typeof fetch,
+): Promise<string> {
+  const cacheKey = fcm.clientEmail!;
+  const cached = fcmTokenCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAtMs) {
+    return cached.token;
+  }
+
+  const assertion = await signFcmJwt(fcm);
+  const response = await fetchFn(FCM_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+    }).toString(),
+    signal: AbortSignal.timeout(10000),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `FCM OAuth token request failed with status ${response.status}`,
+    );
+  }
+
+  const body = (await response.json()) as {
+    access_token?: string;
+    expires_in?: number;
+  };
+  if (!body.access_token) {
+    throw new Error("FCM OAuth token response missing access_token");
+  }
+
+  fcmTokenCache.set(cacheKey, {
+    token: body.access_token,
+    expiresAtMs:
+      Date.now() + Math.max(60, (body.expires_in ?? 3600) - 60) * 1000,
+  });
+  return body.access_token;
+}
+
 export function base64UrlToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -326,7 +492,7 @@ export async function processNotificationJob(
   supabase: SupabaseClient,
   job: LeasedJob,
   fetchFn: typeof fetch = fetch,
-  options?: WebPushOptions,
+  options?: NotificationDeliveryOptions,
 ): Promise<{
   jobId: string;
   result: string;
@@ -364,6 +530,13 @@ export async function processNotificationJob(
   ) {
     await recordResult(supabase, job.job_id, job.lease_token, "cancelled");
     return { jobId: job.job_id, result: "cancelled" };
+  }
+
+  // Android installations deliver through FCM notification messages; the
+  // endpoint holds the Operator-bound FCM registration token and web push
+  // encryption/VAPID requirements do not apply.
+  if (job.platform === "android") {
+    return deliverFcmNotification(supabase, job, fetchFn, options?.fcm);
   }
 
   // Validate endpoint format (SSRF protection)
@@ -549,6 +722,167 @@ export async function processNotificationJob(
       `Push request failed for job ${job.job_id} to endpoint ${job.endpoint}:`,
       err,
     );
+    try {
+      await recordResult(
+        supabase,
+        job.job_id,
+        job.lease_token,
+        "transient_failure",
+      );
+    } catch (recErr) {
+      console.error(
+        `Failed to record transient failure for job ${job.job_id}:`,
+        recErr,
+      );
+      return {
+        jobId: job.job_id,
+        result: "error",
+        error: recErr instanceof Error ? recErr.message : String(recErr),
+      };
+    }
+    return { jobId: job.job_id, result: "transient_failure" };
+  }
+}
+
+async function deliverFcmNotification(
+  supabase: SupabaseClient,
+  job: LeasedJob,
+  fetchFn: typeof fetch,
+  fcm?: FcmOptions,
+): Promise<{
+  jobId: string;
+  result: string;
+  statusCode?: number;
+  error?: string;
+}> {
+  const fcmProjectId = fcm?.projectId;
+  const fcmClientEmail = fcm?.clientEmail;
+  const fcmPrivateKey = fcm?.privateKey;
+
+  if (!fcmProjectId || !fcmClientEmail || !fcmPrivateKey) {
+    console.error(
+      `Incomplete FCM configuration for job ${job.job_id}: projectId, clientEmail, and privateKey are required`,
+    );
+    await recordResult(supabase, job.job_id, job.lease_token, "cancelled");
+    return {
+      jobId: job.job_id,
+      result: "cancelled",
+      error: "Incomplete FCM configuration",
+    };
+  }
+
+  const now = Date.now();
+  const dueTime = new Date(job.interpreted_due_at).getTime();
+  const ttlSeconds = job.missed_delivery_enabled
+    ? Math.max(0, Math.floor((dueTime + 3600000 - now) / 1000))
+    : 0;
+
+  // Provider retention mirrors the web TTL contract; the notification message
+  // carries only the Task title plus opaque routing identifiers and replaces
+  // any prior display through the stable occurrence identity tag.
+  const message = buildFcmMessage(job, ttlSeconds);
+
+  let accessToken: string;
+  try {
+    accessToken = await getFcmAccessToken(fcm!, fetchFn);
+  } catch (err) {
+    console.error(
+      `Failed to obtain FCM OAuth token for job ${job.job_id}:`,
+      err,
+    );
+    try {
+      await recordResult(
+        supabase,
+        job.job_id,
+        job.lease_token,
+        "transient_failure",
+      );
+    } catch (recErr) {
+      console.error(
+        `Failed to record transient failure for job ${job.job_id}:`,
+        recErr,
+      );
+      return {
+        jobId: job.job_id,
+        result: "error",
+        error: recErr instanceof Error ? recErr.message : String(recErr),
+      };
+    }
+    return { jobId: job.job_id, result: "transient_failure" };
+  }
+
+  const sendUrl = `https://fcm.googleapis.com/v1/projects/${fcmProjectId}/messages:send`;
+
+  try {
+    const response = await fetchFn(sendUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json; UTF-8",
+      },
+      body: JSON.stringify(message),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (response.status >= 200 && response.status < 300) {
+      // Provider acceptance is recorded as delivered, but display is not proven.
+      await recordResult(
+        supabase,
+        job.job_id,
+        job.lease_token,
+        "delivered",
+        response.status,
+      );
+      return {
+        jobId: job.job_id,
+        result: "delivered",
+        statusCode: response.status,
+      };
+    }
+
+    let errorCode: string | undefined;
+    try {
+      const bodyText = await response.text();
+      const parsed = JSON.parse(bodyText) as {
+        error?: { status?: string };
+      };
+      errorCode = parsed.error?.status;
+    } catch {
+      errorCode = undefined;
+    }
+
+    const classification = classifyFcmSendFailure(response.status, errorCode);
+
+    if (classification === "permanent_failure") {
+      // Permanent provider rejection disables the endpoint and cancels its jobs.
+      await recordResult(
+        supabase,
+        job.job_id,
+        job.lease_token,
+        "permanent_failure",
+        response.status,
+      );
+      return {
+        jobId: job.job_id,
+        result: "permanent_failure",
+        statusCode: response.status,
+      };
+    }
+
+    await recordResult(
+      supabase,
+      job.job_id,
+      job.lease_token,
+      classification,
+      response.status,
+    );
+    return {
+      jobId: job.job_id,
+      result: classification,
+      statusCode: response.status,
+    };
+  } catch (err) {
+    console.error(`FCM send failed for job ${job.job_id}:`, err);
     try {
       await recordResult(
         supabase,

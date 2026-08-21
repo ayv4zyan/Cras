@@ -25,6 +25,14 @@ val supabaseAnonKey = rootEnvProps.getProperty("SUPABASE_ANON_KEY")
     ?: rootEnvProps.getProperty("VITE_SUPABASE_ANON_KEY")
     ?: defaultLocalAnonKey
 
+// Public Firebase client configuration. Server-side FCM credentials never
+// reach the client (ADR 0007); these values are the public app registration.
+val firebaseProjectId = rootEnvProps.getProperty("FIREBASE_PROJECT_ID") ?: ""
+val firebaseApplicationId = rootEnvProps.getProperty("FIREBASE_APPLICATION_ID") ?: ""
+val firebaseApiKey = rootEnvProps.getProperty("FIREBASE_API_KEY") ?: ""
+val firebaseGcmSenderId = rootEnvProps.getProperty("FIREBASE_GCM_SENDER_ID") ?: ""
+val firebaseStorageBucket = rootEnvProps.getProperty("FIREBASE_STORAGE_BUCKET") ?: ""
+
 android {
     namespace = "com.cras.app"
     compileSdk = 35
@@ -40,6 +48,11 @@ android {
 
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"$firebaseProjectId\"")
+        buildConfigField("String", "FIREBASE_APPLICATION_ID", "\"$firebaseApplicationId\"")
+        buildConfigField("String", "FIREBASE_API_KEY", "\"$firebaseApiKey\"")
+        buildConfigField("String", "FIREBASE_GCM_SENDER_ID", "\"$firebaseGcmSenderId\"")
+        buildConfigField("String", "FIREBASE_STORAGE_BUCKET", "\"$firebaseStorageBucket\"")
     }
 
     buildTypes {
@@ -82,6 +95,7 @@ dependencies {
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    implementation("com.google.firebase:firebase-messaging:25.1.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
 

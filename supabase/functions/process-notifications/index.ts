@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   processNotificationJob,
   type LeasedJob,
-  type WebPushOptions,
+  type NotificationDeliveryOptions,
 } from "../_shared/webPush.ts";
 
 export {
@@ -12,6 +12,8 @@ export {
   deriveTopic,
   encryptWebPushPayload,
   generateVapidHeader,
+  buildFcmMessage,
+  classifyFcmSendFailure,
   isEndpointGoneStatus,
   isNonRetryableStatus,
   isPermanentFailureStatus,
@@ -20,6 +22,8 @@ export {
   type LeasedJob,
   type PushPayload,
   type WebPushOptions,
+  type FcmOptions,
+  type NotificationDeliveryOptions,
 } from "../_shared/webPush.ts";
 
 declare const Deno: any;
@@ -55,10 +59,15 @@ if (typeof Deno !== "undefined" && typeof Deno.serve === "function") {
       });
     }
 
-    const vapidOptions: WebPushOptions = {
+    const vapidOptions: NotificationDeliveryOptions = {
       vapidPublicKey: Deno.env.get("VAPID_PUBLIC_KEY") || undefined,
       vapidPrivateKey: Deno.env.get("VAPID_PRIVATE_KEY") || undefined,
       vapidSubject: Deno.env.get("VAPID_SUBJECT") || undefined,
+      fcm: {
+        projectId: Deno.env.get("FCM_PROJECT_ID") || undefined,
+        clientEmail: Deno.env.get("FCM_CLIENT_EMAIL") || undefined,
+        privateKey: Deno.env.get("FCM_PRIVATE_KEY") || undefined,
+      },
     };
 
     const results = await Promise.all(

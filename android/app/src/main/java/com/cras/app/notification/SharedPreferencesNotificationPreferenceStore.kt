@@ -7,6 +7,10 @@ private const val KEY_INSTALLATION_ID = "cras_notification_installation_id"
 private const val KEY_LOCAL_ENABLED = "cras_notifications_local_enabled"
 private const val KEY_PENDING_ENDPOINT = "cras_notifications_pending_endpoint"
 
+// FCM registration tokens are opaque provider-generated strings; they can
+// never equal this reserved marker, which records an explicit token loss.
+private const val PENDING_ENDPOINT_LOSS_MARKER = "<<cras-endpoint-lost>>"
+
 class SharedPreferencesNotificationPreferenceStore(
     private val preferences: SharedPreferences
 ) : NotificationPreferenceStore {
@@ -29,13 +33,23 @@ class SharedPreferencesNotificationPreferenceStore(
         preferences.edit().putBoolean(KEY_LOCAL_ENABLED, enabled).apply()
     }
 
-    override fun getPendingEndpoint(): String? =
-        preferences.getString(KEY_PENDING_ENDPOINT, null)
+    override fun getPendingFcmTokenEvent(): PendingFcmTokenEvent? =
+        when (val stored = preferences.getString(KEY_PENDING_ENDPOINT, null)) {
+            null -> null
+            PENDING_ENDPOINT_LOSS_MARKER -> PendingFcmTokenEvent.Loss
+            else -> PendingFcmTokenEvent.Token(stored)
+        }
 
-    override fun setPendingEndpoint(endpoint: String?) {
+    override fun setPendingFcmTokenEvent(event: PendingFcmTokenEvent?) {
         preferences.edit()
             .apply {
-                if (endpoint == null) remove(KEY_PENDING_ENDPOINT) else putString(KEY_PENDING_ENDPOINT, endpoint)
+                when (event) {
+                    null -> remove(KEY_PENDING_ENDPOINT)
+                    PendingFcmTokenEvent.Loss ->
+                        putString(KEY_PENDING_ENDPOINT, PENDING_ENDPOINT_LOSS_MARKER)
+                    is PendingFcmTokenEvent.Token ->
+                        putString(KEY_PENDING_ENDPOINT, event.value)
+                }
             }
             .apply()
     }

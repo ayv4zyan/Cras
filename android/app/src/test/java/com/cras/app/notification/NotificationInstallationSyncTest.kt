@@ -4,6 +4,7 @@ import com.cras.app.auth.OperatorSession
 import com.cras.app.data.InstallationRecord
 import com.cras.app.data.InstallationService
 import com.cras.app.data.RegisterInstallationParams
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -14,6 +15,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
@@ -121,6 +123,40 @@ class NotificationInstallationSyncTest {
     }
 
     @Test
+    fun `failed disablement reports Disabled locally instead of a stale Enabled surface`() = runTest {
+        val sync = createSync()
+        sync.reconcile(sessionA)
+        assertEquals(AndroidNotificationStatus.Enabled, sync.status.value)
+
+        // The local preference is stored, but the registration fails.
+        service.registerError = IOException("offline")
+        val status = sync.setLocalEnabled(false, sessionA)
+
+        // The server could not confirm anything, but the local preference is
+        // still provable; replaying Enabled would deny the Operator's toggle.
+        assertEquals(AndroidNotificationStatus.DisabledLocally, status)
+        assertEquals(AndroidNotificationStatus.DisabledLocally, sync.status.value)
+
+        // A later successful reconciliation confirms the disabled surface.
+        service.registerError = null
+        assertEquals(AndroidNotificationStatus.DisabledLocally, sync.reconcile(sessionA))
+    }
+
+    @Test
+    fun `reconciliation failure after a permission change reports blocked instead of Enabled`() = runTest {
+        val sync = createSync()
+        sync.reconcile(sessionA)
+        assertEquals(AndroidNotificationStatus.Enabled, sync.status.value)
+
+        permissionState = PlatformPermissionState.DENIED
+        service.registerError = IOException("offline")
+
+        val status = sync.reconcile(sessionA)
+
+        assertEquals(AndroidNotificationStatus.BlockedBySystemPermission, status)
+    }
+
+    @Test
     fun `FCM token rotation keeps one installation record under a new endpoint`() = runTest {
         val sync = createSync()
         sync.reconcile(sessionA)
@@ -133,6 +169,22 @@ class NotificationInstallationSyncTest {
         assertEquals(installationId, service.registerCalls[1].params.id)
         assertEquals("fcm-token-rotated", service.registerCalls[1].params.endpoint)
         assertNotEquals(service.registerCalls[0].params.endpoint, service.registerCalls[1].params.endpoint)
+    }
+
+    @Test
+    fun `explicit token loss registers a cleared endpoint even when the provider still answers`() = runTest {
+        val sync = createSync()
+        sync.reconcile(sessionA)
+
+        // Firebase reports the registration token lost, but the provider
+        // still serves the previous token from cache.
+        sync.onFcmTokenRotated(null, sessionA)
+
+        // The explicit loss must reach the server as a cleared endpoint, not
+        // be resurrected from the provider as a stale endpoint.
+        assertEquals(PendingFcmTokenEvent.Loss, preferences.getPendingFcmTokenEvent())
+        assertNull(service.registerCalls.last().params.endpoint)
+        assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.status.value)
     }
 
     @Test
@@ -166,7 +218,10 @@ class NotificationInstallationSyncTest {
         // The server may still hold an active endpoint for this Operator, so
         // the identity needed to retry deactivation must survive.
         assertEquals(installationId, preferences.getOrCreateInstallationId())
-        assertEquals("fcm-token-initial", preferences.getPendingEndpoint())
+        assertEquals(
+            PendingFcmTokenEvent.Token("fcm-token-initial"),
+            preferences.getPendingFcmTokenEvent()
+        )
         assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.status.value)
 
         // A later retry completes sign-out and resets the installation.
@@ -175,7 +230,7 @@ class NotificationInstallationSyncTest {
 
         assertEquals(listOf(installationId), service.deactivatedIds)
         assertNotEquals(installationId, preferences.getOrCreateInstallationId())
-        assertNull(preferences.getPendingEndpoint())
+        assertNull(preferences.getPendingFcmTokenEvent())
     }
 
     @Test
@@ -190,7 +245,10 @@ class NotificationInstallationSyncTest {
         // Without a confirmed removal of the active row, the retry state
         // must survive exactly as it does for a thrown error.
         assertEquals(installationId, preferences.getOrCreateInstallationId())
-        assertEquals("fcm-token-initial", preferences.getPendingEndpoint())
+        assertEquals(
+            PendingFcmTokenEvent.Token("fcm-token-initial"),
+            preferences.getPendingFcmTokenEvent()
+        )
         assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.status.value)
 
         // A later confirmed deactivation completes sign-out and resets the installation.
@@ -198,7 +256,7 @@ class NotificationInstallationSyncTest {
         sync.deactivateForSignOut(sessionA)
 
         assertNotEquals(installationId, preferences.getOrCreateInstallationId())
-        assertNull(preferences.getPendingEndpoint())
+        assertNull(preferences.getPendingFcmTokenEvent())
     }
 
     @Test
@@ -322,7 +380,97 @@ class NotificationInstallationSyncTest {
         // it must never interleave and re-activate the signed-out installation.
         assertEquals(listOf("register", "deactivate"), events.toList())
         assertNotEquals(installationId, preferences.getOrCreateInstallationId())
-        assertNull(preferences.getPendingEndpoint())
+        assertNull(preferences.getPendingFcmTokenEvent())
+    }
+
+    @Test
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `token callback resumed after sign-out does not register a new installation`() = runTest {
+        val releaseInitialRegistration = CompletableDeferred<Unit>()
+        val registeredEndpoints = mutableListOf<String?>()
+        val deactivatedIds = mutableListOf<String>()
+        val gatingService = object : InstallationService {
+            override suspend fun registerOrUpdate(
+                session: OperatorSession,
+                params: RegisterInstallationParams
+            ): InstallationRecord {
+                registeredEndpoints.add(params.endpoint)
+                releaseInitialRegistration.await()
+                return InstallationRecord(
+                    id = params.id,
+                    platform = "android",
+                    localEnabled = params.localEnabled,
+                    permissionState = params.permissionState,
+                    endpoint = params.endpoint,
+                    isActive = true
+                )
+            }
+
+            override suspend fun deactivate(
+                session: OperatorSession,
+                installationId: String
+            ): Boolean {
+                deactivatedIds.add(installationId)
+                return true
+            }
+        }
+        val sync = NotificationInstallationSync(
+            installationService = gatingService,
+            preferences = preferences,
+            permissionProvider = { permissionState },
+            fcmTokenProvider = { fcmToken },
+            timezoneProvider = { deviceTimezone }
+        )
+
+        val installationId = preferences.getOrCreateInstallationId()
+        val initial = launch { sync.reconcile(sessionA) }
+        runCurrent()
+        // The initial reconciliation parks inside its registration, holding the mutex.
+        assertEquals(listOf<String?>(fcmToken), registeredEndpoints)
+
+        val signOut = launch { sync.deactivateForSignOut(sessionA) }
+        val lateToken = launch { sync.onFcmTokenRotated("fcm-token-late", sessionA) }
+        runCurrent()
+
+        // Sign-out queued ahead of the token callback, which captured its
+        // generation before parking and is suspended on the mutex.
+        assertEquals(1, registeredEndpoints.size)
+
+        releaseInitialRegistration.complete(Unit)
+        advanceUntilIdle()
+        initial.join()
+        signOut.join()
+        lateToken.join()
+
+        // Sign-out won: the resumed callback abandoned both its parked token
+        // and its registration instead of activating a fresh installation for
+        // a signed-out Operator.
+        assertEquals(listOf(installationId), deactivatedIds)
+        assertEquals(listOf<String?>(fcmToken), registeredEndpoints)
+        assertNull(preferences.getPendingFcmTokenEvent())
+        assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.status.value)
+    }
+
+    @Test
+    fun `registration and deactivation failures surface cancellation instead of swallowing it`() = runTest {
+        val sync = createSync()
+
+        service.registerError = CancellationException("caller cancelled")
+        try {
+            sync.reconcile(sessionA)
+            fail("CancellationException from registration must propagate")
+        } catch (_: CancellationException) {
+            // expected
+        }
+
+        service.registerError = null
+        service.deactivateError = CancellationException("caller cancelled")
+        try {
+            sync.deactivateForSignOut(sessionA)
+            fail("CancellationException from deactivation must propagate")
+        } catch (_: CancellationException) {
+            // expected
+        }
     }
 
     @Test
@@ -350,7 +498,10 @@ class NotificationInstallationSyncTest {
 
         // Service delivers a token refresh before any session exists.
         sync.onFcmTokenRotated("fcm-token-rotated", session = null)
-        assertEquals("fcm-token-rotated", preferences.getPendingEndpoint())
+        assertEquals(
+            PendingFcmTokenEvent.Token("fcm-token-rotated"),
+            preferences.getPendingFcmTokenEvent()
+        )
         assertTrue(service.registerCalls.isEmpty())
 
         val status = sync.reconcile(sessionA)
@@ -386,6 +537,7 @@ private class FakeInstallationService : InstallationService {
     val registerCalls = mutableListOf<Call>()
     val deactivatedIds = mutableListOf<String>()
     var nextRecordOverride: InstallationRecord? = null
+    var registerError: Exception? = null
     var deactivateError: Exception? = null
     var deactivateResult: Boolean = true
 
@@ -394,6 +546,7 @@ private class FakeInstallationService : InstallationService {
         params: RegisterInstallationParams
     ): InstallationRecord? {
         registerCalls.add(Call(session, params))
+        registerError?.let { throw it }
         return nextRecordOverride ?: InstallationRecord(
             id = params.id,
             platform = "android",

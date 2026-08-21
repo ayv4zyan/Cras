@@ -8,14 +8,21 @@ import com.cras.app.data.CommentService
 import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
+import com.cras.app.data.InMemoryOutboxStore
 import com.cras.app.data.InvalidationPayload
 import com.cras.app.data.LabelService
+import com.cras.app.data.OutboxDrainCallbacks
+import com.cras.app.data.OutboxDrainer
+import com.cras.app.data.OutboxItem
+import com.cras.app.data.OutboxStore
 import com.cras.app.data.RealtimeService
 import com.cras.app.data.RealtimeSubscription
 import com.cras.app.data.SettingsService
 import com.cras.app.data.TaskService
 import com.cras.app.data.UpdateLabelParams
 import com.cras.app.data.UpdateTaskParams
+import com.cras.app.data.applyOutboxToTasks
+import com.cras.app.data.isNetworkError
 import com.cras.app.domain.TimedPlanType
 import com.cras.app.domain.UpcomingDayGroup
 import com.cras.app.domain.filterCompletedTasks
@@ -38,6 +45,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
+import java.util.UUID
 
 private sealed interface QueueItem {
     val session: OperatorSession
@@ -93,6 +101,7 @@ class InboxViewModel(
     private val commentService: CommentService,
     private val settingsService: SettingsService? = null,
     private val realtimeService: RealtimeService? = null,
+    private val outboxStore: OutboxStore = InMemoryOutboxStore(),
     private val nowProvider: () -> Instant = { Instant.now() },
     private val zoneIdProvider: () -> ZoneId = { ZoneId.systemDefault() }
 ) : ViewModel() {
@@ -141,6 +150,8 @@ class InboxViewModel(
 
     private val _createLabelError = MutableStateFlow<String?>(null)
     val createLabelError: StateFlow<String?> = _createLabelError.asStateFlow()
+
+    private val outboxDrainer by lazy { OutboxDrainer(taskService, outboxStore) }
 
     private var realtimeSubscription: RealtimeSubscription? = null
     private val queue = ArrayDeque<QueueItem>()
@@ -335,9 +346,17 @@ class InboxViewModel(
     }
 
     fun reconcileFreshTasks(freshTasks: List<Task>) {
+        val currentAuth = _authState.value
+        val outbox = if (currentAuth is AuthUiState.Authenticated) {
+            outboxStore.getOutbox(currentAuth.session.operatorId)
+        } else {
+            emptyList()
+        }
+        val tasksWithOutbox = applyOutboxToTasks(freshTasks, outbox)
+
         _allTasks.update { current ->
             val prevMap = current.associateBy { it.id }
-            freshTasks.map { fresh ->
+            tasksWithOutbox.map { fresh ->
                 val existing = prevMap[fresh.id]
                 if (existing != null && existing.version > fresh.version) existing else fresh
             }
@@ -505,6 +524,59 @@ class InboxViewModel(
         }
     }
 
+    private suspend fun drainOutboxInternal(
+        session: OperatorSession,
+        onConflictError: ((String) -> Unit)? = null,
+        onGeneralError: ((String) -> Unit)? = null
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) {
+            return
+        }
+
+        outboxDrainer.drain(
+            session = session,
+            callbacks = object : OutboxDrainCallbacks {
+                private fun isSessionValid(): Boolean {
+                    val current = _authState.value
+                    return current is AuthUiState.Authenticated && current.session == session
+                }
+
+                override suspend fun onTaskCreated(task: Task) {
+                    if (!isSessionValid()) return
+                    applyTaskUpdate(task)
+                }
+
+                override suspend fun onTaskCompleted(task: Task) {
+                    if (!isSessionValid()) return
+                    applyTaskUpdate(task)
+                }
+
+                override suspend fun onConflict(error: Throwable, item: OutboxItem) {
+                    if (!isSessionValid()) return
+                    val errorMsg = error.message ?: "Task version conflict"
+                    if (item is OutboxItem.Create) {
+                        _createTaskError.value = errorMsg
+                    }
+                    onConflictError?.invoke(errorMsg)
+                    triggerLoadTasks(session)
+                }
+
+                override suspend fun onError(error: Throwable, item: OutboxItem) {
+                    if (!isSessionValid()) return
+                    val errorMsg = error.message ?: "Failed to process outbox item"
+                    if (item is OutboxItem.Create) {
+                        _allTasks.update { current -> current.filterNot { it.id == item.task.id } }
+                        recalculateViews(_allTasks.value)
+                        _createTaskError.value = errorMsg
+                    }
+                    onGeneralError?.invoke(errorMsg)
+                    triggerLoadTasks(session)
+                }
+            }
+        )
+    }
+
     private suspend fun loadTasksInternal(session: OperatorSession) {
         if (_inboxState.value !is InboxUiState.Success) {
             _inboxState.value = InboxUiState.Loading
@@ -539,12 +611,22 @@ class InboxViewModel(
             }
 
             reconcileFreshTasks(allTasksList)
+            drainOutboxInternal(session)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             val currentAuth = _authState.value
             if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) {
                 return
+            }
+            if (isNetworkError(e)) {
+                val outbox = outboxStore.getOutbox(session.operatorId)
+                if (outbox.isNotEmpty()) {
+                    val tasksWithOutbox = applyOutboxToTasks(_allTasks.value, outbox)
+                    _allTasks.value = tasksWithOutbox
+                    recalculateViews(tasksWithOutbox)
+                    return
+                }
             }
             val errorMsg = e.message ?: "Failed to load tasks"
             _inboxState.value = InboxUiState.Error(errorMsg)
@@ -704,23 +786,47 @@ class InboxViewModel(
             return
         }
 
+        val session = currentAuth.session
+        val taskId = UUID.randomUUID().toString()
+        val now = nowProvider().toString()
+
+        val optimisticTask = Task(
+            id = taskId,
+            title = trimmedTitle,
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = parentId,
+            completedAt = null,
+            createdAt = now,
+            updatedAt = now,
+            version = 1
+        )
+
+        val outboxParams = CreateTaskParams(
+            id = taskId,
+            title = trimmedTitle,
+            parentId = parentId
+        )
+
+        val outboxItem = OutboxItem.Create(
+            id = taskId,
+            task = optimisticTask,
+            params = outboxParams,
+            createdAt = now
+        )
+
+        // 1. Enter persistent Outbox before network acknowledgement
+        outboxStore.enqueue(session.operatorId, outboxItem)
+
+        // 2. Apply optimistic update to local UI state
+        applyTaskUpdate(optimisticTask)
+        onSuccess(optimisticTask)
+
+        // 3. Trigger drain
         viewModelScope.launch {
-            try {
-                val created = taskService.createTask(
-                    session = currentAuth.session,
-                    params = CreateTaskParams(
-                        title = trimmedTitle,
-                        parentId = parentId
-                    )
-                )
-                triggerLoadTasks(currentAuth.session)
-                onSuccess(created)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                val errorMsg = e.message ?: "Failed to create subtask"
-                onError(errorMsg)
-            }
+            drainOutboxInternal(session, onGeneralError = onError)
         }
     }
 
@@ -738,27 +844,55 @@ class InboxViewModel(
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) return
 
+        val session = currentAuth.session
+        val taskId = UUID.randomUUID().toString()
+        val now = nowProvider().toString()
+        val desc = description?.trim()?.ifEmpty { null }
+
+        val optimisticTask = Task(
+            id = taskId,
+            title = trimmed,
+            description = desc,
+            priority = priority,
+            plan = plan,
+            labels = labels,
+            parentId = null,
+            completedAt = null,
+            createdAt = now,
+            updatedAt = now,
+            version = 1
+        )
+
+        val outboxParams = CreateTaskParams(
+            id = taskId,
+            title = trimmed,
+            description = desc,
+            priority = priority,
+            plan = plan,
+            parentId = null,
+            labels = labels
+        )
+
+        val outboxItem = OutboxItem.Create(
+            id = taskId,
+            task = optimisticTask,
+            params = outboxParams,
+            createdAt = now
+        )
+
+        // 1. Enter persistent Outbox before network acknowledgement
+        outboxStore.enqueue(session.operatorId, outboxItem)
+
+        // 2. Apply optimistic update to local UI state
+        applyTaskUpdate(optimisticTask)
+        onSuccess()
+
+        // 3. Trigger drain
         viewModelScope.launch {
             _isCreatingTask.value = true
             _createTaskError.value = null
             try {
-                val created = taskService.createTask(
-                    session = currentAuth.session,
-                    params = CreateTaskParams(
-                        title = trimmed,
-                        description = description?.trim()?.ifEmpty { null },
-                        priority = priority,
-                        plan = plan,
-                        labels = labels
-                    )
-                )
-                applyTaskUpdate(created)
-                triggerLoadTasks(currentAuth.session)
-                onSuccess()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _createTaskError.value = e.message ?: "Failed to create task"
+                drainOutboxInternal(session)
             } finally {
                 _isCreatingTask.value = false
             }
@@ -821,13 +955,59 @@ class InboxViewModel(
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
-        val version = expectedVersion ?: _allTasks.value.find { it.id == taskId }?.version
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated) {
+            onError("Not authenticated")
+            return
+        }
+
+        val session = currentAuth.session
+        val task = _allTasks.value.find { it.id == taskId }
+        val version = expectedVersion ?: task?.version
         if (version == null) {
             onError("Task state is unavailable. Refresh and try again.")
             return
         }
-        mutateTask("Failed to complete task", onSuccess, onError) { session ->
-            taskService.completeTask(session, taskId, version, completedAt)
+
+        val alreadyQueued = outboxStore.getOutbox(session.operatorId).any {
+            it is OutboxItem.Complete && it.taskId == taskId
+        }
+        if (alreadyQueued) {
+            onSuccess()
+            return
+        }
+
+        val completedTimestamp = completedAt ?: nowProvider().toString()
+        val outboxItemId = UUID.randomUUID().toString()
+
+        val outboxItem = OutboxItem.Complete(
+            id = outboxItemId,
+            taskId = taskId,
+            expectedVersion = version,
+            completedAt = completedTimestamp,
+            createdAt = nowProvider().toString()
+        )
+
+        // 1. Enter persistent Outbox before network acknowledgement
+        outboxStore.enqueue(session.operatorId, outboxItem)
+
+        // 2. Apply optimistic update to local UI state
+        if (task != null) {
+            val updatedTask = task.copy(
+                completedAt = completedTimestamp,
+                updatedAt = completedTimestamp
+            )
+            applyTaskUpdate(updatedTask)
+        }
+        onSuccess()
+
+        // 3. Trigger drain
+        viewModelScope.launch {
+            drainOutboxInternal(
+                session = session,
+                onConflictError = onError,
+                onGeneralError = onError
+            )
         }
     }
 

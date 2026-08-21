@@ -11,9 +11,11 @@ import com.cras.app.auth.GoogleSignInResult
 import com.cras.app.auth.SharedPreferencesSessionStore
 import com.cras.app.auth.SupabaseAuthService
 import com.cras.app.config.getPublicSupabaseConfig
+import com.cras.app.data.SharedPreferencesOutboxStore
 import com.cras.app.data.SupabaseCommentService
 import com.cras.app.data.SupabaseLabelService
 import com.cras.app.data.SupabaseRealtimeService
+import com.cras.app.data.SupabaseSettingsService
 import com.cras.app.data.SupabaseTaskService
 import com.cras.app.ui.CrasApp
 import com.cras.app.ui.inbox.InboxViewModel
@@ -38,11 +40,13 @@ class MainActivity : ComponentActivity() {
         )
         val prefs = getSharedPreferences("cras_session_prefs", MODE_PRIVATE)
         val sessionStore = SharedPreferencesSessionStore(prefs)
+        val outboxStore = SharedPreferencesOutboxStore(prefs)
         val httpClient = OkHttpClient()
         val authService = SupabaseAuthService(config, sessionStore, httpClient)
         val taskService = SupabaseTaskService(config, httpClient)
         val labelService = SupabaseLabelService(config, httpClient)
         val commentService = SupabaseCommentService(config, httpClient)
+        val settingsService = SupabaseSettingsService(config, httpClient)
         val realtimeHttpClient = httpClient.newBuilder()
             .pingInterval(java.time.Duration.ofSeconds(30))
             .readTimeout(java.time.Duration.ZERO)
@@ -54,7 +58,9 @@ class MainActivity : ComponentActivity() {
             taskService = taskService,
             labelService = labelService,
             commentService = commentService,
-            realtimeService = realtimeService
+            settingsService = settingsService,
+            realtimeService = realtimeService,
+            outboxStore = outboxStore
         )
         googleAuthManager = GoogleAuthManager(this)
 

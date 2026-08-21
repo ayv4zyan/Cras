@@ -7,9 +7,11 @@ import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
 import com.cras.app.data.DeploymentConfig
+import com.cras.app.data.InMemoryOutboxStore
 import com.cras.app.data.InvalidationPayload
 import com.cras.app.data.LabelService
 import com.cras.app.data.OperatorSettings
+import com.cras.app.data.OutboxItem
 import com.cras.app.data.RealtimeService
 import com.cras.app.data.RealtimeSubscription
 import com.cras.app.data.SettingsService
@@ -151,10 +153,12 @@ class InboxViewModelTest {
         var failureMessage = "Network error"
         var onFetchTaskById: (suspend (String) -> Unit)? = null
         var onFetchTasks: (suspend () -> Unit)? = null
+        var onCreateTask: (suspend (CreateTaskParams) -> Unit)? = null
+        var fetchFilter: ((OperatorSession, List<Task>) -> List<Task>)? = null
 
         override suspend fun fetchTasks(session: OperatorSession): List<Task> {
             if (shouldFail) throw RuntimeException(failureMessage)
-            val tasks = tasksInDb.toList()
+            val tasks = fetchFilter?.invoke(session, tasksInDb) ?: tasksInDb.toList()
             onFetchTasks?.invoke()
             return tasks
         }
@@ -168,6 +172,7 @@ class InboxViewModelTest {
 
         override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
             if (shouldFail) throw RuntimeException(failureMessage)
+            onCreateTask?.invoke(params)
             if (params.parentId != null) {
                 val parent = tasksInDb.find { it.id == params.parentId }
                 if (parent != null && parent.parentId != null) {
@@ -175,8 +180,14 @@ class InboxViewModelTest {
                 }
             }
 
+            val taskId = params.id ?: UUID.randomUUID().toString()
+            val existingIndex = tasksInDb.indexOfFirst { it.id == taskId }
+            if (existingIndex != -1) {
+                return tasksInDb[existingIndex]
+            }
+
             val task = Task(
-                id = UUID.randomUUID().toString(),
+                id = taskId,
                 title = params.title.trim(),
                 description = params.description,
                 priority = params.priority,
@@ -1637,5 +1648,196 @@ class InboxViewModelTest {
         // All tasks in DB should now be present due to canonical reload
         val currentTasks = (viewModel.inboxState.value as InboxUiState.Success).tasks
         assertEquals(72, currentTasks.size)
+    }
+
+    @Test
+    fun `completeTask rejects duplicate complete when one is already queued`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val outboxStore = InMemoryOutboxStore()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val taskId = UUID.randomUUID().toString()
+        val task = Task(
+            id = taskId,
+            title = "Duplicate complete test",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-19T00:00:00Z",
+            updatedAt = "2026-08-19T00:00:00Z",
+            version = 1
+        )
+        taskService.tasksInDb.add(task)
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            outboxStore = outboxStore
+        )
+        advanceUntilIdle()
+
+        // Manually enqueue a Complete item to simulate offline queued complete
+        val outboxItem = OutboxItem.Complete(
+            id = UUID.randomUUID().toString(),
+            taskId = task.id,
+            expectedVersion = 1,
+            completedAt = "2026-08-21T10:00:00Z",
+            createdAt = "2026-08-21T10:00:00Z"
+        )
+        outboxStore.enqueue(session.operatorId, outboxItem)
+        assertEquals(1, outboxStore.getOutbox(session.operatorId).size)
+
+        var successCalled = false
+        viewModel.completeTask(
+            taskId = task.id,
+            onSuccess = { successCalled = true }
+        )
+        advanceUntilIdle()
+
+        assertTrue(successCalled)
+        assertEquals(1, outboxStore.getOutbox(session.operatorId).size)
+    }
+
+    @Test
+    fun `completion version conflict does not set createTaskError`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val outboxStore = InMemoryOutboxStore()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val taskId = UUID.randomUUID().toString()
+        val task = Task(
+            id = taskId,
+            title = "Conflict task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-19T00:00:00Z",
+            updatedAt = "2026-08-19T00:00:00Z",
+            version = 2
+        )
+        taskService.tasksInDb.add(task)
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            outboxStore = outboxStore
+        )
+        advanceUntilIdle()
+
+        var conflictError: String? = null
+        viewModel.completeTask(
+            taskId = task.id,
+            expectedVersion = 1,
+            onError = { conflictError = it }
+        )
+        advanceUntilIdle()
+
+        assertNotNull(conflictError)
+        assertTrue(conflictError!!.contains("Task version conflict"))
+        assertNull(viewModel.createTaskError.value)
+    }
+
+    @Test
+    fun `hoisted outboxDrainer serializes drains via single field mutex`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val outboxStore = InMemoryOutboxStore()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            outboxStore = outboxStore
+        )
+        advanceUntilIdle()
+
+        viewModel.createTask("Task 1")
+        viewModel.createTask("Task 2")
+        viewModel.createTask("Task 3")
+        advanceUntilIdle()
+
+        assertEquals(0, outboxStore.getOutbox(session.operatorId).size)
+        assertEquals(3, taskService.tasksInDb.size)
+    }
+
+    @Test
+    fun `outbox callbacks do not mutate ViewModel state if account changes during in-flight drain`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val outboxStore = InMemoryOutboxStore()
+
+        val sessionAlice = OperatorSession("op-alice", "alice@cras.app", "token-alice")
+        val sessionBob = OperatorSession("op-bob", "bob@cras.app", "token-bob")
+        authService.sessionFlow.value = sessionAlice
+
+        val viewModel = InboxViewModel(
+            authService = authService,
+            taskService = taskService,
+            labelService = labelService,
+            commentService = commentService,
+            outboxStore = outboxStore
+        )
+        advanceUntilIdle()
+
+        val bobTask = Task(
+            id = UUID.randomUUID().toString(),
+            title = "Bob's task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-19T00:00:00Z",
+            updatedAt = "2026-08-19T00:00:00Z",
+            version = 1
+        )
+
+        // Bob only fetches his own tasks from server
+        taskService.fetchFilter = { session, _ ->
+            if (session.operatorId == sessionBob.operatorId) listOf(bobTask) else taskService.tasksInDb
+        }
+
+        // Hook into task creation so that when Alice's task is being created on the network,
+        // the active session changes to Bob before the outbox callback runs.
+        taskService.onCreateTask = {
+            authService.sessionFlow.value = null
+            authService.sessionFlow.value = sessionBob
+        }
+
+        viewModel.createTask("Alice's in-flight task")
+        advanceUntilIdle()
+
+        // Bob should have only his own tasks in his inbox state
+        val bobInboxState = viewModel.inboxState.value
+        assertTrue(bobInboxState is InboxUiState.Success)
+        val bobTasks = (bobInboxState as InboxUiState.Success).tasks
+        assertEquals(listOf(bobTask), bobTasks)
+        assertTrue(bobTasks.none { it.title == "Alice's in-flight task" })
     }
 }

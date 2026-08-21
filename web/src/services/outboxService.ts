@@ -77,7 +77,6 @@ export function getOutbox(operatorId: string): OutboxItem[] {
           return parsed;
         }
       }
-      return [];
     }
   } catch {
     // Fall back to in-memory store

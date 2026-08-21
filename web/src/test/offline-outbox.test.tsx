@@ -579,4 +579,129 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
       expect(getOutbox(operatorUser.id)).toEqual([]);
     });
   });
+
+  it("serializes startup draining after initial load so drained created tasks are preserved in state", async () => {
+    const createdServerTask: Task = {
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      title: "Task From Startup Drain",
+      description: null,
+      priority: 4,
+      plan: null,
+      labels: [],
+      parentId: null,
+      completedAt: null,
+      createdAt: "2026-08-21T10:00:00.000Z",
+      updatedAt: "2026-08-21T10:00:00.000Z",
+      version: 1,
+    };
+
+    // Pre-populate outbox before App mounts
+    localStorage.setItem(
+      `cras_outbox_${operatorUser.id}`,
+      JSON.stringify([
+        {
+          id: "550e8400-e29b-41d4-a716-446655440001",
+          type: "create",
+          task: createdServerTask,
+          params: {
+            id: "550e8400-e29b-41d4-a716-446655440001",
+            title: "Task From Startup Drain",
+          },
+          createdAt: "2026-08-21T10:00:00.000Z",
+        },
+      ]),
+    );
+
+    const mockRpc = vi.fn().mockImplementation((fnName: string) => {
+      if (fnName === "create_task") {
+        return Promise.resolve({ data: createdServerTask, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    // Initial fetchTasks resolves with empty list (from before drain executed)
+    const mockClient = createStandardMockClient({
+      rpcHandler: mockRpc,
+      tasksProvider: () => Promise.resolve({ data: [], error: null }),
+    });
+
+    render(
+      <AuthProvider client={mockClient}>
+        <CrasApp client={mockClient} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Task From Startup Drain")).toBeInTheDocument();
+      expect(mockRpc).toHaveBeenCalledWith("create_task", expect.anything());
+      expect(getOutbox(operatorUser.id)).toEqual([]);
+    });
+  });
+
+  it("removes optimistic task and displays error message on permanent startup create drain failure", async () => {
+    const failedCreateTask: Task = {
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      title: "Rejected Create Task",
+      description: null,
+      priority: 4,
+      plan: null,
+      labels: [],
+      parentId: null,
+      completedAt: null,
+      createdAt: "2026-08-21T10:00:00.000Z",
+      updatedAt: "2026-08-21T10:00:00.000Z",
+      version: 1,
+    };
+
+    localStorage.setItem(
+      `cras_outbox_${operatorUser.id}`,
+      JSON.stringify([
+        {
+          id: "550e8400-e29b-41d4-a716-446655440001",
+          type: "create",
+          task: failedCreateTask,
+          params: {
+            id: "550e8400-e29b-41d4-a716-446655440001",
+            title: "Rejected Create Task",
+          },
+          createdAt: "2026-08-21T10:00:00.000Z",
+        },
+      ]),
+    );
+
+    // Non-network permanent rejection (e.g. permission or policy violation)
+    const mockRpc = vi.fn().mockImplementation((fnName: string) => {
+      if (fnName === "create_task") {
+        return Promise.resolve({
+          data: null,
+          error: {
+            code: "42501",
+            message: "Permission denied for create_task",
+          },
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const mockClient = createStandardMockClient({
+      rpcHandler: mockRpc,
+      tasksProvider: () => Promise.resolve({ data: [], error: null }),
+    });
+
+    render(
+      <AuthProvider client={mockClient}>
+        <CrasApp client={mockClient} />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/permission denied for create_task/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("Rejected Create Task"),
+      ).not.toBeInTheDocument();
+      expect(getOutbox(operatorUser.id)).toEqual([]);
+    });
+  });
 });

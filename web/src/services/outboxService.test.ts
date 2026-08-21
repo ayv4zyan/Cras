@@ -327,4 +327,67 @@ describe("OutboxService", () => {
     expect(onError).toHaveBeenCalled();
     expect(getOutbox(operatorId)).toEqual([]);
   }, 2000);
+
+  it("falls back to in-memory store when localStorage setItem fails", () => {
+    const setItemSpy = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("QuotaExceededError");
+      });
+
+    const createItem: CreateOutboxItem = {
+      id: "task-mem-only",
+      type: "create",
+      task: {
+        id: "task-mem-only",
+        title: "In-Memory Fallback Task",
+        description: null,
+        priority: 4,
+        plan: null,
+        labels: [],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-21T10:00:00.000Z",
+        updatedAt: "2026-08-21T10:00:00.000Z",
+        version: 1,
+      },
+      params: { id: "task-mem-only", title: "In-Memory Fallback Task" },
+      createdAt: "2026-08-21T10:00:00.000Z",
+    };
+
+    enqueueOutboxItem(operatorId, createItem);
+    expect(getOutbox(operatorId)).toEqual([createItem]);
+
+    setItemSpy.mockRestore();
+  });
+
+  it("falls back to in-memory store when localStorage has corrupted non-array content", () => {
+    localStorage.setItem(`cras_outbox_${operatorId}`, '{"not":"an array"}');
+
+    const createItem: CreateOutboxItem = {
+      id: "task-mem-2",
+      type: "create",
+      task: {
+        id: "task-mem-2",
+        title: "Corrupt Fallback Task",
+        description: null,
+        priority: 4,
+        plan: null,
+        labels: [],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-21T10:00:00.000Z",
+        updatedAt: "2026-08-21T10:00:00.000Z",
+        version: 1,
+      },
+      params: { id: "task-mem-2", title: "Corrupt Fallback Task" },
+      createdAt: "2026-08-21T10:00:00.000Z",
+    };
+
+    // saveOutbox writes to inMemoryOutbox too
+    enqueueOutboxItem(operatorId, createItem);
+    // Overwrite localStorage back to corrupt non-array JSON to test reading
+    localStorage.setItem(`cras_outbox_${operatorId}`, '{"not":"an array"}');
+    expect(getOutbox(operatorId)).toEqual([createItem]);
+  });
 });

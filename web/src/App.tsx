@@ -54,6 +54,7 @@ import {
   generateTaskId,
   type CreateOutboxItem,
   type CompleteOutboxItem,
+  type OutboxItem,
 } from "./services/outboxService";
 import { subscribeToInvalidations } from "./services/realtimeService";
 import type { TimedPlanType } from "./services/temporalService";
@@ -103,69 +104,6 @@ export function AuthenticatedApp({
   useEffect(() => {
     selectedTaskRef.current = selectedTask;
   }, [selectedTask]);
-
-  useEffect(() => {
-    let isCancelled = false;
-
-    setTasks([]);
-    setLabels([]);
-    setSelectedTask(null);
-    setIsDetailModalOpen(false);
-    setComments([]);
-    setErrorMessage(null);
-
-    setIsTasksLoading(true);
-    Promise.all([
-      fetchTasks(client).catch((err: unknown) => {
-        if (!isCancelled) {
-          setErrorMessage(
-            err instanceof Error
-              ? `Failed to load tasks: ${err.message}`
-              : "Failed to load tasks",
-          );
-        }
-        return [] as Task[];
-      }),
-      fetchLabels(client).catch((err: unknown) => {
-        if (!isCancelled) {
-          setErrorMessage(
-            err instanceof Error
-              ? `Failed to load labels: ${err.message}`
-              : "Failed to load labels",
-          );
-        }
-        return [] as Label[];
-      }),
-      fetchEffectiveTimedPlanType(client).catch(() =>
-        getCachedEffectiveTimedPlanType(),
-      ),
-    ])
-      .then(([allTasks, allLabels, effectiveType]) => {
-        if (!isCancelled) {
-          const outbox = getOutbox(userId);
-          const tasksWithOutbox = applyOutboxToTasks(allTasks, outbox);
-          setTasks(tasksWithOutbox);
-          setLabels(allLabels);
-          setEffectiveTimedPlanType(effectiveType);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!isCancelled) {
-          setErrorMessage(
-            err instanceof Error ? err.message : "Failed to load data",
-          );
-        }
-      })
-      .finally(() => {
-        if (!isCancelled) {
-          setIsTasksLoading(false);
-        }
-      });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [userId, client]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
     setTasks((prev) => {
@@ -258,20 +196,113 @@ export function AuthenticatedApp({
     [client, applyTaskUpdate, reconcileFreshTasks],
   );
 
-  // Drain persistent outbox on startup
+  const handleDrainConflict = useCallback(
+    async (_err: unknown, item: OutboxItem) => {
+      if (item.type === "complete") {
+        await handleVersionConflict(item.taskId);
+      }
+    },
+    [handleVersionConflict],
+  );
+
+  const handleDrainError = useCallback(
+    async (err: unknown, item: OutboxItem) => {
+      if (item.type === "create") {
+        setTasks((prev) => prev.filter((t) => t.id !== item.task.id));
+        setSelectedTask((prev) => (prev?.id === item.task.id ? null : prev));
+      } else if (item.type === "complete") {
+        await handleVersionConflict(item.taskId);
+      }
+      setErrorMessage(
+        err instanceof Error
+          ? err.message
+          : item.type === "create"
+            ? "Failed to create task"
+            : "Failed to complete task",
+      );
+    },
+    [handleVersionConflict],
+  );
+
   useEffect(() => {
-    drainOutbox({
-      client,
-      operatorId: userId,
-      onTaskCreated: (created) => applyTaskUpdate(created),
-      onTaskCompleted: (completed) => applyTaskUpdate(completed),
-      onConflict: (_err, item) => {
-        if (item.type === "complete") {
-          handleVersionConflict(item.taskId);
+    let isCancelled = false;
+
+    setTasks([]);
+    setLabels([]);
+    setSelectedTask(null);
+    setIsDetailModalOpen(false);
+    setComments([]);
+    setErrorMessage(null);
+
+    setIsTasksLoading(true);
+    Promise.all([
+      fetchTasks(client).catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error
+              ? `Failed to load tasks: ${err.message}`
+              : "Failed to load tasks",
+          );
         }
-      },
-    }).catch(() => {});
-  }, [userId, client, applyTaskUpdate, handleVersionConflict]);
+        return [] as Task[];
+      }),
+      fetchLabels(client).catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error
+              ? `Failed to load labels: ${err.message}`
+              : "Failed to load labels",
+          );
+        }
+        return [] as Label[];
+      }),
+      fetchEffectiveTimedPlanType(client).catch(() =>
+        getCachedEffectiveTimedPlanType(),
+      ),
+    ])
+      .then(async ([allTasks, allLabels, effectiveType]) => {
+        if (isCancelled) return;
+        const outbox = getOutbox(userId);
+        const tasksWithOutbox = applyOutboxToTasks(allTasks, outbox);
+        setTasks(tasksWithOutbox);
+        setLabels(allLabels);
+        setEffectiveTimedPlanType(effectiveType);
+
+        // Serialize: startup draining runs after initial loading completes
+        await drainOutbox({
+          client,
+          operatorId: userId,
+          onTaskCreated: (created) => {
+            if (!isCancelled) applyTaskUpdate(created);
+          },
+          onTaskCompleted: (completed) => {
+            if (!isCancelled) applyTaskUpdate(completed);
+          },
+          onConflict: (_err, item) => {
+            if (!isCancelled) handleDrainConflict(_err, item);
+          },
+          onError: (err, item) => {
+            if (!isCancelled) handleDrainError(err, item);
+          },
+        }).catch(() => {});
+      })
+      .catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error ? err.message : "Failed to load data",
+          );
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsTasksLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError]);
 
   // Realtime subscription for Operator domain invalidations
   useEffect(() => {
@@ -330,11 +361,8 @@ export function AuthenticatedApp({
           operatorId: userId,
           onTaskCreated: (created) => applyTaskUpdate(created),
           onTaskCompleted: (completed) => applyTaskUpdate(completed),
-          onConflict: (_err, item) => {
-            if (item.type === "complete") {
-              handleVersionConflict(item.taskId);
-            }
-          },
+          onConflict: handleDrainConflict,
+          onError: handleDrainError,
         })
           .catch(() => {})
           .finally(() => {
@@ -374,7 +402,8 @@ export function AuthenticatedApp({
     userId,
     applyTaskUpdate,
     reconcileFreshTasks,
-    handleVersionConflict,
+    handleDrainConflict,
+    handleDrainError,
   ]);
 
   // Window online event listener to drain queued outbox work on reconnect
@@ -385,11 +414,8 @@ export function AuthenticatedApp({
         operatorId: userId,
         onTaskCreated: (created) => applyTaskUpdate(created),
         onTaskCompleted: (completed) => applyTaskUpdate(completed),
-        onConflict: (_err, item) => {
-          if (item.type === "complete") {
-            handleVersionConflict(item.taskId);
-          }
-        },
+        onConflict: handleDrainConflict,
+        onError: handleDrainError,
       })
         .catch(() => {})
         .finally(() => {
@@ -409,7 +435,8 @@ export function AuthenticatedApp({
     client,
     userId,
     applyTaskUpdate,
-    handleVersionConflict,
+    handleDrainConflict,
+    handleDrainError,
     reconcileFreshTasks,
   ]);
 
@@ -507,25 +534,17 @@ export function AuthenticatedApp({
           onTaskCreated: (created) => {
             applyTaskUpdate(created);
           },
-          onConflict: (_err, item) => {
-            if (item.type === "complete") {
-              handleVersionConflict(item.taskId);
-            }
+          onTaskCompleted: (completed) => {
+            applyTaskUpdate(completed);
           },
-          onError: (err, item) => {
-            if (item.type === "create" && item.task.id === taskId) {
-              setTasks((prev) => prev.filter((t) => t.id !== taskId));
-            }
-            setErrorMessage(
-              err instanceof Error ? err.message : "Failed to create task",
-            );
-          },
+          onConflict: handleDrainConflict,
+          onError: handleDrainError,
         });
       } catch {
         // Retained in outbox on network error
       }
     },
-    [userId, client, applyTaskUpdate, handleVersionConflict],
+    [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError],
   );
 
   const handleUpdateTask = useCallback(
@@ -578,19 +597,14 @@ export function AuthenticatedApp({
         await drainOutbox({
           client,
           operatorId: userId,
+          onTaskCreated: (created) => {
+            applyTaskUpdate(created);
+          },
           onTaskCompleted: (completed) => {
             applyTaskUpdate(completed);
           },
-          onConflict: async (_err, item) => {
-            if (item.type === "complete") {
-              await handleVersionConflict(item.taskId);
-            }
-          },
-          onError: (err) => {
-            setErrorMessage(
-              err instanceof Error ? err.message : "Failed to complete task",
-            );
-          },
+          onConflict: handleDrainConflict,
+          onError: handleDrainError,
         });
       } catch (err) {
         if (isVersionConflictError(err)) {
@@ -598,7 +612,14 @@ export function AuthenticatedApp({
         }
       }
     },
-    [userId, client, applyTaskUpdate, handleVersionConflict],
+    [
+      userId,
+      client,
+      applyTaskUpdate,
+      handleDrainConflict,
+      handleDrainError,
+      handleVersionConflict,
+    ],
   );
 
   const handleUncompleteTask = useCallback(

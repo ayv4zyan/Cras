@@ -6,6 +6,8 @@ import com.cras.app.data.RegisterInstallationParams
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 /**
@@ -109,52 +111,58 @@ class NotificationInstallationSync(
     private val _status = MutableStateFlow(AndroidNotificationStatus.EndpointUnavailable)
     val status: StateFlow<AndroidNotificationStatus> = _status.asStateFlow()
 
+    // Authentication, resume, and token rotation can all trigger
+    // reconciliation at once; serializing them keeps the final registration
+    // on the most recently observed FCM token.
+    private val reconcileMutex = Mutex()
+
     /**
      * Reconciles local enablement, platform permission, FCM endpoint, and the
      * observed Installation timezone against the server. Returns the resulting
      * status surface.
      */
-    suspend fun reconcile(session: OperatorSession): AndroidNotificationStatus {
-        val installationId = preferences.getOrCreateInstallationId()
-        val localEnabled = preferences.isLocalNotificationsEnabled()
-        val permission = permissionProvider()
-        // The most recently observed FCM token wins; the provider is consulted
-        // only before any explicit token event has been parked.
-        val token = preferences.getPendingEndpoint() ?: fcmTokenProvider()
-        if (token != null) {
-            preferences.setPendingEndpoint(token)
-        }
-        val timezone = timezoneProvider()
+    suspend fun reconcile(session: OperatorSession): AndroidNotificationStatus =
+        reconcileMutex.withLock {
+            val installationId = preferences.getOrCreateInstallationId()
+            val localEnabled = preferences.isLocalNotificationsEnabled()
+            val permission = permissionProvider()
+            // The most recently observed FCM token wins; the provider is consulted
+            // only before any explicit token event has been parked.
+            val token = preferences.getPendingEndpoint() ?: fcmTokenProvider()
+            if (token != null) {
+                preferences.setPendingEndpoint(token)
+            }
+            val timezone = timezoneProvider()
 
-        val record = runCatching {
-            installationService.registerOrUpdate(
-                session,
-                RegisterInstallationParams(
-                    id = installationId,
-                    localEnabled = localEnabled,
-                    permissionState = permission.toWireValue(),
-                    endpoint = token,
-                    installationTimezone = timezone
+            val record = runCatching {
+                installationService.registerOrUpdate(
+                    session,
+                    RegisterInstallationParams(
+                        id = installationId,
+                        localEnabled = localEnabled,
+                        permissionState = permission.toWireValue(),
+                        endpoint = token,
+                        installationTimezone = timezone
+                    )
                 )
-            )
-        }.getOrNull()
+            }.getOrNull()
 
-        if (record == null) {
-            // Reconciliation failed; retain the current surface rather than
-            // claiming a state that could not be verified.
-            return _status.value
+            if (record == null) {
+                // Reconciliation failed; retain the current surface rather than
+                // claiming a state that could not be verified.
+                return@withLock _status.value
+            }
+
+            // A permanent provider rejection deactivates the installation server-side;
+            // reflect that instead of trusting purely local observations.
+            val hasLiveEndpoint =
+                token != null && record.isActive != false && record.endpoint != null
+
+            val newStatus =
+                deriveAndroidInstallationStatus(localEnabled, permission, hasLiveEndpoint)
+            _status.value = newStatus
+            newStatus
         }
-
-        // A permanent provider rejection deactivates the installation server-side;
-        // reflect that instead of trusting purely local observations.
-        val hasLiveEndpoint =
-            token != null && record.isActive != false && record.endpoint != null
-
-        val newStatus =
-            deriveAndroidInstallationStatus(localEnabled, permission, hasLiveEndpoint)
-        _status.value = newStatus
-        return newStatus
-    }
 
     /**
      * Called when Firebase issues a (possibly rotated) registration token.
@@ -188,14 +196,21 @@ class NotificationInstallationSync(
     /**
      * Sign-out immediately disables the Operator-bound installation and resets
      * the stored identity so another Operator on this device binds separately.
+     * A failed deactivation keeps the identity and parked endpoint so sign-out
+     * can be retried instead of stranding an active registration server-side.
      */
     suspend fun deactivateForSignOut(session: OperatorSession) {
         val installationId = preferences.getOrCreateInstallationId()
-        runCatching {
+        val deactivated = try {
             installationService.deactivate(session, installationId)
+        } catch (_: Exception) {
+            null
+        }
+        _status.value = AndroidNotificationStatus.EndpointUnavailable
+        if (deactivated == null) {
+            return
         }
         preferences.clearInstallationId()
         preferences.setPendingEndpoint(null)
-        _status.value = AndroidNotificationStatus.EndpointUnavailable
     }
 }

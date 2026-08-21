@@ -2,9 +2,10 @@
 --
 -- Android installations bind an Operator-bound FCM registration token as
 -- their endpoint (ADR 0007). Registration tokens are opaque strings, not
--- HTTPS URLs, so register_or_update_installation now enforces the HTTPS
--- endpoint format only for web push subscriptions. Server credentials stay
--- in Edge Function secrets; clients only ever hold public configuration.
+-- HTTPS URLs, so register_or_update_installation accepts them without the
+-- Web Push origin policy applied to browser subscription URLs. Server
+-- credentials stay in Edge Function secrets; clients only ever hold public
+-- configuration.
 
 CREATE OR REPLACE FUNCTION api.register_or_update_installation(
     p_id UUID DEFAULT NULL,
@@ -26,15 +27,28 @@ AS $$
 DECLARE
     v_inst public.installations;
     v_inst_id UUID;
+    v_endpoint_host TEXT;
 BEGIN
     IF p_platform NOT IN ('web', 'android') THEN
         RAISE EXCEPTION 'Invalid platform: %', p_platform;
     END IF;
 
-    -- Web Push endpoints must be HTTPS capability URLs (SSRF guard).
-    -- Android endpoints are opaque FCM registration tokens.
-    IF p_platform = 'web' AND p_endpoint IS NOT NULL AND p_endpoint !~ '^https://[A-Za-z0-9.-]+(/.*)?$' THEN
-        RAISE EXCEPTION 'Invalid push endpoint URL: must be HTTPS';
+    -- Web Push endpoints must be HTTPS capability URLs on a supported push
+    -- service origin; Android endpoints are opaque FCM registration tokens.
+    -- Pinning the origin narrows the destinations the Notification worker can
+    -- be pointed at, but it is not a complete SSRF defense: DNS resolution
+    -- and redirect targets remain the outbound client's responsibility.
+    IF p_platform = 'web' AND p_endpoint IS NOT NULL THEN
+        v_endpoint_host := substring(p_endpoint FROM '^https://([^/?#]+)');
+        IF v_endpoint_host IS NULL
+           OR position('@' IN v_endpoint_host) > 0
+           OR v_endpoint_host NOT IN (
+               'fcm.googleapis.com',
+               'updates.push.services.mozilla.com',
+               'web.push.apple.com'
+           ) THEN
+            RAISE EXCEPTION 'Push endpoint origin is not a supported Web Push service';
+        END IF;
     END IF;
 
     IF p_endpoint IS NOT NULL AND btrim(p_endpoint) = '' THEN

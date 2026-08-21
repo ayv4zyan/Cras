@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.cras.app.BuildConfig
@@ -19,6 +20,10 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 const val NOTIFICATION_CHANNEL_ID = "cras_task_notifications"
+
+/** Opaque routing data carried by a displayed Task notification's tap intent. */
+const val EXTRA_TASK_ID = "cras.extra.TASK_ID"
+const val EXTRA_OCCURRENCE_KEY = "cras.extra.OCCURRENCE_KEY"
 
 /**
  * Process-wide relay for FCM registration tokens issued by
@@ -88,11 +93,23 @@ object CrasNotifications {
      * Tap-to-open only.
      */
     fun showTaskNotification(context: Context, title: String, taskId: String, occurrenceKey: String) {
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            ?: Intent()
+        val launchIntent = (
+            context.packageManager.getLaunchIntentForPackage(context.packageName)
+                ?: Intent()
+            ).apply {
+            // A unique data URI gives each PendingIntent its own identity so
+            // occurrences cannot overwrite one another's routing extras.
+            data = Uri.Builder()
+                .scheme("cras")
+                .authority("notification")
+                .appendPath(occurrenceKey)
+                .build()
+            putExtra(EXTRA_TASK_ID, taskId)
+            putExtra(EXTRA_OCCURRENCE_KEY, occurrenceKey)
+        }
         val contentIntent = PendingIntent.getActivity(
             context,
-            taskId.hashCode(),
+            occurrenceKey.hashCode(),
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

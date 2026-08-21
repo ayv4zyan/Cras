@@ -2,6 +2,8 @@ package com.cras.app.data
 
 import com.cras.app.auth.OperatorSession
 import com.cras.app.config.PublicSupabaseConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -51,7 +53,7 @@ class SupabaseInstallationService(
     override suspend fun registerOrUpdate(
         session: OperatorSession,
         params: RegisterInstallationParams
-    ): InstallationRecord? {
+    ): InstallationRecord? = withContext(Dispatchers.IO) {
         val endpoint = "${config.url}/rest/v1/rpc/register_or_update_installation"
 
         val bodyObject = buildJsonObject {
@@ -67,7 +69,9 @@ class SupabaseInstallationService(
             put("p_p256dh", kotlinx.serialization.json.JsonNull)
             put("p_auth", kotlinx.serialization.json.JsonNull)
             put("p_installation_timezone", params.installationTimezone)
-            put("p_clear_subscription", false)
+            // A lost registration token must clear the persisted endpoint
+            // server-side instead of leaving a stale target in place.
+            put("p_clear_subscription", params.endpoint == null)
         }
 
         val request = Request.Builder()
@@ -85,17 +89,21 @@ class SupabaseInstallationService(
                 throw IOException("Failed to register installation: ${resp.code} $responseBody")
             }
             if (responseBody.isBlank() || responseBody.trim() == "null") {
-                return null
-            }
-            return try {
-                json.decodeFromString<InstallationRecord>(responseBody)
-            } catch (_: Exception) {
                 null
+            } else {
+                try {
+                    json.decodeFromString<InstallationRecord>(responseBody)
+                } catch (_: Exception) {
+                    null
+                }
             }
         }
     }
 
-    override suspend fun deactivate(session: OperatorSession, installationId: String): Boolean {
+    override suspend fun deactivate(
+        session: OperatorSession,
+        installationId: String
+    ): Boolean = withContext(Dispatchers.IO) {
         val endpoint = "${config.url}/rest/v1/rpc/deactivate_installation"
 
         val bodyObject = buildJsonObject {
@@ -116,7 +124,7 @@ class SupabaseInstallationService(
             if (!resp.isSuccessful) {
                 throw IOException("Failed to deactivate installation: ${resp.code} $responseBody")
             }
-            return responseBody.trim() == "true"
+            responseBody.trim() == "true"
         }
     }
 }

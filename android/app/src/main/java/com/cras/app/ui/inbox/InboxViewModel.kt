@@ -142,6 +142,8 @@ class InboxViewModel(
     private val _selectedTask = MutableStateFlow<Task?>(null)
     val selectedTask: StateFlow<Task?> = _selectedTask.asStateFlow()
 
+    private var routedTaskId: String? = null
+
     private val _isCreatingTask = MutableStateFlow(false)
     val isCreatingTask: StateFlow<Boolean> = _isCreatingTask.asStateFlow()
 
@@ -253,6 +255,28 @@ class InboxViewModel(
 
     fun selectTask(task: Task?) {
         _selectedTask.value = task
+    }
+
+    /**
+     * Opens the Task tapped through an Android Notification. When its data has
+     * not arrived yet, the identity is retained and applied at the next
+     * reconciliation.
+     */
+    fun focusRoutedTask(taskId: String) {
+        val match = _allTasks.value.firstOrNull { it.id == taskId }
+        if (match != null) {
+            routedTaskId = null
+            _selectedTask.value = match
+        } else {
+            routedTaskId = taskId
+        }
+    }
+
+    private fun consumePendingRoutedTask() {
+        val pendingId = routedTaskId ?: return
+        val match = _allTasks.value.firstOrNull { it.id == pendingId } ?: return
+        routedTaskId = null
+        _selectedTask.value = match
     }
 
     fun signInWithGoogleIdToken(idToken: String, nonce: String? = null) {
@@ -425,6 +449,7 @@ class InboxViewModel(
         if (previousSelected != null && _selectedTask.value == null) {
             _comments.value = emptyList()
         }
+        consumePendingRoutedTask()
     }
 
     private fun handleInvalidationEvent(session: OperatorSession, event: InvalidationPayload) {

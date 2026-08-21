@@ -106,6 +106,13 @@ describe("FCM delivery for Android installations", () => {
       expect(JSON.stringify(message)).not.toContain("roadmap team notes");
     });
 
+    it("targets the installation's FCM registration token at the message top level", () => {
+      const message = buildFcmMessage(androidJob, 0);
+      expect(message.message.token).toBe(
+        "fDp5BeOvT9G-registration-token-opaque-value",
+      );
+    });
+
     it("uses the stable occurrence identity as the Android notification tag", () => {
       const message = buildFcmMessage(androidJob, 0);
       expect(message.message.android.tag).toBe("instant:2026-08-21T18:00:00Z");
@@ -146,6 +153,23 @@ describe("FCM delivery for Android installations", () => {
       expect(classifyFcmSendFailure(400, "INVALID_ARGUMENT")).toBe("cancelled");
     });
 
+    it("does not disable endpoints for 404s lacking the UNREGISTERED detail", () => {
+      // A bare or wrong-project 404 must not deactivate installations.
+      expect(classifyFcmSendFailure(404)).toBe("transient_failure");
+      expect(classifyFcmSendFailure(404, "NOT_FOUND")).toBe(
+        "transient_failure",
+      );
+      expect(classifyFcmSendFailure(404, "INTERNAL")).toBe("transient_failure");
+      expect(classifyFcmSendFailure(410)).toBe("transient_failure");
+    });
+
+    it("treats an OAuth access token rejection as transient", () => {
+      expect(classifyFcmSendFailure(401)).toBe("transient_failure");
+      expect(classifyFcmSendFailure(401, "UNAUTHENTICATED")).toBe(
+        "transient_failure",
+      );
+    });
+
     it("treats quota, availability, and unknown server errors as transient", () => {
       expect(classifyFcmSendFailure(429, "QUOTA_EXCEEDED")).toBe(
         "transient_failure",
@@ -160,13 +184,19 @@ describe("FCM delivery for Android installations", () => {
 
   describe("processNotificationJob dispatch", () => {
     it("delivers an FCM notification message without web push keys or HTTPS endpoints", async () => {
+      // A unique service account keeps the fetch-count assertion independent
+      // of the module-global token cache and test order.
+      const isolatedOptions = {
+        ...fcmOptions,
+        clientEmail: `dispatch-test-${Date.now()}@cras-test-project.iam.gserviceaccount.com`,
+      };
       const mockFetch = fcmFetchMock({ status: 200 });
 
       const result = await processNotificationJob(
         mockSupabase,
         androidJob,
         mockFetch as unknown as typeof fetch,
-        { fcm: fcmOptions },
+        { fcm: isolatedOptions },
       );
 
       expect(result.result).toBe("delivered");
@@ -180,6 +210,9 @@ describe("FCM delivery for Android installations", () => {
       expect(sendInit.headers.Authorization).toMatch(/^Bearer .+$/);
 
       const body = JSON.parse(sendInit.body);
+      expect(body.message.token).toBe(
+        "fDp5BeOvT9G-registration-token-opaque-value",
+      );
       expect(body.message.notification.title).toBe("Review quarterly roadmap");
       expect(body.message.data.taskId).toBe("task-456");
       expect(body.message.data.occurrenceKey).toBe(
@@ -257,6 +290,71 @@ describe("FCM delivery for Android installations", () => {
       );
     });
 
+    it("shares one in-flight OAuth exchange across concurrently processed jobs", async () => {
+      const isolatedOptions = {
+        ...fcmOptions,
+        clientEmail: `dedup-test-${Date.now()}@cras-test-project.iam.gserviceaccount.com`,
+      };
+      const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url === "https://oauth2.googleapis.com/token") {
+          return {
+            status: 200,
+            ok: true,
+            text: async () =>
+              JSON.stringify({
+                access_token: "ya29.shared-token",
+                expires_in: 3600,
+              }),
+            json: async () => ({
+              access_token: "ya29.shared-token",
+              expires_in: 3600,
+            }),
+          };
+        }
+        return { status: 200, ok: true, text: async () => "" };
+      });
+
+      await Promise.all(
+        [0, 1, 2, 3, 4].map((index) =>
+          processNotificationJob(
+            mockSupabase,
+            {
+              ...androidJob,
+              job_id: `job-android-${index}`,
+              lease_token: `lease-${index}`,
+            },
+            mockFetch as unknown as typeof fetch,
+            { fcm: isolatedOptions },
+          ),
+        ),
+      );
+
+      const tokenCalls = mockFetch.mock.calls.filter(
+        ([url]) => url === "https://oauth2.googleapis.com/token",
+      );
+      expect(tokenCalls.length).toBe(1);
+    });
+
+    it("accepts service-account private keys stored with escaped newlines", async () => {
+      // Secrets copied from the service-account JSON keep literal \n escape
+      // sequences; key parsing must normalize them before base64 decoding.
+      const isolatedOptions = {
+        ...fcmOptions,
+        clientEmail: `escaped-pem-test-${Date.now()}@cras-test-project.iam.gserviceaccount.com`,
+        privateKey: fcmOptions.privateKey.replace(/\n/g, "\\n"),
+      };
+      const mockFetch = fcmFetchMock({ status: 200 });
+
+      const result = await processNotificationJob(
+        mockSupabase,
+        androidJob,
+        mockFetch as unknown as typeof fetch,
+        { fcm: isolatedOptions },
+      );
+
+      expect(result.result).toBe("delivered");
+    });
+
     it("records provider acceptance as delivered even though display is not proven", async () => {
       const mockFetch = fcmFetchMock({ status: 200 });
 
@@ -278,9 +376,23 @@ describe("FCM delivery for Android installations", () => {
     });
 
     it("permanently rejects unregistered tokens so the endpoint is disabled and pending jobs cancelled", async () => {
+      // v1 reports unregistered tokens as 404 NOT_FOUND whose details carry
+      // the FcmError code, not as a bare transport status.
       const mockFetch = fcmFetchMock({
         status: 404,
-        body: { error: { code: 404, status: "UNREGISTERED" } },
+        body: {
+          error: {
+            code: 404,
+            message: "Requested entity was not found.",
+            status: "NOT_FOUND",
+            details: [
+              {
+                "@type": "type.googleapis.com/google.firebase.fcm.v1.FcmError",
+                errorCode: "UNREGISTERED",
+              },
+            ],
+          },
+        },
       });
 
       const result = await processNotificationJob(
@@ -298,6 +410,135 @@ describe("FCM delivery for Android installations", () => {
         p_result: "permanent_failure",
         p_status_code: 404,
       });
+    });
+
+    it("treats a 404 from a wrong project id as transient instead of disabling installations", async () => {
+      const mockFetch = fcmFetchMock({
+        status: 404,
+        body: {
+          error: {
+            code: 404,
+            message: "Requested entity was not found.",
+            status: "NOT_FOUND",
+          },
+        },
+      });
+
+      const result = await processNotificationJob(
+        mockSupabase,
+        androidJob,
+        mockFetch as unknown as typeof fetch,
+        { fcm: fcmOptions },
+      );
+
+      expect(result.result).toBe("transient_failure");
+      expect(result.statusCode).toBe(404);
+      expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
+        p_job_id: "job-android-1",
+        p_lease_token: "lease-token-android",
+        p_result: "transient_failure",
+        p_status_code: 404,
+      });
+    });
+
+    it("treats a bare 404 without an error body as transient", async () => {
+      const mockFetch = fcmFetchMock({ status: 404 });
+
+      const result = await processNotificationJob(
+        mockSupabase,
+        androidJob,
+        mockFetch as unknown as typeof fetch,
+        { fcm: fcmOptions },
+      );
+
+      expect(result.result).toBe("transient_failure");
+      expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
+        p_job_id: "job-android-1",
+        p_lease_token: "lease-token-android",
+        p_result: "transient_failure",
+        p_status_code: 404,
+      });
+    });
+
+    it("records an OAuth token rejection as transient and exchanges a fresh token afterwards", async () => {
+      const isolatedOptions = {
+        ...fcmOptions,
+        clientEmail: `oauth-reject-test-${Date.now()}@cras-test-project.iam.gserviceaccount.com`,
+      };
+      let tokenRequests = 0;
+      let sendAttempts = 0;
+      const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url === "https://oauth2.googleapis.com/token") {
+          tokenRequests += 1;
+          return {
+            status: 200,
+            ok: true,
+            text: async () =>
+              JSON.stringify({
+                access_token: `ya29.token-${tokenRequests}`,
+                expires_in: 3600,
+              }),
+            json: async () => ({
+              access_token: `ya29.token-${tokenRequests}`,
+              expires_in: 3600,
+            }),
+          };
+        }
+        sendAttempts += 1;
+        if (sendAttempts === 2) {
+          // Only the second delivery is rejected with a stale-token 401.
+          return {
+            status: 401,
+            ok: false,
+            text: async () =>
+              JSON.stringify({
+                error: { code: 401, status: "UNAUTHENTICATED" },
+              }),
+            json: async () => ({
+              error: { code: 401, status: "UNAUTHENTICATED" },
+            }),
+          };
+        }
+        return { status: 200, ok: true, text: async () => "" };
+      });
+
+      // First job delivers and warms the module-global token cache.
+      const delivered = await processNotificationJob(
+        mockSupabase,
+        androidJob,
+        mockFetch as unknown as typeof fetch,
+        { fcm: isolatedOptions },
+      );
+      expect(delivered.result).toBe("delivered");
+      expect(tokenRequests).toBe(1);
+
+      // Second job reuses the cached token, which the provider rejects; the
+      // job retries later instead of being cancelled.
+      const rejected = await processNotificationJob(
+        mockSupabase,
+        { ...androidJob, job_id: "job-android-2", lease_token: "lease-2" },
+        mockFetch as unknown as typeof fetch,
+        { fcm: isolatedOptions },
+      );
+      expect(rejected.result).toBe("transient_failure");
+      expect(rejected.statusCode).toBe(401);
+      expect(tokenRequests).toBe(1);
+      expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
+        p_job_id: "job-android-2",
+        p_lease_token: "lease-2",
+        p_result: "transient_failure",
+        p_status_code: 401,
+      });
+
+      // The rejected cache entry is evicted, so the next job re-signs a JWT.
+      const recovered = await processNotificationJob(
+        mockSupabase,
+        { ...androidJob, job_id: "job-android-3", lease_token: "lease-3" },
+        mockFetch as unknown as typeof fetch,
+        { fcm: isolatedOptions },
+      );
+      expect(recovered.result).toBe("delivered");
+      expect(tokenRequests).toBe(2);
     });
 
     it("treats quota and availability errors as transient failures", async () => {

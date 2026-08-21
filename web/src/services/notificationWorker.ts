@@ -51,13 +51,20 @@ interface CachedFcmToken {
 }
 
 const fcmTokenCache = new Map<string, CachedFcmToken>();
+const fcmTokenInflight = new Map<string, Promise<string>>();
 
-/** Builds the FCM v1 notification message for an Android job: Task title plus opaque routing data only. */
+/**
+ * Builds the FCM v1 notification message for an Android job: Task title plus
+ * opaque routing data only. The FCM registration token carried by the job's
+ * endpoint targets the installation at the message top level, as required by
+ * messages:send.
+ */
 export function buildFcmMessage(
   job: LeasedJob,
   ttlSeconds: number,
 ): {
   message: {
+    token: string;
     notification: { title: string };
     data: { taskId: string; occurrenceKey: string };
     android: {
@@ -69,6 +76,7 @@ export function buildFcmMessage(
 } {
   return {
     message: {
+      token: job.endpoint!,
       notification: {
         title: job.task_title,
       },
@@ -89,6 +97,10 @@ export function buildFcmMessage(
  * Classifies an FCM send failure. UNREGISTERED / SENDER_ID_MISMATCH are
  * permanent rejections that disable the endpoint; invalid requests are
  * cancelled without disabling; quota/availability errors retry within deadline.
+ * A permanent classification always requires the provider's explicit error
+ * code, because v1 reports unregistered tokens as 404 NOT_FOUND whose details
+ * carry UNREGISTERED while other 404s (a wrong project id) must not disable
+ * endpoints.
  */
 export function classifyFcmSendFailure(
   statusCode: number,
@@ -96,10 +108,14 @@ export function classifyFcmSendFailure(
 ): "permanent_failure" | "cancelled" | "transient_failure" {
   if (
     errorCode === "UNREGISTERED" ||
-    errorCode === "SENDER_ID_MISMATCH" ||
-    isEndpointGoneStatus(statusCode)
+    errorCode === "SENDER_ID_MISMATCH"
   ) {
     return "permanent_failure";
+  }
+  // A rejected or expired OAuth access token is a retryable delivery
+  // condition, not a defect of the request or the endpoint.
+  if (statusCode === 401) {
+    return "transient_failure";
   }
   if (isNonRetryableStatus(statusCode)) {
     return "cancelled";
@@ -109,6 +125,9 @@ export function classifyFcmSendFailure(
 
 function pemPrivateKeyToPkcs8(pem: string): Uint8Array {
   const body = pem
+    // Service-account secrets are often stored as JSON strings whose PEM
+    // newlines arrive as literal escape sequences rather than whitespace.
+    .replace(/\\n/g, "\n")
     .replace(/-----BEGIN PRIVATE KEY-----/g, "")
     .replace(/-----END PRIVATE KEY-----/g, "")
     .replace(/\s+/g, "");
@@ -163,6 +182,25 @@ async function getFcmAccessToken(
     return cached.token;
   }
 
+  // A worker tick leases many jobs at once; share one signing and OAuth
+  // exchange per service account instead of racing the same request.
+  const inflight = fcmTokenInflight.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = fetchFcmAccessToken(fcm, fetchFn, cacheKey).finally(() => {
+    fcmTokenInflight.delete(cacheKey);
+  });
+  fcmTokenInflight.set(cacheKey, request);
+  return request;
+}
+
+async function fetchFcmAccessToken(
+  fcm: FcmOptions,
+  fetchFn: typeof fetch,
+  cacheKey: string,
+): Promise<string> {
   const assertion = await signFcmJwt(fcm);
   const response = await fetchFn(FCM_OAUTH_TOKEN_URL, {
     method: "POST",
@@ -840,13 +878,26 @@ async function deliverFcmNotification(
       };
     }
 
+    if (response.status === 401) {
+      // The provider rejected the cached access token; force a fresh
+      // exchange on the next attempt instead of poisoning following jobs.
+      fcmTokenCache.delete(fcmClientEmail);
+    }
+
     let errorCode: string | undefined;
     try {
       const bodyText = await response.text();
       const parsed = JSON.parse(bodyText) as {
-        error?: { status?: string };
+        error?: {
+          status?: string;
+          details?: Array<{ errorCode?: string }>;
+        };
       };
-      errorCode = parsed.error?.status;
+      // v1 reports unregistered tokens through the nested FcmError detail,
+      // not the transport status, so prefer it over the generic gRPC status.
+      errorCode =
+        parsed.error?.details?.find((detail) => detail.errorCode !== undefined)
+          ?.errorCode ?? parsed.error?.status;
     } catch {
       errorCode = undefined;
     }

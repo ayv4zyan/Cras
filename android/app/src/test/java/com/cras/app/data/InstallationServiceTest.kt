@@ -101,6 +101,7 @@ class InstallationServiceTest {
         assertEquals("granted", body["p_permission_state"]!!.jsonPrimitive.content)
         assertEquals("fcm-registration-token", body["p_endpoint"]!!.jsonPrimitive.content)
         assertEquals("Europe/Berlin", body["p_installation_timezone"]!!.jsonPrimitive.content)
+        assertEquals("false", body["p_clear_subscription"]!!.jsonPrimitive.content)
 
         assertEquals(installationId, record?.id)
         assertTrue(record?.isActive == true)
@@ -125,6 +126,7 @@ class InstallationServiceTest {
 
         val body = Json.parseToJsonElement(mockWebServer.takeRequest().body.readUtf8()).jsonObject
         assertTrue(body["p_endpoint"] is JsonNull)
+        assertEquals("true", body["p_clear_subscription"]!!.jsonPrimitive.content)
         assertFalse(record?.isActive == false)
         assertNull(record?.endpoint)
     }

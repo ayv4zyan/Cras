@@ -1,6 +1,7 @@
 package com.cras.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -24,6 +25,7 @@ import com.cras.app.data.SupabaseRealtimeService
 import com.cras.app.data.SupabaseSettingsService
 import com.cras.app.data.SupabaseTaskService
 import com.cras.app.notification.CrasNotifications
+import com.cras.app.notification.EXTRA_TASK_ID
 import com.cras.app.notification.FcmTokenBus
 import com.cras.app.notification.FirebaseFcmTokenProvider
 import com.cras.app.notification.NotificationInstallationSync
@@ -48,10 +50,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private val requestNotificationPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) {
-                inboxViewModel.reconcileInstallation()
-            }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
+            // Both outcomes reconcile: a denial must reach the server as
+            // permission_state = "denied", not stay parked as "prompt".
+            inboxViewModel.reconcileInstallation()
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -131,6 +133,22 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+
+        handleNotificationRouting(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleNotificationRouting(intent)
+    }
+
+    /**
+     * Opens the Task identified by a displayed notification's tap intent. The
+     * routing data is opaque to the client surface; the Inbox resolves it.
+     */
+    private fun handleNotificationRouting(intent: Intent?) {
+        val taskId = intent?.getStringExtra(EXTRA_TASK_ID) ?: return
+        inboxViewModel.focusRoutedTask(taskId)
     }
 
     override fun onResume() {
@@ -148,10 +166,11 @@ class MainActivity : ComponentActivity() {
             this,
             Manifest.permission.POST_NOTIFICATIONS
         ) == PackageManager.PERMISSION_GRANTED
-        return if (granted) {
-            PlatformPermissionState.GRANTED
-        } else {
-            PlatformPermissionState.PROMPT
+        return when {
+            granted -> PlatformPermissionState.GRANTED
+            notificationPrefs.getBoolean(KEY_PERMISSION_ASKED, false) ->
+                PlatformPermissionState.DENIED
+            else -> PlatformPermissionState.PROMPT
         }
     }
 

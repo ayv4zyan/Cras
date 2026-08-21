@@ -170,10 +170,11 @@ describe("Offline Shell Service Seam (Issue #58)", () => {
       });
     });
 
-    it("reloads page when service worker controller changes", () => {
+    it("reloads page when service worker controller changes and an initial controller was present", () => {
       const controllerChangeHolder: { handler?: () => void } = {};
       Object.defineProperty(navigator, "serviceWorker", {
         value: {
+          controller: {} as ServiceWorker,
           addEventListener: vi.fn().mockImplementation((event, handler) => {
             if (event === "controllerchange")
               controllerChangeHolder.handler = handler;
@@ -195,6 +196,39 @@ describe("Offline Shell Service Seam (Issue #58)", () => {
 
         controllerChangeHolder.handler?.();
         expect(reloadMock).toHaveBeenCalled();
+
+        cleanup();
+      } finally {
+        window.location = originalLocation;
+      }
+    });
+
+    it("does not reload page on controllerchange during initial install claim without prior controller", () => {
+      const controllerChangeHolder: { handler?: () => void } = {};
+      Object.defineProperty(navigator, "serviceWorker", {
+        value: {
+          controller: null,
+          addEventListener: vi.fn().mockImplementation((event, handler) => {
+            if (event === "controllerchange")
+              controllerChangeHolder.handler = handler;
+          }),
+          removeEventListener: vi.fn(),
+        },
+        configurable: true,
+      });
+
+      const reloadMock = vi.fn();
+      const originalLocation = window.location;
+      // @ts-expect-error mock window.location
+      delete window.location;
+      window.location = { ...originalLocation, reload: reloadMock } as Location;
+
+      try {
+        const cleanup = setupControllerChangeReload();
+        expect(controllerChangeHolder.handler).toBeDefined();
+
+        controllerChangeHolder.handler?.();
+        expect(reloadMock).not.toHaveBeenCalled();
 
         cleanup();
       } finally {

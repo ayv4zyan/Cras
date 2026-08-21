@@ -222,29 +222,52 @@ describe("Service Worker Seam (Issue #58)", () => {
       }
     });
 
-    it("serves static assets from cache when available", async () => {
+    it("serves static assets from cache when available and revalidates in background", async () => {
       const fetchHandler = listeners["fetch"][0];
       const mockAssetResponse = { status: 200, body: "/* css */" };
       mockCaches.match.mockResolvedValue(mockAssetResponse);
 
+      const mockRevalidatedResponse = {
+        status: 200,
+        clone: vi.fn().mockReturnValue({ status: 200, body: "/* new css */" }),
+      };
+      const originalFetch = globalThis.fetch;
+      const fetchMock = vi.fn().mockResolvedValue(mockRevalidatedResponse);
+      globalThis.fetch = fetchMock;
+
       let responsePromise: Promise<unknown> | null = null;
+      const mockRequest = {
+        method: "GET",
+        url: "https://cras.example.com/assets/index.css",
+        mode: "cors",
+        destination: "style",
+      };
       const mockEvent = {
-        request: {
-          method: "GET",
-          url: "https://cras.example.com/assets/index.css",
-          mode: "cors",
-          destination: "style",
-        },
+        request: mockRequest,
         respondWith: vi.fn().mockImplementation((p: Promise<unknown>) => {
           responsePromise = p;
         }),
       };
 
-      fetchHandler(mockEvent);
-      expect(mockEvent.respondWith).toHaveBeenCalled();
+      try {
+        fetchHandler(mockEvent);
+        expect(mockEvent.respondWith).toHaveBeenCalled();
 
-      const response = await responsePromise;
-      expect(response).toBe(mockAssetResponse);
+        const response = await responsePromise;
+        expect(response).toBe(mockAssetResponse);
+
+        // Allow background revalidation promise microtasks to run
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(fetchMock).toHaveBeenCalledWith(mockRequest);
+        expect(mockCacheInstance.put).toHaveBeenCalledWith(
+          mockRequest,
+          expect.objectContaining({ status: 200, body: "/* new css */" }),
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 

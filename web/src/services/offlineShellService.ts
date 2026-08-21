@@ -163,6 +163,7 @@ export function activateWaitingWorker(worker: ServiceWorker): void {
 
 /**
  * Listens for controllerchange events on navigator.serviceWorker and reloads the window.
+ * Guards against reloading on first install when the page was initially uncontrolled.
  */
 export function setupControllerChangeReload(): () => void {
   if (
@@ -173,9 +174,11 @@ export function setupControllerChangeReload(): () => void {
     return () => {};
   }
 
+  const hadInitialController = Boolean(navigator.serviceWorker.controller);
+
   let refreshing = false;
   const handleControllerChange = () => {
-    if (refreshing) return;
+    if (refreshing || !hadInitialController) return;
     refreshing = true;
     window.location.reload();
   };

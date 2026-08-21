@@ -288,6 +288,49 @@ describe("processNotificationJob Worker Logic", () => {
     });
   });
 
+  it("rejects partial VAPID configuration before sending", async () => {
+    // Only private key provided
+    const mockFetch1 = vi.fn();
+    const result1 = await processNotificationJob(
+      mockSupabase,
+      baseJob,
+      mockFetch1 as unknown as typeof fetch,
+      {
+        vapidPrivateKey: "some-private-key",
+      },
+    );
+    expect(result1.result).toBe("cancelled");
+    expect(result1.error).toBe("Incomplete VAPID configuration");
+    expect(mockFetch1).not.toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
+      p_job_id: "job-123",
+      p_lease_token: "lease-token-abc",
+      p_result: "cancelled",
+      p_status_code: null,
+    });
+
+    // Only public key provided
+    mockRpc.mockClear();
+    const mockFetch2 = vi.fn();
+    const result2 = await processNotificationJob(
+      mockSupabase,
+      baseJob,
+      mockFetch2 as unknown as typeof fetch,
+      {
+        vapidPublicKey: "some-public-key",
+      },
+    );
+    expect(result2.result).toBe("cancelled");
+    expect(result2.error).toBe("Incomplete VAPID configuration");
+    expect(mockFetch2).not.toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
+      p_job_id: "job-123",
+      p_lease_token: "lease-token-abc",
+      p_result: "cancelled",
+      p_status_code: null,
+    });
+  });
+
   it("handles endpoint gone statuses (404, 410) as permanent failures to deactivate subscription", async () => {
     for (const status of [404, 410]) {
       mockRpc.mockClear();

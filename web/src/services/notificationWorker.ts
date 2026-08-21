@@ -398,12 +398,27 @@ export async function processNotificationJob(
   };
 
   // Optional VAPID Authorization header - fail closed if keys provided but header generation fails
-  if (options?.vapidPrivateKey && options?.vapidPublicKey) {
+  const vapidPrivateKey = options?.vapidPrivateKey;
+  const vapidPublicKey = options?.vapidPublicKey;
+
+  if (Boolean(vapidPrivateKey) !== Boolean(vapidPublicKey)) {
+    console.error(
+      `Incomplete VAPID configuration for job ${job.job_id}: exactly one VAPID key provided`,
+    );
+    await recordResult(supabase, job.job_id, job.lease_token, "cancelled");
+    return {
+      jobId: job.job_id,
+      result: "cancelled",
+      error: "Incomplete VAPID configuration",
+    };
+  }
+
+  if (vapidPrivateKey && vapidPublicKey) {
     const vapidAuth = await generateVapidHeader(
       job.endpoint,
-      options.vapidPrivateKey,
-      options.vapidPublicKey,
-      options.vapidSubject,
+      vapidPrivateKey,
+      vapidPublicKey,
+      options?.vapidSubject,
     );
     if (!vapidAuth) {
       console.error(

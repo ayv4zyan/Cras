@@ -192,6 +192,9 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION api.reserve_voice_allowance(TEXT, NUMERIC, NUMERIC) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION api.reserve_voice_allowance(TEXT, NUMERIC, NUMERIC) TO service_role;
+
 -- Reconcile voice usage atomically
 CREATE OR REPLACE FUNCTION api.reconcile_voice_usage(
     p_reservation_id UUID,
@@ -226,6 +229,9 @@ BEGIN
     WHERE bucket_end < (now() - interval '35 days');
 END;
 $$;
+
+REVOKE ALL ON FUNCTION api.reconcile_voice_usage(UUID, TEXT, NUMERIC, TEXT, INTEGER, INTEGER, NUMERIC) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION api.reconcile_voice_usage(UUID, TEXT, NUMERIC, TEXT, INTEGER, INTEGER, NUMERIC) TO service_role;
 
 CREATE OR REPLACE VIEW api.voice_model_catalog
 WITH (security_invoker = true) AS

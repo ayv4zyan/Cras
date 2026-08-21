@@ -98,6 +98,7 @@ export async function createTask(
   }
 
   const { data, error } = await client.schema("api").rpc("create_task", {
+    id: input.id ?? undefined,
     title: trimmedTitle,
     description: input.description ?? null,
     priority: input.priority ?? 4,
@@ -107,7 +108,13 @@ export async function createTask(
   });
 
   if (error) {
-    throw new Error(`Failed to create task: ${error.message} (${error.code})`);
+    const err = new Error(
+      `Failed to create task: ${error.message} (${error.code})`,
+    );
+    if (error.code) {
+      Object.assign(err, { code: error.code });
+    }
+    throw err;
   }
 
   return parseTask(data);

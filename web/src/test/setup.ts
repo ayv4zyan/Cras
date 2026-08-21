@@ -14,3 +14,11 @@ if (typeof globalThis.WebSocket === "undefined") {
   }
   globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
 }
+
+if (typeof window !== "undefined" && typeof window.navigator !== "undefined") {
+  Object.defineProperty(window.navigator, "onLine", {
+    value: true,
+    writable: true,
+    configurable: true,
+  });
+}

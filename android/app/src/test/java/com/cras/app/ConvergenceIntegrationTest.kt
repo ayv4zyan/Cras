@@ -282,8 +282,15 @@ class ConvergenceIntegrationTest {
                         json.decodeFromJsonElement(PlanSerializer, reqJson["plan"]!!)
                     } else null
 
+                    val taskId = reqJson["id"]?.jsonPrimitive?.content ?: UUID.randomUUID().toString()
+                    val existingIndex = dbRows.indexOfFirst { it.id == taskId && it.operatorId == callerOperatorId }
+                    if (existingIndex != -1) {
+                        val respBody = json.encodeToString(Task.serializer(), dbRows[existingIndex].toTask())
+                        return MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(respBody)
+                    }
+
                     val newRow = SimulatedDbRow(
-                        id = UUID.randomUUID().toString(),
+                        id = taskId,
                         operatorId = callerOperatorId,
                         title = title.trim(),
                         description = reqJson["description"]?.jsonPrimitive?.content,

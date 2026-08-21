@@ -175,8 +175,14 @@ class InboxViewModelTest {
                 }
             }
 
+            val taskId = params.id ?: UUID.randomUUID().toString()
+            val existingIndex = tasksInDb.indexOfFirst { it.id == taskId }
+            if (existingIndex != -1) {
+                return tasksInDb[existingIndex]
+            }
+
             val task = Task(
-                id = UUID.randomUUID().toString(),
+                id = taskId,
                 title = params.title.trim(),
                 description = params.description,
                 priority = params.priority,

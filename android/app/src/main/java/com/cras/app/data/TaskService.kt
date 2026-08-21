@@ -15,6 +15,7 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -22,7 +23,9 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 
+@Serializable
 data class CreateTaskParams(
+    val id: String? = null,
     val title: String,
     val description: String? = null,
     val priority: Int = 4,
@@ -145,7 +148,11 @@ class SupabaseTaskService(
             .build()
 
         val responseBody = executeRequest(request, "fetch tasks")
-        return json.decodeFromString<List<Task>>(responseBody)
+        val trimmed = responseBody.trim()
+        if (trimmed.isEmpty() || trimmed == "null") {
+            return emptyList()
+        }
+        return json.decodeFromString<List<Task>>(trimmed)
     }
 
     override suspend fun fetchTaskById(session: OperatorSession, taskId: String): Task? {
@@ -166,8 +173,13 @@ class SupabaseTaskService(
 
         return try {
             val responseBody = executeRequest(request, "fetch task by id")
-            val list = json.decodeFromString<List<Task>>(responseBody)
-            list.firstOrNull()
+            val trimmed = responseBody.trim()
+            if (trimmed.isEmpty() || trimmed == "null") {
+                null
+            } else {
+                val list = json.decodeFromString<List<Task>>(trimmed)
+                list.firstOrNull()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -178,6 +190,9 @@ class SupabaseTaskService(
     override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
         val trimmedTitle = params.title.trim()
         require(trimmedTitle.isNotEmpty()) { "Task title cannot be empty" }
+        if (params.id != null) {
+            require(isValidUuid(params.id)) { "Task id must be a valid UUID: ${params.id}" }
+        }
         val normalizedLabels = params.labels.map { labelId ->
             require(isValidUuid(labelId)) { "Task label must be a valid UUID: $labelId" }
             labelId.lowercase()
@@ -185,6 +200,9 @@ class SupabaseTaskService(
         require(normalizedLabels.distinct().size == normalizedLabels.size) { "Task labels must be unique" }
 
         val bodyObject = buildJsonObject {
+            if (params.id != null) {
+                put("id", params.id)
+            }
             put("title", trimmedTitle)
             if (params.description != null) {
                 put("description", params.description)

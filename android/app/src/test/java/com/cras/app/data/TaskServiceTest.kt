@@ -237,6 +237,65 @@ class TaskServiceTest {
     }
 
     @Test
+    fun `createTask with explicit id sends id in RPC payload`() = runTest {
+        val customId = "550e8400-e29b-41d4-a716-446655440099"
+        val createdJson = """
+            {
+                "id": "$customId",
+                "title": "Idempotent task",
+                "description": null,
+                "priority": 4,
+                "plan": null,
+                "labels": [],
+                "parentId": null,
+                "completedAt": null,
+                "createdAt": "2026-08-19T00:00:00Z",
+                "updatedAt": "2026-08-19T00:00:00Z",
+                "version": 1
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(createdJson)
+        )
+
+        val task = taskService.createTask(
+            session = testSession,
+            params = CreateTaskParams(
+                id = customId,
+                title = "Idempotent task"
+            )
+        )
+
+        assertNotNull(task)
+        assertEquals(customId, task.id)
+
+        val request = mockWebServer.takeRequest()
+        val body = request.body.readUtf8()
+        assertEquals("/rest/v1/rpc/create_task", request.path)
+        assertTrue(body.contains("\"id\":\"$customId\""))
+    }
+
+    @Test
+    fun `createTask rejects invalid UUID id before network call`() = runTest {
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                taskService.createTask(
+                    session = testSession,
+                    params = CreateTaskParams(
+                        id = "not-a-valid-uuid",
+                        title = "Invalid id task"
+                    )
+                )
+            }
+        }
+        assertEquals(0, mockWebServer.requestCount)
+    }
+
+    @Test
     fun `createTask rejects empty title before network call`() = runTest {
         assertThrows(IllegalArgumentException::class.java) {
             kotlinx.coroutines.runBlocking {

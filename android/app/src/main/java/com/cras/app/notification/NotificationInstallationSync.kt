@@ -196,21 +196,24 @@ class NotificationInstallationSync(
     /**
      * Sign-out immediately disables the Operator-bound installation and resets
      * the stored identity so another Operator on this device binds separately.
-     * A failed deactivation keeps the identity and parked endpoint so sign-out
-     * can be retried instead of stranding an active registration server-side.
+     * It shares [reconcileMutex] so a still-in-flight registration cannot
+     * re-activate the installation after the deactivation, and a failed
+     * deactivation keeps the identity and parked endpoint so sign-out can be
+     * retried instead of stranding an active registration server-side.
      */
-    suspend fun deactivateForSignOut(session: OperatorSession) {
-        val installationId = preferences.getOrCreateInstallationId()
-        val deactivated = try {
-            installationService.deactivate(session, installationId)
-        } catch (_: Exception) {
-            null
+    suspend fun deactivateForSignOut(session: OperatorSession): Unit =
+        reconcileMutex.withLock {
+            val installationId = preferences.getOrCreateInstallationId()
+            val deactivated = try {
+                installationService.deactivate(session, installationId)
+            } catch (_: Exception) {
+                null
+            }
+            _status.value = AndroidNotificationStatus.EndpointUnavailable
+            if (deactivated == null) {
+                return@withLock
+            }
+            preferences.clearInstallationId()
+            preferences.setPendingEndpoint(null)
         }
-        _status.value = AndroidNotificationStatus.EndpointUnavailable
-        if (deactivated == null) {
-            return
-        }
-        preferences.clearInstallationId()
-        preferences.setPendingEndpoint(null)
-    }
 }

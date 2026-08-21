@@ -244,6 +244,65 @@ class NotificationInstallationSyncTest {
     }
 
     @Test
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `sign-out deactivation waits for in-flight reconciliation before running`() = runTest {
+        val releaseReconcile = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        val suspendedService = object : InstallationService {
+            override suspend fun registerOrUpdate(
+                session: OperatorSession,
+                params: RegisterInstallationParams
+            ): InstallationRecord {
+                events.add("register")
+                releaseReconcile.await()
+                return InstallationRecord(
+                    id = params.id,
+                    platform = "android",
+                    localEnabled = params.localEnabled,
+                    permissionState = params.permissionState,
+                    endpoint = params.endpoint,
+                    isActive = true
+                )
+            }
+
+            override suspend fun deactivate(session: OperatorSession, installationId: String): Boolean {
+                events.add("deactivate")
+                return true
+            }
+        }
+        val sync = NotificationInstallationSync(
+            installationService = suspendedService,
+            preferences = preferences,
+            permissionProvider = { permissionState },
+            fcmTokenProvider = { fcmToken },
+            timezoneProvider = { deviceTimezone }
+        )
+
+        val reconciliation = launch { sync.reconcile(sessionA) }
+        runCurrent()
+        // Reconciliation is suspended inside its registration while holding the lock.
+        assertEquals(listOf("register"), events.toList())
+
+        val installationId = preferences.getOrCreateInstallationId()
+        val signOut = launch { sync.deactivateForSignOut(sessionA) }
+        runCurrent()
+
+        // Deactivation must not run while the registration holds the lock.
+        assertEquals(listOf("register"), events.toList())
+
+        releaseReconcile.complete(Unit)
+        advanceUntilIdle()
+        reconciliation.join()
+        signOut.join()
+
+        // Deactivation ran only after the in-flight registration completed;
+        // it must never interleave and re-activate the signed-out installation.
+        assertEquals(listOf("register", "deactivate"), events.toList())
+        assertNotEquals(installationId, preferences.getOrCreateInstallationId())
+        assertNull(preferences.getPendingEndpoint())
+    }
+
+    @Test
     fun `server-side provider rejection surfaces as Endpoint unavailable on reconcile`() = runTest {
         // Permanent FCM rejection disabled the endpoint and its jobs server-side;
         // the device must not claim an enabled state it cannot prove.

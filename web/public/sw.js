@@ -67,14 +67,16 @@ self.addEventListener("pushsubscriptionchange", (event) => {
       .subscribe(event.oldSubscription?.options || { userVisibleOnly: true })
       .then((newSubscription) => {
         // Send new subscription details to clients to sync
-        return self.clients.matchAll({ type: "window" }).then((clients) => {
-          clients.forEach((client) => {
-            client.postMessage({
-              type: "CRAS_PUSH_SUBSCRIPTION_CHANGE",
-              subscription: newSubscription.toJSON(),
+        return self.clients
+          .matchAll({ type: "window", includeUncontrolled: true })
+          .then((clients) => {
+            clients.forEach((client) => {
+              client.postMessage({
+                type: "CRAS_PUSH_SUBSCRIPTION_CHANGE",
+                subscription: newSubscription.toJSON(),
+              });
             });
           });
-        });
       })
       .catch(() => {}),
   );

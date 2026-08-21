@@ -174,7 +174,7 @@ export function AuthenticatedApp({
       if (event.data?.type === "CRAS_OPEN_TASK" && event.data.taskId) {
         fetchTaskById(client, event.data.taskId)
           .then((t) => {
-            if (t) {
+            if (t && isMounted) {
               setSelectedTask(t);
               setIsDetailModalOpen(true);
             }
@@ -185,14 +185,22 @@ export function AuthenticatedApp({
       }
     };
 
-    if (typeof window !== "undefined") {
-      window.addEventListener("message", handleMessage);
+    if (
+      typeof navigator !== "undefined" &&
+      "serviceWorker" in navigator &&
+      navigator.serviceWorker
+    ) {
+      navigator.serviceWorker.addEventListener("message", handleMessage);
     }
 
     return () => {
       isMounted = false;
-      if (typeof window !== "undefined") {
-        window.removeEventListener("message", handleMessage);
+      if (
+        typeof navigator !== "undefined" &&
+        "serviceWorker" in navigator &&
+        navigator.serviceWorker
+      ) {
+        navigator.serviceWorker.removeEventListener("message", handleMessage);
       }
     };
   }, [client]);
@@ -616,6 +624,7 @@ export function AuthenticatedApp({
       });
 
       // 3. Attempt drain
+      let createRejected = false;
       try {
         await drainOutbox({
           client,
@@ -627,7 +636,12 @@ export function AuthenticatedApp({
             applyTaskUpdate(completed);
           },
           onConflict: handleDrainConflict,
-          onError: handleDrainError,
+          onError: (err, item) => {
+            if (item.type === "create" && item.task.id === taskId) {
+              createRejected = true;
+            }
+            handleDrainError(err, item);
+          },
         });
       } catch {
         // Retained in outbox on network error
@@ -635,6 +649,7 @@ export function AuthenticatedApp({
 
       // 4. In-context permission explanation for first timed task
       if (
+        !createRejected &&
         optimisticTask.plan &&
         "type" in optimisticTask.plan &&
         (optimisticTask.plan.type === "instant" ||
@@ -1024,10 +1039,14 @@ export function AuthenticatedApp({
                   onClick={async () => {
                     try {
                       await deactivateInstallation(client);
-                    } catch {
-                      // Best-effort
+                      await onSignOut();
+                    } catch (err) {
+                      setErrorMessage(
+                        err instanceof Error
+                          ? err.message
+                          : "Failed to deactivate installation during sign out",
+                      );
                     }
-                    await onSignOut();
                   }}
                   aria-label="Sign out"
                   title="Sign out"

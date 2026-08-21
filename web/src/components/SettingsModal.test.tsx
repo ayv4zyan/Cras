@@ -8,10 +8,12 @@ describe("SettingsModal Component", () => {
   let mockClient: SupabaseClient;
   let mockFrom: ReturnType<typeof vi.fn>;
   let mockRpc: ReturnType<typeof vi.fn>;
+  let mockUpsert: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     localStorage.clear();
     mockRpc = vi.fn().mockResolvedValue({ data: {}, error: null });
+    mockUpsert = vi.fn().mockResolvedValue({ error: null });
     mockFrom = vi.fn().mockReturnValue({
       select: vi.fn().mockReturnValue({
         maybeSingle: vi.fn().mockResolvedValue({
@@ -23,12 +25,13 @@ describe("SettingsModal Component", () => {
           error: null,
         }),
       }),
-      upsert: vi.fn().mockResolvedValue({ error: null }),
+      upsert: mockUpsert,
     });
 
     mockClient = {
       from: mockFrom,
       rpc: mockRpc,
+      schema: vi.fn().mockReturnValue({ rpc: mockRpc, from: mockFrom }),
     } as unknown as SupabaseClient;
   });
 
@@ -64,6 +67,29 @@ describe("SettingsModal Component", () => {
         screen.getByText(BEST_EFFORT_RELIABILITY_COPY),
       ).toBeInTheDocument();
     });
+  });
+
+  it("handles Escape key to close modal", async () => {
+    const onClose = vi.fn();
+    render(
+      <SettingsModal
+        isOpen={true}
+        onClose={onClose}
+        client={mockClient}
+        effectiveDefaultTimedPlanType="instant"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", {
+          name: /operator & installation settings/i,
+        }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("displays Disabled locally when local toggle is off", async () => {
@@ -104,6 +130,9 @@ describe("SettingsModal Component", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("status-blocked")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /re-check browser permission/i }),
+      ).toBeInTheDocument();
     });
 
     Object.defineProperty(window, "Notification", {
@@ -163,6 +192,9 @@ describe("SettingsModal Component", () => {
 
     await waitFor(() => {
       expect(mockFrom).toHaveBeenCalledWith("settings");
+      expect(mockUpsert).toHaveBeenCalledWith({
+        default_timed_plan_type: "floating",
+      });
       expect(onTimedPlanTypeChanged).toHaveBeenCalledWith("floating");
     });
   });
@@ -190,6 +222,9 @@ describe("SettingsModal Component", () => {
 
     await waitFor(() => {
       expect(mockFrom).toHaveBeenCalledWith("settings");
+      expect(mockUpsert).toHaveBeenCalledWith({
+        missed_delivery_enabled: true,
+      });
     });
   });
 });

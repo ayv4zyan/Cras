@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Bell, Loader2, X } from "lucide-react";
 import {
   BEST_EFFORT_RELIABILITY_COPY,
@@ -25,6 +25,67 @@ export function NotificationPermissionModal({
 }: NotificationPermissionModalProps): React.JSX.Element | null {
   const [isRequesting, setIsRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Reset state when opening/closing
+  useEffect(() => {
+    if (isOpen) {
+      setError(null);
+      setIsRequesting(false);
+    }
+  }, [isOpen]);
+
+  // Focus trap and Escape key handling
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setExplainedPermission(true);
+        onClose();
+        return;
+      }
+
+      if (event.key === "Tab" && modalRef.current) {
+        const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable.length === 0) return;
+
+        const firstElement = focusable[0];
+        const lastElement = focusable[focusable.length - 1];
+
+        if (event.shiftKey) {
+          if (document.activeElement === firstElement) {
+            lastElement.focus();
+            event.preventDefault();
+          }
+        } else {
+          if (document.activeElement === lastElement) {
+            firstElement.focus();
+            event.preventDefault();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    // Auto-focus first focusable element
+    const timeout = setTimeout(() => {
+      if (modalRef.current) {
+        const firstFocusable = modalRef.current.querySelector<HTMLElement>(
+          "button, [tabindex]:not([tabindex='-1'])",
+        );
+        firstFocusable?.focus();
+      }
+    }, 50);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      clearTimeout(timeout);
+    };
+  }, [isOpen, onClose]);
 
   if (!isOpen) {
     return null;
@@ -91,6 +152,7 @@ export function NotificationPermissionModal({
 
   return (
     <div
+      ref={modalRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="notification-permission-title"

@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS public.notification_jobs (
     lease_token UUID,
     attempt_count INTEGER NOT NULL DEFAULT 0,
     next_attempt_at TIMESTAMPTZ,
+    last_status_code INTEGER,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uq_notification_jobs_id_operator UNIQUE (id, operator_id),
@@ -74,7 +75,7 @@ CREATE OR REPLACE FUNCTION public.calculate_interpreted_due_at(
 )
 RETURNS TIMESTAMPTZ
 LANGUAGE plpgsql
-IMMUTABLE
+STABLE
 AS $$
 DECLARE
     v_type TEXT;
@@ -98,7 +99,11 @@ BEGIN
         IF v_at IS NULL THEN
             RETURN NULL;
         END IF;
-        RETURN v_at::TIMESTAMPTZ;
+        BEGIN
+            RETURN v_at::TIMESTAMPTZ;
+        EXCEPTION WHEN OTHERS THEN
+            RETURN NULL;
+        END;
     ELSIF v_type = 'floating' THEN
         v_date := plan->>'date';
         v_time := plan->>'time';
@@ -122,15 +127,25 @@ $$;
 CREATE OR REPLACE FUNCTION public.calculate_occurrence_key(plan JSONB)
 RETURNS TEXT
 LANGUAGE plpgsql
-IMMUTABLE
+STABLE
 AS $$
 BEGIN
     IF plan IS NULL OR plan->>'type' IS NULL THEN
         RETURN NULL;
     END IF;
     IF plan->>'type' = 'instant' THEN
-        RETURN 'instant:' || (plan->>'at');
+        IF plan->>'at' IS NULL THEN
+            RETURN NULL;
+        END IF;
+        BEGIN
+            RETURN 'instant:' || to_char((plan->>'at')::TIMESTAMPTZ AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"');
+        EXCEPTION WHEN OTHERS THEN
+            RETURN 'instant:' || (plan->>'at');
+        END;
     ELSIF plan->>'type' = 'floating' THEN
+        IF plan->>'date' IS NULL OR plan->>'time' IS NULL THEN
+            RETURN NULL;
+        END IF;
         RETURN 'floating:' || (plan->>'date') || 'T' || (plan->>'time');
     END IF;
     RETURN NULL;
@@ -175,9 +190,11 @@ BEGIN
       AND state IN ('pending', 'leased')
       AND (plan_version <> NEW.version OR occurrence_key <> v_occ_key);
 
-    -- Check if task was uncompleted
-    IF TG_OP = 'UPDATE' AND OLD.completed_at IS NOT NULL AND NEW.completed_at IS NULL THEN
-        v_only_future := true;
+    -- Check if task was uncompleted on UPDATE
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.completed_at IS NOT NULL AND NEW.completed_at IS NULL THEN
+            v_only_future := true;
+        END IF;
     END IF;
 
     -- Get Operator missed delivery setting
@@ -198,44 +215,23 @@ BEGIN
         v_due_at := public.calculate_interpreted_due_at(NEW.plan, v_inst.installation_timezone);
 
         IF v_due_at IS NOT NULL THEN
-            IF v_only_future THEN
-                IF v_due_at > now() THEN
-                    INSERT INTO public.notification_jobs (
-                        operator_id, task_id, installation_id, plan_version,
-                        interpreted_due_at, occurrence_key, state
-                    ) VALUES (
-                        NEW.operator_id, NEW.id, v_inst.id, NEW.version,
-                        v_due_at, v_occ_key, 'pending'
-                    )
-                    ON CONFLICT (installation_id, task_id, occurrence_key)
-                    DO UPDATE SET
-                        plan_version = EXCLUDED.plan_version,
-                        interpreted_due_at = EXCLUDED.interpreted_due_at,
-                        state = 'pending',
-                        attempt_count = 0,
-                        next_attempt_at = NULL,
-                        updated_at = now()
-                    WHERE public.notification_jobs.state <> 'delivered';
-                END IF;
-            ELSE
-                IF v_due_at > now() OR (v_missed_enabled AND now() <= v_due_at + interval '1 hour') THEN
-                    INSERT INTO public.notification_jobs (
-                        operator_id, task_id, installation_id, plan_version,
-                        interpreted_due_at, occurrence_key, state
-                    ) VALUES (
-                        NEW.operator_id, NEW.id, v_inst.id, NEW.version,
-                        v_due_at, v_occ_key, 'pending'
-                    )
-                    ON CONFLICT (installation_id, task_id, occurrence_key)
-                    DO UPDATE SET
-                        plan_version = EXCLUDED.plan_version,
-                        interpreted_due_at = EXCLUDED.interpreted_due_at,
-                        state = 'pending',
-                        attempt_count = 0,
-                        next_attempt_at = NULL,
-                        updated_at = now()
-                    WHERE public.notification_jobs.state <> 'delivered';
-                END IF;
+            IF v_due_at > now() OR (NOT v_only_future AND v_missed_enabled AND now() <= v_due_at + interval '1 hour') THEN
+                INSERT INTO public.notification_jobs (
+                    operator_id, task_id, installation_id, plan_version,
+                    interpreted_due_at, occurrence_key, state
+                ) VALUES (
+                    NEW.operator_id, NEW.id, v_inst.id, NEW.version,
+                    v_due_at, v_occ_key, 'pending'
+                )
+                ON CONFLICT (installation_id, task_id, occurrence_key)
+                DO UPDATE SET
+                    plan_version = EXCLUDED.plan_version,
+                    interpreted_due_at = EXCLUDED.interpreted_due_at,
+                    state = 'pending',
+                    attempt_count = 0,
+                    next_attempt_at = NULL,
+                    updated_at = now()
+                WHERE public.notification_jobs.state <> 'delivered';
             END IF;
         END IF;
     END LOOP;
@@ -262,6 +258,7 @@ DECLARE
     v_due_at TIMESTAMPTZ;
     v_occ_key TEXT;
     v_missed_enabled BOOLEAN := false;
+    v_should_sync BOOLEAN := false;
 BEGIN
     -- If installation became ineligible or inactive, cancel its pending/leased jobs
     IF NEW.is_active = false OR NEW.local_enabled = false OR NEW.permission_state <> 'granted' OR NEW.endpoint IS NULL THEN
@@ -271,15 +268,21 @@ BEGIN
         RETURN NEW;
     END IF;
 
-    -- If installation became eligible or its timezone/endpoint changed, recalculate
-    IF TG_OP = 'INSERT'
-       OR OLD.is_active = false
-       OR OLD.local_enabled = false
-       OR OLD.permission_state <> 'granted'
-       OR OLD.endpoint IS NULL
-       OR OLD.installation_timezone <> NEW.installation_timezone
-       OR OLD.endpoint <> NEW.endpoint THEN
+    -- Check eligibility trigger conditions without evaluating OLD on INSERT
+    IF TG_OP = 'INSERT' THEN
+        v_should_sync := true;
+    ELSIF TG_OP = 'UPDATE' THEN
+        IF OLD.is_active = false
+           OR OLD.local_enabled = false
+           OR OLD.permission_state <> 'granted'
+           OR OLD.endpoint IS NULL
+           OR OLD.installation_timezone IS DISTINCT FROM NEW.installation_timezone
+           OR OLD.endpoint IS DISTINCT FROM NEW.endpoint THEN
+            v_should_sync := true;
+        END IF;
+    END IF;
 
+    IF v_should_sync THEN
         SELECT COALESCE(missed_delivery_enabled, false) INTO v_missed_enabled
         FROM public.settings
         WHERE operator_id = NEW.operator_id;
@@ -330,29 +333,43 @@ CREATE TRIGGER trg_installations_sync_notification_jobs
 
 -- 7. Client RPCs for Installation Management
 CREATE OR REPLACE FUNCTION api.register_or_update_installation(
-    id UUID,
-    platform TEXT,
-    local_enabled BOOLEAN DEFAULT true,
-    permission_state TEXT DEFAULT 'prompt',
-    endpoint TEXT DEFAULT NULL,
-    p256dh TEXT DEFAULT NULL,
-    auth TEXT DEFAULT NULL,
-    installation_timezone TEXT DEFAULT 'UTC'
+    p_id UUID DEFAULT NULL,
+    p_platform TEXT DEFAULT 'web',
+    p_local_enabled BOOLEAN DEFAULT true,
+    p_permission_state TEXT DEFAULT 'prompt',
+    p_endpoint TEXT DEFAULT NULL,
+    p_p256dh TEXT DEFAULT NULL,
+    p_auth TEXT DEFAULT NULL,
+    p_installation_timezone TEXT DEFAULT 'UTC'
 )
 RETURNS public.installations
 LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = ''
 AS $$
+#variable_conflict error
 DECLARE
     v_inst public.installations;
     v_inst_id UUID;
 BEGIN
-    IF register_or_update_installation.platform NOT IN ('web', 'android') THEN
-        RAISE EXCEPTION 'Invalid platform: %', register_or_update_installation.platform;
+    IF p_platform NOT IN ('web', 'android') THEN
+        RAISE EXCEPTION 'Invalid platform: %', p_platform;
     END IF;
 
-    v_inst_id := COALESCE(register_or_update_installation.id, gen_random_uuid());
+    IF p_endpoint IS NOT NULL AND p_endpoint !~ '^https://[A-Za-z0-9.-]+(/.*)?$' THEN
+        RAISE EXCEPTION 'Invalid push endpoint URL: must be HTTPS';
+    END IF;
+
+    v_inst_id := COALESCE(p_id, gen_random_uuid());
+
+    -- If another installation of this operator holds this endpoint, rotate/reassign cleanly
+    IF p_endpoint IS NOT NULL THEN
+        UPDATE public.installations
+        SET endpoint = NULL, is_active = false, updated_at = now()
+        WHERE operator_id = auth.uid()
+          AND endpoint = p_endpoint
+          AND id <> v_inst_id;
+    END IF;
 
     INSERT INTO public.installations (
         id,
@@ -370,13 +387,13 @@ BEGIN
     ) VALUES (
         v_inst_id,
         auth.uid(),
-        register_or_update_installation.platform,
-        COALESCE(register_or_update_installation.local_enabled, true),
-        COALESCE(register_or_update_installation.permission_state, 'prompt'),
-        register_or_update_installation.endpoint,
-        register_or_update_installation.p256dh,
-        register_or_update_installation.auth,
-        COALESCE(NULLIF(trim(register_or_update_installation.installation_timezone), ''), 'UTC'),
+        p_platform,
+        COALESCE(p_local_enabled, true),
+        COALESCE(p_permission_state, 'prompt'),
+        p_endpoint,
+        p_p256dh,
+        p_auth,
+        COALESCE(NULLIF(trim(p_installation_timezone), ''), 'UTC'),
         now(),
         true,
         now()
@@ -385,9 +402,9 @@ BEGIN
         platform = EXCLUDED.platform,
         local_enabled = EXCLUDED.local_enabled,
         permission_state = EXCLUDED.permission_state,
-        endpoint = EXCLUDED.endpoint,
-        p256dh = EXCLUDED.p256dh,
-        auth = EXCLUDED.auth,
+        endpoint = COALESCE(EXCLUDED.endpoint, public.installations.endpoint),
+        p256dh = COALESCE(EXCLUDED.p256dh, public.installations.p256dh),
+        auth = COALESCE(EXCLUDED.auth, public.installations.auth),
         installation_timezone = EXCLUDED.installation_timezone,
         timezone_observed_at = now(),
         is_active = true,
@@ -401,17 +418,18 @@ $$;
 GRANT EXECUTE ON FUNCTION api.register_or_update_installation(UUID, TEXT, BOOLEAN, TEXT, TEXT, TEXT, TEXT, TEXT) TO authenticated;
 
 CREATE OR REPLACE FUNCTION api.deactivate_installation(
-    id UUID
+    p_id UUID
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = ''
 AS $$
+#variable_conflict error
 BEGIN
     UPDATE public.installations
     SET is_active = false, updated_at = now()
-    WHERE public.installations.id = deactivate_installation.id
+    WHERE public.installations.id = p_id
       AND public.installations.operator_id = auth.uid();
 
     RETURN FOUND;
@@ -477,12 +495,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM public.settings s WHERE s.operator_id = j.operator_id)
       AND now() > j.interpreted_due_at + interval '2 minutes';
 
-    -- 2. Claim due jobs with SKIP LOCKED
+    -- 2. Claim due jobs with SKIP LOCKED, reclaiming expired leases
     RETURN QUERY
     WITH due_jobs AS (
         SELECT j.id
         FROM public.notification_jobs j
-        WHERE j.state IN ('pending', 'failed')
+        WHERE (
+            j.state IN ('pending', 'failed')
+            OR (j.state = 'leased' AND j.leased_at < now() - (lease_seconds || ' seconds')::interval)
+        )
           AND (j.next_attempt_at IS NULL OR j.next_attempt_at <= now())
           AND j.interpreted_due_at <= now()
         ORDER BY j.interpreted_due_at ASC
@@ -525,7 +546,8 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION api.lease_due_notification_jobs(INTEGER, INTEGER) TO authenticated;
+REVOKE ALL ON FUNCTION api.lease_due_notification_jobs(INTEGER, INTEGER) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION api.lease_due_notification_jobs(INTEGER, INTEGER) TO service_role;
 
 CREATE OR REPLACE FUNCTION api.record_notification_result(
     p_job_id UUID,
@@ -553,12 +575,16 @@ BEGIN
 
     IF p_result = 'delivered' THEN
         UPDATE public.notification_jobs
-        SET state = 'delivered', updated_at = now()
+        SET state = 'delivered',
+            last_status_code = p_status_code,
+            updated_at = now()
         WHERE id = p_job_id;
         RETURN true;
     ELSIF p_result = 'permanent_failure' THEN
         UPDATE public.notification_jobs
-        SET state = 'failed', updated_at = now()
+        SET state = 'failed',
+            last_status_code = p_status_code,
+            updated_at = now()
         WHERE id = p_job_id;
 
         -- Permanent rejection disables endpoint and cancels jobs
@@ -573,7 +599,9 @@ BEGIN
         RETURN true;
     ELSIF p_result = 'cancelled' OR p_result = 'expired' THEN
         UPDATE public.notification_jobs
-        SET state = p_result, updated_at = now()
+        SET state = p_result,
+            last_status_code = p_status_code,
+            updated_at = now()
         WHERE id = p_job_id;
         RETURN true;
     ELSE
@@ -590,11 +618,14 @@ BEGIN
 
         IF now() > v_deadline THEN
             UPDATE public.notification_jobs
-            SET state = 'expired', updated_at = now()
+            SET state = 'expired',
+                last_status_code = p_status_code,
+                updated_at = now()
             WHERE id = p_job_id;
         ELSE
             UPDATE public.notification_jobs
             SET state = 'failed',
+                last_status_code = p_status_code,
                 next_attempt_at = now() + (interval '10 seconds' * power(2, LEAST(v_job.attempt_count, 6))),
                 updated_at = now()
             WHERE id = p_job_id;
@@ -605,7 +636,8 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION api.record_notification_result(UUID, UUID, TEXT, INTEGER) TO authenticated;
+REVOKE ALL ON FUNCTION api.record_notification_result(UUID, UUID, TEXT, INTEGER) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION api.record_notification_result(UUID, UUID, TEXT, INTEGER) TO service_role;
 
 -- 9. Canonical Views for Installations and Jobs
 CREATE OR REPLACE VIEW api.installations
@@ -637,6 +669,7 @@ SELECT
     j.state,
     j.attempt_count AS "attemptCount",
     j.next_attempt_at AS "nextAttemptAt",
+    j.last_status_code AS "lastStatusCode",
     j.created_at AS "createdAt",
     j.updated_at AS "updatedAt"
 FROM public.notification_jobs j;

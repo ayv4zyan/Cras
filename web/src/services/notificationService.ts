@@ -28,17 +28,22 @@ let inMemoryLocalEnabled = true;
 let inMemoryPermissionExplained = false;
 
 function generateUUID(): string {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
+  if (typeof crypto !== "undefined") {
+    if (typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    if (typeof crypto.getRandomValues === "function") {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40; // Version 4
+      bytes[8] = (bytes[8] & 0x3f) | 0x80; // Variant 10xx
+      const hex = Array.from(bytes, (b) =>
+        b.toString(16).padStart(2, "0"),
+      ).join("");
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
   }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  return "00000000-0000-4000-8000-000000000000";
 }
 
 export function getOrCreateInstallationId(): string {
@@ -176,7 +181,7 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
   if (
     typeof window === "undefined" ||
     !("serviceWorker" in navigator) ||
-    typeof window.navigator.serviceWorker.register !== "function"
+    typeof window.navigator.serviceWorker?.register !== "function"
   ) {
     return null;
   }
@@ -247,15 +252,17 @@ export async function syncInstallationWithServer(
         : "prompt";
   const tz = options?.installationTimezone ?? getObservedTimezone();
 
-  const { data, error } = await client.rpc("register_or_update_installation", {
-    id: installationId,
-    platform: "web",
-    local_enabled: localEnabled,
-    permission_state: permissionState,
-    endpoint: options?.endpoint ?? null,
-    p256dh: options?.p256dh ?? null,
-    auth: options?.auth ?? null,
-    installation_timezone: tz,
+  const api =
+    typeof client.schema === "function" ? client.schema("api") : client;
+  const { data, error } = await api.rpc("register_or_update_installation", {
+    p_id: installationId,
+    p_platform: "web",
+    p_local_enabled: localEnabled,
+    p_permission_state: permissionState,
+    p_endpoint: options?.endpoint !== undefined ? options.endpoint : null,
+    p_p256dh: options?.p256dh !== undefined ? options.p256dh : null,
+    p_auth: options?.auth !== undefined ? options.auth : null,
+    p_installation_timezone: tz,
   });
 
   if (error) {
@@ -269,9 +276,12 @@ export async function deactivateInstallation(
   client: SupabaseClient,
 ): Promise<void> {
   const installationId = getOrCreateInstallationId();
-  try {
-    await client.rpc("deactivate_installation", { id: installationId });
-  } catch {
-    // Best-effort deactivation
+  const api =
+    typeof client.schema === "function" ? client.schema("api") : client;
+  const { error } = await api.rpc("deactivate_installation", {
+    p_id: installationId,
+  });
+  if (error) {
+    throw new Error(`Failed to deactivate installation: ${error.message}`);
   }
 }

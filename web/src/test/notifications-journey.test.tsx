@@ -13,6 +13,7 @@ describe("Web Push Notifications Journey & Lifecycle", () => {
   let mockClient: SupabaseClient;
   let mockRpc: ReturnType<typeof vi.fn>;
   let mockFrom: ReturnType<typeof vi.fn>;
+  let mockUpsertSettings: ReturnType<typeof vi.fn>;
   let mockChannel: RealtimeChannel;
   const mockUser: User = {
     id: "550e8400-e29b-41d4-a716-446655440099",
@@ -42,6 +43,8 @@ describe("Web Push Notifications Journey & Lifecycle", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+
+    mockUpsertSettings = vi.fn().mockResolvedValue({ error: null });
 
     mockRpc = vi.fn().mockImplementation((name, args) => {
       if (name === "create_task") {
@@ -82,7 +85,7 @@ describe("Web Push Notifications Journey & Lifecycle", () => {
       }
       if (name === "register_or_update_installation") {
         return Promise.resolve({
-          data: { id: args.id, is_active: true },
+          data: { id: args.p_id || args.id, is_active: true },
           error: null,
         });
       }
@@ -119,7 +122,7 @@ describe("Web Push Notifications Journey & Lifecycle", () => {
               error: null,
             }),
           }),
-          upsert: vi.fn().mockResolvedValue({ error: null }),
+          upsert: mockUpsertSettings,
         };
       }
       if (table === "deployment_config") {
@@ -270,6 +273,31 @@ describe("Web Push Notifications Journey & Lifecycle", () => {
       ).toBeInTheDocument();
     });
 
+    // Toggle local notifications
+    const toggleLocal = screen.getByLabelText(
+      /toggle notifications for this device/i,
+    );
+    fireEvent.click(toggleLocal);
+    await waitFor(() => {
+      expect(mockRpc).toHaveBeenCalledWith(
+        "register_or_update_installation",
+        expect.objectContaining({
+          p_local_enabled: false,
+        }),
+      );
+    });
+
+    // Toggle missed delivery setting
+    const toggleMissed = screen.getByLabelText(
+      /toggle missed notification delivery/i,
+    );
+    fireEvent.click(toggleMissed);
+    await waitFor(() => {
+      expect(mockUpsertSettings).toHaveBeenCalledWith({
+        missed_delivery_enabled: true,
+      });
+    });
+
     // Close Settings Modal
     const doneBtn = screen.getByRole("button", { name: /done/i });
     fireEvent.click(doneBtn);
@@ -284,7 +312,19 @@ describe("Web Push Notifications Journey & Lifecycle", () => {
   });
 
   it("Sign-out deactivates the installation before completing sign out", async () => {
-    const onSignOut = vi.fn().mockResolvedValue(undefined);
+    const callOrder: string[] = [];
+    mockRpc.mockImplementation((name) => {
+      if (name === "deactivate_installation") {
+        callOrder.push("deactivate");
+        return Promise.resolve({ data: true, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const onSignOut = vi.fn().mockImplementation(() => {
+      callOrder.push("signOut");
+      return Promise.resolve();
+    });
 
     render(
       <AuthenticatedApp
@@ -305,10 +345,11 @@ describe("Web Push Notifications Journey & Lifecycle", () => {
       expect(mockRpc).toHaveBeenCalledWith(
         "deactivate_installation",
         expect.objectContaining({
-          id: expect.any(String),
+          p_id: expect.any(String),
         }),
       );
       expect(onSignOut).toHaveBeenCalled();
+      expect(callOrder).toEqual(["deactivate", "signOut"]);
     });
   });
 });

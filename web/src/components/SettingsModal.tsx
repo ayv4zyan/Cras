@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   X,
   Settings as SettingsIcon,
@@ -58,6 +58,7 @@ export function SettingsModal({
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   const status: InstallationStatus = deriveInstallationStatus({
     localEnabled,
@@ -98,6 +99,57 @@ export function SettingsModal({
       loadData();
     }
   }, [isOpen, loadData]);
+
+  // Focus trap and Escape key handling
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+
+      if (event.key === "Tab" && modalRef.current) {
+        const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable.length === 0) return;
+
+        const firstElement = focusable[0];
+        const lastElement = focusable[focusable.length - 1];
+
+        if (event.shiftKey) {
+          if (document.activeElement === firstElement) {
+            lastElement.focus();
+            event.preventDefault();
+          }
+        } else {
+          if (document.activeElement === lastElement) {
+            firstElement.focus();
+            event.preventDefault();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    // Auto-focus first focusable element
+    const timeout = setTimeout(() => {
+      if (modalRef.current) {
+        const firstFocusable = modalRef.current.querySelector<HTMLElement>(
+          "button, input, select, [tabindex]:not([tabindex='-1'])",
+        );
+        firstFocusable?.focus();
+      }
+    }, 50);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      clearTimeout(timeout);
+    };
+  }, [isOpen, onClose]);
 
   if (!isOpen) {
     return null;
@@ -200,52 +252,48 @@ export function SettingsModal({
 
   return (
     <div
+      ref={modalRef}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="settings-dialog-title"
+      aria-labelledby="settings-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in-50"
     >
       <div className="relative w-full max-w-lg rounded-xl border border-border bg-card p-6 shadow-xl space-y-5 text-card-foreground">
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close settings"
-          className="absolute top-4 right-4 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
-        >
-          <X className="h-4 w-4" />
-        </button>
-
-        <div className="flex items-center space-x-3">
-          <div className="h-9 w-9 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
-            <SettingsIcon className="h-4 w-4" />
-          </div>
-          <div>
+        {/* Header */}
+        <div className="flex items-center justify-between pb-2 border-b border-border/60">
+          <div className="flex items-center space-x-2.5">
+            <SettingsIcon className="h-5 w-5 text-primary" />
             <h2
-              id="settings-dialog-title"
+              id="settings-modal-title"
               className="text-base font-semibold text-foreground"
             >
               Operator & Installation Settings
             </h2>
-            <p className="text-xs text-muted-foreground">
-              Configure notifications and temporal defaults
-            </p>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close dialog"
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
         {errorMessage && (
-          <div className="p-2.5 rounded-md bg-destructive/10 text-destructive text-xs">
+          <div className="rounded-md bg-destructive/10 p-3 text-xs text-destructive">
             {errorMessage}
           </div>
         )}
 
         {isLoading ? (
-          <div className="flex items-center justify-center py-8 text-xs text-muted-foreground space-x-2">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span>Loading settings...</span>
+          <div className="py-12 flex flex-col items-center justify-center space-y-2 text-muted-foreground">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <p className="text-xs">Loading settings...</p>
           </div>
         ) : (
           <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-            {/* Installation Notification State Section */}
+            {/* Installation Notifications Section */}
             <div className="rounded-lg border border-border/80 bg-background/50 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
@@ -320,10 +368,13 @@ export function SettingsModal({
                   </p>
                   <button
                     type="button"
-                    onClick={handleRequestPermission}
+                    onClick={() => {
+                      setPermissionState(getBrowserPermissionState());
+                      loadData();
+                    }}
                     className="text-xs font-semibold underline hover:no-underline cursor-pointer"
                   >
-                    Retry permission check
+                    Re-check browser permission
                   </button>
                 </div>
               )}

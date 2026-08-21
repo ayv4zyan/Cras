@@ -112,7 +112,10 @@ describe("Notification Service Seam", () => {
         data: { id: "test-inst-id", is_active: true },
         error: null,
       });
-      const client = { rpc: mockRpc } as unknown as SupabaseClient;
+      const client = {
+        rpc: mockRpc,
+        schema: vi.fn().mockReturnValue({ rpc: mockRpc }),
+      } as unknown as SupabaseClient;
 
       await syncInstallationWithServer(client, {
         localEnabled: true,
@@ -126,27 +129,30 @@ describe("Notification Service Seam", () => {
       expect(mockRpc).toHaveBeenCalledWith(
         "register_or_update_installation",
         expect.objectContaining({
-          platform: "web",
-          local_enabled: true,
-          permission_state: "granted",
-          endpoint: "https://push.example.com/test",
-          p256dh: "key-p256",
-          auth: "key-auth",
-          installation_timezone: "America/New_York",
+          p_platform: "web",
+          p_local_enabled: true,
+          p_permission_state: "granted",
+          p_endpoint: "https://push.example.com/test",
+          p_p256dh: "key-p256",
+          p_auth: "key-auth",
+          p_installation_timezone: "America/New_York",
         }),
       );
     });
 
     it("calls deactivate_installation on sign-out", async () => {
       const mockRpc = vi.fn().mockResolvedValue({ data: true, error: null });
-      const client = { rpc: mockRpc } as unknown as SupabaseClient;
+      const client = {
+        rpc: mockRpc,
+        schema: vi.fn().mockReturnValue({ rpc: mockRpc }),
+      } as unknown as SupabaseClient;
 
       await deactivateInstallation(client);
 
       expect(mockRpc).toHaveBeenCalledWith(
         "deactivate_installation",
         expect.objectContaining({
-          id: expect.any(String),
+          p_id: expect.any(String),
         }),
       );
     });
@@ -154,11 +160,13 @@ describe("Notification Service Seam", () => {
 
   describe("Key Conversion Utilities", () => {
     it("converts url-safe base64 to Uint8Array and back", () => {
-      const testBase64 = "ABCD1234_-";
+      // "ABCD" -> base64 for bytes [0x00, 0x10, 0x83]
+      const testBase64 = "ABCD";
       const u8 = urlBase64ToUint8Array(testBase64);
       expect(u8).toBeInstanceOf(Uint8Array);
+      expect(Array.from(u8)).toEqual([0, 16, 131]);
       const converted = arrayBufferToBase64(u8.buffer);
-      expect(converted).toBeDefined();
+      expect(converted).toBe("ABCD");
     });
 
     it("handles null buffer safely", () => {

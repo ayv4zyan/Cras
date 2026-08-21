@@ -636,6 +636,7 @@ export function AuthenticatedApp({
       // 4. In-context permission explanation for first timed task
       if (
         optimisticTask.plan &&
+        "type" in optimisticTask.plan &&
         (optimisticTask.plan.type === "instant" ||
           optimisticTask.plan.type === "floating")
       ) {
@@ -659,6 +660,7 @@ export function AuthenticatedApp({
 
         if (
           params.plan &&
+          "type" in params.plan &&
           (params.plan.type === "instant" || params.plan.type === "floating")
         ) {
           if (

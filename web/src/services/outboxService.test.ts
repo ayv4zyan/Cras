@@ -10,6 +10,7 @@ import {
   generateTaskId,
   type CreateOutboxItem,
   type CompleteOutboxItem,
+  type OutboxItem,
 } from "./outboxService";
 import type { Task } from "../contracts/task";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -275,4 +276,55 @@ describe("OutboxService", () => {
     // Item was NOT removed from outbox
     expect(getOutbox(operatorId)).toEqual([createItem]);
   });
+
+  it("discards unrecognized outbox item types to prevent infinite drain loop", async () => {
+    const mockClient = {
+      schema: vi.fn(),
+    } as unknown as SupabaseClient;
+
+    const invalidItem = {
+      id: "unsupported-1",
+      type: "update",
+      createdAt: "2026-08-21T10:00:00.000Z",
+    } as unknown as OutboxItem;
+
+    enqueueOutboxItem(operatorId, invalidItem);
+
+    const onError = vi.fn();
+    await drainOutbox({
+      client: mockClient,
+      operatorId,
+      onError,
+    });
+
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringMatching(/unrecognized/i),
+      }),
+      invalidItem,
+    );
+    expect(getOutbox(operatorId)).toEqual([]);
+  }, 2000);
+
+  it("discards unrecognized outbox item without id by dropping queue head", async () => {
+    const mockClient = {
+      schema: vi.fn(),
+    } as unknown as SupabaseClient;
+
+    const invalidItemWithoutId = {
+      type: "unknown_shape",
+    } as unknown as OutboxItem;
+
+    enqueueOutboxItem(operatorId, invalidItemWithoutId);
+
+    const onError = vi.fn();
+    await drainOutbox({
+      client: mockClient,
+      operatorId,
+      onError,
+    });
+
+    expect(onError).toHaveBeenCalled();
+    expect(getOutbox(operatorId)).toEqual([]);
+  }, 2000);
 });

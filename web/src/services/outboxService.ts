@@ -30,10 +30,13 @@ export type OutboxItem = CreateOutboxItem | CompleteOutboxItem;
 export interface DrainOutboxOptions {
   readonly client: SupabaseClient;
   readonly operatorId: string;
-  readonly onTaskCreated?: (task: Task) => void;
-  readonly onTaskCompleted?: (task: Task) => void;
-  readonly onConflict?: (error: unknown, item: OutboxItem) => void;
-  readonly onError?: (error: unknown, item: OutboxItem) => void;
+  readonly onTaskCreated?: (task: Task) => void | Promise<void>;
+  readonly onTaskCompleted?: (task: Task) => void | Promise<void>;
+  readonly onConflict?: (
+    error: unknown,
+    item: OutboxItem,
+  ) => void | Promise<void>;
+  readonly onError?: (error: unknown, item: OutboxItem) => void | Promise<void>;
 }
 
 const OUTBOX_STORAGE_PREFIX = "cras_outbox_";
@@ -74,6 +77,7 @@ export function getOutbox(operatorId: string): OutboxItem[] {
           return parsed;
         }
       }
+      return [];
     }
   } catch {
     // Fall back to in-memory store
@@ -243,7 +247,7 @@ export async function drainOutbox(options: DrainOutboxOptions): Promise<void> {
         try {
           const created = await createTask(client, item.params);
           removeOutboxItem(operatorId, item.id);
-          onTaskCreated?.(created);
+          await onTaskCreated?.(created);
         } catch (err) {
           if (isNetworkError(err)) {
             break;
@@ -253,14 +257,14 @@ export async function drainOutbox(options: DrainOutboxOptions): Promise<void> {
             const existing = await fetchTaskById(client, item.task.id);
             if (existing) {
               removeOutboxItem(operatorId, item.id);
-              onTaskCreated?.(existing);
+              await onTaskCreated?.(existing);
               continue;
             }
           } catch {
             // Ignore fetch check error
           }
           removeOutboxItem(operatorId, item.id);
-          onError?.(err, item);
+          await onError?.(err, item);
         }
       } else if (item.type === "complete") {
         try {
@@ -271,18 +275,36 @@ export async function drainOutbox(options: DrainOutboxOptions): Promise<void> {
             item.completedAt,
           );
           removeOutboxItem(operatorId, item.id);
-          onTaskCompleted?.(completed);
+          await onTaskCompleted?.(completed);
         } catch (err) {
           if (isNetworkError(err)) {
             break;
           }
           removeOutboxItem(operatorId, item.id);
           if (isVersionConflictError(err)) {
-            onConflict?.(err, item);
+            await onConflict?.(err, item);
           } else {
-            onError?.(err, item);
+            await onError?.(err, item);
           }
         }
+      } else {
+        // Unrecognized item shape (e.g. stale storage schema). Drop it so the
+        // queue cannot stall on an item no branch can process.
+        const unknownItem = item as OutboxItem;
+        if (
+          unknownItem &&
+          typeof unknownItem === "object" &&
+          typeof (unknownItem as { id?: string }).id === "string" &&
+          (unknownItem as { id?: string }).id
+        ) {
+          removeOutboxItem(operatorId, (unknownItem as { id: string }).id);
+        } else {
+          saveOutbox(operatorId, items.slice(1));
+        }
+        await onError?.(
+          new Error("Discarded unrecognized outbox item"),
+          unknownItem,
+        );
       }
     }
   })();

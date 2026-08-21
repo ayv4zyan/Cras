@@ -116,7 +116,16 @@ export function AuthenticatedApp({
 
     setIsTasksLoading(true);
     Promise.all([
-      fetchTasks(client).catch(() => [] as Task[]),
+      fetchTasks(client).catch((err: unknown) => {
+        if (!isCancelled) {
+          setErrorMessage(
+            err instanceof Error
+              ? `Failed to load tasks: ${err.message}`
+              : "Failed to load tasks",
+          );
+        }
+        return [] as Task[];
+      }),
       fetchLabels(client).catch((err: unknown) => {
         if (!isCancelled) {
           setErrorMessage(
@@ -138,18 +147,6 @@ export function AuthenticatedApp({
           setTasks(tasksWithOutbox);
           setLabels(allLabels);
           setEffectiveTimedPlanType(effectiveType);
-
-          drainOutbox({
-            client,
-            operatorId: userId,
-            onTaskCreated: (created) => applyTaskUpdate(created),
-            onTaskCompleted: (completed) => applyTaskUpdate(completed),
-            onConflict: (_err, item) => {
-              if (item.type === "complete") {
-                handleVersionConflict(item.taskId);
-              }
-            },
-          }).catch(() => {});
         }
       })
       .catch((err: unknown) => {
@@ -260,6 +257,21 @@ export function AuthenticatedApp({
     },
     [client, applyTaskUpdate, reconcileFreshTasks],
   );
+
+  // Drain persistent outbox on startup
+  useEffect(() => {
+    drainOutbox({
+      client,
+      operatorId: userId,
+      onTaskCreated: (created) => applyTaskUpdate(created),
+      onTaskCompleted: (completed) => applyTaskUpdate(completed),
+      onConflict: (_err, item) => {
+        if (item.type === "complete") {
+          handleVersionConflict(item.taskId);
+        }
+      },
+    }).catch(() => {});
+  }, [userId, client, applyTaskUpdate, handleVersionConflict]);
 
   // Realtime subscription for Operator domain invalidations
   useEffect(() => {
@@ -500,7 +512,10 @@ export function AuthenticatedApp({
               handleVersionConflict(item.taskId);
             }
           },
-          onError: (err) => {
+          onError: (err, item) => {
+            if (item.type === "create" && item.task.id === taskId) {
+              setTasks((prev) => prev.filter((t) => t.id !== taskId));
+            }
             setErrorMessage(
               err instanceof Error ? err.message : "Failed to create task",
             );

@@ -9,6 +9,7 @@ import {
 import { CrasApp } from "../App";
 import { AuthProvider } from "../contexts/AuthContext";
 import { parseInvalidationPayload } from "../services/realtimeService";
+import { clearOutbox } from "../services/outboxService";
 import type { Task } from "../contracts/task";
 import type {
   SupabaseClient,
@@ -25,6 +26,7 @@ describe("Web Concurrent Sessions Convergence Seam", () => {
 
   beforeEach(() => {
     localStorage.clear();
+    clearOutbox(operatorUser.id);
   });
 
   const authSession: Session = {

@@ -40,9 +40,19 @@ BEGIN
         plan,
         parent_id
     )
-    ON CONFLICT (id) DO UPDATE
-        SET updated_at = public.tasks.updated_at
+    ON CONFLICT (id) DO NOTHING
     RETURNING public.tasks.id INTO v_task_id;
+
+    IF v_task_id IS NULL THEN
+        SELECT public.tasks.id INTO v_task_id
+        FROM public.tasks
+        WHERE public.tasks.id = create_task.id
+          AND public.tasks.operator_id = auth.uid();
+
+        IF v_task_id IS NULL THEN
+            RAISE EXCEPTION 'Task not found or unauthorized';
+        END IF;
+    END IF;
 
     IF labels IS NOT NULL AND array_length(labels, 1) > 0 THEN
         FOREACH v_label_id IN ARRAY labels LOOP

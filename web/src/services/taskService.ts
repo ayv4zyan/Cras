@@ -66,6 +66,18 @@ export function filterCompletedTasks(tasks: readonly Task[]): Task[] {
     );
 }
 
+function wrapRpcError(
+  prefix: string,
+  error: { message: string; code?: string },
+): Error {
+  const codeSuffix = error.code ? ` (${error.code})` : "";
+  const err = new Error(`${prefix}: ${error.message}${codeSuffix}`);
+  if (error.code) {
+    Object.assign(err, { code: error.code });
+  }
+  return err;
+}
+
 /**
  * Fetches all canonical tasks from the api.tasks view and validates
  * each record against the shared Task contract schema.
@@ -74,7 +86,7 @@ export async function fetchTasks(client: SupabaseClient): Promise<Task[]> {
   const { data, error } = await client.schema("api").from("tasks").select("*");
 
   if (error) {
-    throw new Error(`Failed to fetch tasks: ${error.message} (${error.code})`);
+    throw wrapRpcError("Failed to fetch tasks", error);
   }
 
   if (!data || !Array.isArray(data)) {
@@ -108,13 +120,7 @@ export async function createTask(
   });
 
   if (error) {
-    const err = new Error(
-      `Failed to create task: ${error.message} (${error.code})`,
-    );
-    if (error.code) {
-      Object.assign(err, { code: error.code });
-    }
-    throw err;
+    throw wrapRpcError("Failed to create task", error);
   }
 
   return parseTask(data);
@@ -150,13 +156,7 @@ export async function updateTask(
   });
 
   if (error) {
-    const err = new Error(
-      `Failed to update task: ${error.message} (${error.code})`,
-    );
-    if (error.code) {
-      Object.assign(err, { code: error.code });
-    }
-    throw err;
+    throw wrapRpcError("Failed to update task", error);
   }
 
   return parseTask(data);
@@ -179,13 +179,7 @@ export async function completeTask(
   });
 
   if (error) {
-    const err = new Error(
-      `Failed to complete task: ${error.message} (${error.code})`,
-    );
-    if (error.code) {
-      Object.assign(err, { code: error.code });
-    }
-    throw err;
+    throw wrapRpcError("Failed to complete task", error);
   }
 
   return parseTask(data);
@@ -206,13 +200,7 @@ export async function uncompleteTask(
   });
 
   if (error) {
-    const err = new Error(
-      `Failed to uncomplete task: ${error.message} (${error.code})`,
-    );
-    if (error.code) {
-      Object.assign(err, { code: error.code });
-    }
-    throw err;
+    throw wrapRpcError("Failed to uncomplete task", error);
   }
 
   return parseTask(data);
@@ -237,13 +225,7 @@ export async function fetchTaskById(
     if (error.code === "PGRST116" || error.message?.includes("No rows")) {
       return null;
     }
-    const err = new Error(
-      `Failed to fetch task ${taskId}: ${error.message} (${error.code})`,
-    );
-    if (error.code) {
-      Object.assign(err, { code: error.code });
-    }
-    throw err;
+    throw wrapRpcError(`Failed to fetch task ${taskId}`, error);
   }
 
   if (!data) {

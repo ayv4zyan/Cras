@@ -17,6 +17,7 @@ import {
   setCachedEffectiveTimedPlanType,
   clearCachedEffectiveTimedPlanType,
 } from "../services/settingsService";
+import { createPlanFromInputs } from "../services/temporalService";
 import type { Task } from "../contracts/task";
 import type {
   SupabaseClient,
@@ -87,6 +88,7 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
             return {
               select: vi.fn().mockImplementation(() => {
                 const p = tasksProvider();
+                p.catch(() => {});
                 return Object.assign(p, {
                   eq: vi
                     .fn()
@@ -430,6 +432,60 @@ describe("Web Offline Outbox Seam (Issue #51)", () => {
           date: "2026-08-25",
           time: "14:30",
         });
+      }
+    });
+  });
+
+  it("falls back to instant plan type deterministically when cached effective default is absent for timed offline create", async () => {
+    clearCachedEffectiveTimedPlanType();
+
+    const mockRpc = vi.fn().mockImplementation(() => {
+      return Promise.reject(new Error("Failed to fetch"));
+    });
+
+    const mockClient = createStandardMockClient({
+      rpcHandler: mockRpc,
+      isOffline: true,
+    });
+
+    render(
+      <AuthProvider client={mockClient}>
+        <CrasApp client={mockClient} />
+      </AuthProvider>,
+    );
+
+    const input = await screen.findByPlaceholderText(/create a task in inbox/i);
+    fireEvent.change(input, {
+      target: { value: "Timed Offline Task Instant Fallback" },
+    });
+
+    // Expand details
+    const expandBtn = screen.getByRole("button", { name: /add details/i });
+    fireEvent.click(expandBtn);
+
+    // Set date and time
+    const dateInput = screen.getByLabelText("Plan Date");
+    fireEvent.change(dateInput, { target: { value: "2026-08-25" } });
+
+    const timeInput = screen.getByLabelText("Plan Time");
+    fireEvent.change(timeInput, { target: { value: "14:30" } });
+
+    fireEvent.submit(input.closest("form")!);
+
+    // Verify task entered outbox with deterministic instant plan type fallback
+    await waitFor(() => {
+      const outbox = getOutbox(operatorUser.id);
+      expect(outbox.length).toBe(1);
+      const createdItem = outbox[0];
+      expect(createdItem.type).toBe("create");
+      if (createdItem.type === "create") {
+        expect(createdItem.task.plan).toEqual(
+          createPlanFromInputs({
+            date: "2026-08-25",
+            time: "14:30",
+            effectiveDefault: "instant",
+          }),
+        );
       }
     });
   });

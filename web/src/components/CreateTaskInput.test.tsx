@@ -200,13 +200,13 @@ describe("CreateTaskInput Component", () => {
     );
   });
 
-  it("restores in-progress draft task input from sessionStorage on mount and clears on submit", async () => {
+  it("restores in-progress unsubmitted task input from sessionStorage on mount and clears on submit", async () => {
     const handleCreate = vi.fn().mockResolvedValue(undefined);
     sessionStorage.setItem(
-      "cras_draft_task_input",
+      "cras_unsubmitted_task_input",
       JSON.stringify({
-        title: "Restored Draft Title",
-        description: "Restored Draft Description",
+        title: "Restored Title",
+        description: "Restored Description",
       }),
     );
 
@@ -215,24 +215,24 @@ describe("CreateTaskInput Component", () => {
     const titleInput = screen.getByPlaceholderText(
       /create a task in inbox/i,
     ) as HTMLInputElement;
-    expect(titleInput.value).toBe("Restored Draft Title");
+    expect(titleInput.value).toBe("Restored Title");
 
     const descInput = screen.getByPlaceholderText(
       /add description/i,
     ) as HTMLTextAreaElement;
-    expect(descInput.value).toBe("Restored Draft Description");
+    expect(descInput.value).toBe("Restored Description");
 
     const submitBtn = screen.getByRole("button", { name: /create task/i });
     fireEvent.click(submitBtn);
 
     expect(handleCreate).toHaveBeenCalledWith(
-      "Restored Draft Title",
-      "Restored Draft Description",
+      "Restored Title",
+      "Restored Description",
       undefined,
     );
 
     await waitFor(() => {
-      expect(sessionStorage.getItem("cras_draft_task_input")).toBeNull();
+      expect(sessionStorage.getItem("cras_unsubmitted_task_input")).toBeNull();
     });
   });
 });

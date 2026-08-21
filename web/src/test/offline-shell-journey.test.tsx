@@ -10,9 +10,10 @@ import { CrasApp } from "../App";
 import { AuthProvider } from "../contexts/AuthContext";
 import { getOutbox, clearOutbox } from "../services/outboxService";
 import {
-  clearDraftTaskInput,
-  loadDraftTaskInput,
+  clearUnsubmittedTaskInput,
+  loadUnsubmittedTaskInput,
 } from "../services/offlineShellService";
+
 import type { Priority, Task } from "../contracts/task";
 import type {
   SupabaseClient,
@@ -178,7 +179,7 @@ describe("Web Deliberate Offline Shell Journey (Issue #58)", () => {
     localStorage.clear();
     sessionStorage.clear();
     clearOutbox(operatorUser.id);
-    clearDraftTaskInput();
+    clearUnsubmittedTaskInput();
     vi.clearAllMocks();
 
     mockWaitingWorker = {
@@ -477,8 +478,10 @@ describe("Web Deliberate Offline Shell Journey (Issue #58)", () => {
       const updateBtn = screen.getByRole("button", { name: /update now/i });
       fireEvent.click(updateBtn);
 
-      // Verify draft was saved in sessionStorage
-      expect(loadDraftTaskInput()?.title).toBe("Draft Unsaved Task Title");
+      // Verify unsubmitted input was saved in sessionStorage
+      expect(loadUnsubmittedTaskInput()?.title).toBe(
+        "Draft Unsaved Task Title",
+      );
 
       // Unmount & simulate page reload
       unmount();

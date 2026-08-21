@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   getIsOnline,
   subscribeNetworkStatus,
-  saveDraftTaskInput,
-  loadDraftTaskInput,
-  clearDraftTaskInput,
+  saveUnsubmittedTaskInput,
+  loadUnsubmittedTaskInput,
+  clearUnsubmittedTaskInput,
   registerOfflineShell,
   activateWaitingWorker,
   setupControllerChangeReload,
@@ -60,25 +60,25 @@ describe("Offline Shell Service Seam (Issue #58)", () => {
     });
   });
 
-  describe("Draft In-Progress State Preservation", () => {
-    it("saves, loads, and clears draft task input in session storage", () => {
-      expect(loadDraftTaskInput()).toBeNull();
+  describe("Unsubmitted In-Progress State Preservation", () => {
+    it("saves, loads, and clears unsubmitted task input in session storage", () => {
+      expect(loadUnsubmittedTaskInput()).toBeNull();
 
-      const draft = {
-        title: "Unsaved Draft Task",
-        description: "Draft notes in progress",
+      const unsubmitted = {
+        title: "Unsubmitted Task Title",
+        description: "Unsubmitted description in progress",
       };
-      saveDraftTaskInput(draft);
-      expect(loadDraftTaskInput()).toEqual(draft);
+      saveUnsubmittedTaskInput(unsubmitted);
+      expect(loadUnsubmittedTaskInput()).toEqual(unsubmitted);
 
-      clearDraftTaskInput();
-      expect(loadDraftTaskInput()).toBeNull();
+      clearUnsubmittedTaskInput();
+      expect(loadUnsubmittedTaskInput()).toBeNull();
     });
 
     it("handles storage errors safely", () => {
-      const draft = { title: "Draft" };
-      saveDraftTaskInput(draft);
-      expect(loadDraftTaskInput()).toEqual(draft);
+      const unsubmitted = { title: "Unsubmitted Title" };
+      saveUnsubmittedTaskInput(unsubmitted);
+      expect(loadUnsubmittedTaskInput()).toEqual(unsubmitted);
     });
   });
 

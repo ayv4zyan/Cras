@@ -1,4 +1,4 @@
-export interface DraftTaskInput {
+export interface UnsubmittedTaskInput {
   readonly title?: string;
   readonly description?: string;
 }
@@ -7,7 +7,7 @@ export interface RegisterOfflineShellOptions {
   readonly onUpdateAvailable?: (waitingWorker: ServiceWorker) => void;
 }
 
-const DRAFT_TASK_STORAGE_KEY = "cras_draft_task_input";
+const UNSUBMITTED_TASK_STORAGE_KEY = "cras_unsubmitted_task_input";
 
 /**
  * Returns true if the browser is currently online, false otherwise.
@@ -44,14 +44,26 @@ export function subscribeNetworkStatus(
   };
 }
 
-/**
- * Saves in-progress draft task text to sessionStorage so it survives
- * service worker updates / reloads.
- */
-export function saveDraftTaskInput(draft: DraftTaskInput): void {
+function safeSessionStorage(): Storage | null {
   try {
     if (typeof sessionStorage !== "undefined") {
-      sessionStorage.setItem(DRAFT_TASK_STORAGE_KEY, JSON.stringify(draft));
+      return sessionStorage;
+    }
+  } catch {
+    // Ignore storage unavailability
+  }
+  return null;
+}
+
+/**
+ * Saves in-progress unsubmitted task text to sessionStorage so it survives
+ * service worker updates / reloads.
+ */
+export function saveUnsubmittedTaskInput(input: UnsubmittedTaskInput): void {
+  try {
+    const storage = safeSessionStorage();
+    if (storage) {
+      storage.setItem(UNSUBMITTED_TASK_STORAGE_KEY, JSON.stringify(input));
     }
   } catch {
     // Ignore storage errors
@@ -59,12 +71,13 @@ export function saveDraftTaskInput(draft: DraftTaskInput): void {
 }
 
 /**
- * Loads in-progress draft task text from sessionStorage.
+ * Loads in-progress unsubmitted task text from sessionStorage.
  */
-export function loadDraftTaskInput(): DraftTaskInput | null {
+export function loadUnsubmittedTaskInput(): UnsubmittedTaskInput | null {
   try {
-    if (typeof sessionStorage !== "undefined") {
-      const serialized = sessionStorage.getItem(DRAFT_TASK_STORAGE_KEY);
+    const storage = safeSessionStorage();
+    if (storage) {
+      const serialized = storage.getItem(UNSUBMITTED_TASK_STORAGE_KEY);
       if (serialized) {
         return JSON.parse(serialized);
       }
@@ -76,12 +89,13 @@ export function loadDraftTaskInput(): DraftTaskInput | null {
 }
 
 /**
- * Clears saved in-progress draft task text.
+ * Clears saved in-progress unsubmitted task text.
  */
-export function clearDraftTaskInput(): void {
+export function clearUnsubmittedTaskInput(): void {
   try {
-    if (typeof sessionStorage !== "undefined") {
-      sessionStorage.removeItem(DRAFT_TASK_STORAGE_KEY);
+    const storage = safeSessionStorage();
+    if (storage) {
+      storage.removeItem(UNSUBMITTED_TASK_STORAGE_KEY);
     }
   } catch {
     // Ignore storage errors
@@ -89,7 +103,7 @@ export function clearDraftTaskInput(): void {
 }
 
 /**
- * Registers the Service Worker offline shell and monitors for waiting updates.
+ * Registers the Service Worker and configures update discovery.
  */
 export async function registerOfflineShell(
   options?: RegisterOfflineShellOptions,
@@ -97,7 +111,8 @@ export async function registerOfflineShell(
   if (
     typeof window === "undefined" ||
     !("serviceWorker" in navigator) ||
-    typeof window.navigator.serviceWorker?.register !== "function"
+    !navigator.serviceWorker ||
+    typeof navigator.serviceWorker.register !== "function"
   ) {
     return null;
   }
@@ -107,8 +122,8 @@ export async function registerOfflineShell(
       scope: "/",
     });
 
-    const checkWaitingWorker = (worker: ServiceWorker | null) => {
-      if (worker && options?.onUpdateAvailable) {
+    const checkWaitingWorker = (worker: ServiceWorker) => {
+      if (options?.onUpdateAvailable) {
         options.onUpdateAvailable(worker);
       }
     };

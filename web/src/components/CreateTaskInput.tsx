@@ -16,9 +16,9 @@ import {
   type TimedPlanType,
 } from "../services/temporalService";
 import {
-  loadDraftTaskInput,
-  saveDraftTaskInput,
-  clearDraftTaskInput,
+  loadUnsubmittedTaskInput,
+  saveUnsubmittedTaskInput,
+  clearUnsubmittedTaskInput,
 } from "../services/offlineShellService";
 
 export interface CreateTaskInputProps {
@@ -42,10 +42,10 @@ export function CreateTaskInput({
   defaultDate = null,
   effectiveDefault = "instant",
 }: CreateTaskInputProps): React.JSX.Element {
-  const initialDraft = useMemo(() => loadDraftTaskInput(), []);
-  const [title, setTitle] = useState(initialDraft?.title ?? "");
+  const initialUnsubmitted = useMemo(() => loadUnsubmittedTaskInput(), []);
+  const [title, setTitle] = useState(initialUnsubmitted?.title ?? "");
   const [description, setDescription] = useState(
-    initialDraft?.description ?? "",
+    initialUnsubmitted?.description ?? "",
   );
   const [priority, setPriority] = useState<Priority>(4);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
@@ -55,7 +55,7 @@ export function CreateTaskInput({
     "default",
   );
   const [isExpanded, setIsExpanded] = useState(
-    Boolean(initialDraft?.description),
+    Boolean(initialUnsubmitted?.description),
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,9 +64,9 @@ export function CreateTaskInput({
     (newTitle: string) => {
       setTitle(newTitle);
       if (newTitle || description) {
-        saveDraftTaskInput({ title: newTitle, description });
+        saveUnsubmittedTaskInput({ title: newTitle, description });
       } else {
-        clearDraftTaskInput();
+        clearUnsubmittedTaskInput();
       }
     },
     [description],
@@ -76,9 +76,9 @@ export function CreateTaskInput({
     (newDesc: string) => {
       setDescription(newDesc);
       if (title || newDesc) {
-        saveDraftTaskInput({ title, description: newDesc });
+        saveUnsubmittedTaskInput({ title, description: newDesc });
       } else {
-        clearDraftTaskInput();
+        clearUnsubmittedTaskInput();
       }
     },
     [title],
@@ -164,8 +164,9 @@ export function CreateTaskInput({
 
         setTitle("");
         setDescription("");
-        clearDraftTaskInput();
+        clearUnsubmittedTaskInput();
         setPriority(4);
+
         setSelectedLabels([]);
         setPlanDate(defaultDate ?? "");
         setPlanTime("");

@@ -213,7 +213,12 @@ class NotificationInstallationSync(
         val permission = permissionProvider()
         // The most recently observed FCM token wins. An explicit token-loss
         // event must reach the server as a cleared endpoint, so the provider
-        // is consulted only while no token event is parked.
+        // is consulted only while no token event is parked. A confirmed
+        // registration deliberately does not lift [PendingFcmTokenEvent.Loss]:
+        // clearing it would let reconciliation consult the provider again,
+        // whose cache can still serve the lost token and resurrect an
+        // endpoint Firebase already reported dead. Only a genuine replacement
+        // token from rotation (or a reset) replaces the parked loss.
         val token = when (val parked = preferences.getPendingFcmTokenEvent()) {
             is PendingFcmTokenEvent.Token -> parked.value
             PendingFcmTokenEvent.Loss -> null

@@ -185,6 +185,17 @@ class NotificationInstallationSyncTest {
         assertEquals(PendingFcmTokenEvent.Loss, preferences.getPendingFcmTokenEvent())
         assertNull(service.registerCalls.last().params.endpoint)
         assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.status.value)
+
+        // Even after the cleared endpoint is confirmed, the loss stays
+        // parked: a follow-up reconciliation must re-send it rather than
+        // consult a provider whose cache still serves the lost token. Only a
+        // genuine replacement token lifts the loss.
+        assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.reconcile(sessionA))
+
+        assertEquals(3, service.registerCalls.size)
+        assertNull(service.registerCalls[1].params.endpoint)
+        assertNull(service.registerCalls[2].params.endpoint)
+        assertEquals(PendingFcmTokenEvent.Loss, preferences.getPendingFcmTokenEvent())
     }
 
     @Test

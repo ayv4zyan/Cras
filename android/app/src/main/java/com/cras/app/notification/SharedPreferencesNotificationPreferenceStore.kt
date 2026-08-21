@@ -42,13 +42,13 @@ class SharedPreferencesNotificationPreferenceStore(
 
     override fun setPendingFcmTokenEvent(event: PendingFcmTokenEvent?) {
         preferences.edit()
-            .apply {
+            .also { editor ->
                 when (event) {
-                    null -> remove(KEY_PENDING_ENDPOINT)
+                    null -> editor.remove(KEY_PENDING_ENDPOINT)
                     PendingFcmTokenEvent.Loss ->
-                        putString(KEY_PENDING_ENDPOINT, PENDING_ENDPOINT_LOSS_MARKER)
+                        editor.putString(KEY_PENDING_ENDPOINT, PENDING_ENDPOINT_LOSS_MARKER)
                     is PendingFcmTokenEvent.Token ->
-                        putString(KEY_PENDING_ENDPOINT, event.value)
+                        editor.putString(KEY_PENDING_ENDPOINT, event.value)
                 }
             }
             .apply()

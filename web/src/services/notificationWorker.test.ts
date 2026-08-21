@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { processNotificationJob, type LeasedJob } from "./notificationWorker";
+import {
+  processNotificationJob,
+  generateVapidHeader,
+  encryptWebPushPayload,
+  deriveTopic,
+  type LeasedJob,
+} from "./notificationWorker";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 describe("processNotificationJob Worker Logic", () => {
@@ -17,6 +23,11 @@ describe("processNotificationJob Worker Logic", () => {
     } as unknown as SupabaseClient;
   });
 
+  // Valid 65-byte uncompressed P-256 public key (base64url) and 16-byte auth
+  const validP256dh =
+    "BKi_qdsfjYSlus6qWa3GWDdPB_cnzDCYo1FPz5EB6oXC6lTe-nQAVDOBlf2q_QZyV75z0ppcUy_We7cQtnggPLY";
+  const validAuth = "KioqKioqKioqKioqKioqKg";
+
   const baseJob: LeasedJob = {
     job_id: "job-123",
     lease_token: "lease-token-abc",
@@ -30,14 +41,14 @@ describe("processNotificationJob Worker Logic", () => {
     missed_delivery_enabled: false,
     platform: "web",
     endpoint: "https://push.example.com/sub/123",
-    p256dh: "p256dh-key",
-    auth: "auth-key",
+    p256dh: validP256dh,
+    auth: validAuth,
     is_active: true,
     local_enabled: true,
     permission_state: "granted",
   };
 
-  it("cancels job immediately if task is completed", async () => {
+  it("cancels job immediately if task is completed without sending push request", async () => {
     const completedJob: LeasedJob = {
       ...baseJob,
       task_completed_at: new Date().toISOString(),
@@ -59,7 +70,7 @@ describe("processNotificationJob Worker Logic", () => {
     });
   });
 
-  it("expires job if past operational grace deadline", async () => {
+  it("expires job if past operational grace deadline without sending push request", async () => {
     const expiredJob: LeasedJob = {
       ...baseJob,
       interpreted_due_at: new Date(Date.now() - 300000).toISOString(), // 5 mins ago
@@ -104,7 +115,29 @@ describe("processNotificationJob Worker Logic", () => {
     });
   });
 
-  it("delivers Web Push with only task title and routing identifiers in payload", async () => {
+  it("records permanent failure for non-HTTPS endpoint without sending push request", async () => {
+    const httpJob: LeasedJob = {
+      ...baseJob,
+      endpoint: "http://push.example.com/sub/123",
+    };
+    const mockFetch = vi.fn();
+
+    const result = await processNotificationJob(
+      mockSupabase,
+      httpJob,
+      mockFetch as unknown as typeof fetch,
+    );
+    expect(result.result).toBe("permanent_failure");
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
+      p_job_id: "job-123",
+      p_lease_token: "lease-token-abc",
+      p_result: "permanent_failure",
+      p_status_code: null,
+    });
+  });
+
+  it("delivers Web Push using aes128gcm encryption and binary body", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       status: 201,
     });
@@ -123,18 +156,13 @@ describe("processNotificationJob Worker Logic", () => {
     expect(calledInit.method).toBe("POST");
     expect(calledInit.headers.TTL).toBe("0"); // missed_delivery_enabled = false -> TTL 0
     expect(calledInit.headers.Urgency).toBe("high");
+    expect(calledInit.headers["Content-Type"]).toBe("application/octet-stream");
+    expect(calledInit.headers["Content-Encoding"]).toBe("aes128gcm");
     expect(typeof calledInit.headers.Topic).toBe("string");
 
-    const parsedBody = JSON.parse(calledInit.body);
-    expect(parsedBody).toEqual({
-      taskId: "task-456",
-      occurrenceKey: "instant:2026-08-21T18:00:00Z",
-      title: "Review quarterly roadmap",
-    });
-    // Ensure no sensitive fields or other task fields leak
-    expect(parsedBody.description).toBeUndefined();
-    expect(parsedBody.comments).toBeUndefined();
-    expect(parsedBody.labels).toBeUndefined();
+    // Body must be encrypted binary, not plaintext JSON
+    expect(calledInit.body).toBeInstanceOf(Uint8Array);
+    expect(calledInit.body.length).toBeGreaterThan(86);
 
     expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
       p_job_id: "job-123",
@@ -142,6 +170,44 @@ describe("processNotificationJob Worker Logic", () => {
       p_result: "delivered",
       p_status_code: 201,
     });
+  });
+
+  it("fails permanently when push encryption keys are missing or invalid without sending unencrypted JSON", async () => {
+    const missingKeysJob: LeasedJob = {
+      ...baseJob,
+      p256dh: null,
+      auth: null,
+    };
+    const mockFetch = vi.fn();
+
+    const result = await processNotificationJob(
+      mockSupabase,
+      missingKeysJob,
+      mockFetch as unknown as typeof fetch,
+    );
+
+    expect(result.result).toBe("permanent_failure");
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
+      p_job_id: "job-123",
+      p_lease_token: "lease-token-abc",
+      p_result: "permanent_failure",
+      p_status_code: null,
+    });
+
+    const invalidKeysJob: LeasedJob = {
+      ...baseJob,
+      p256dh: "short-key",
+      auth: "short-auth",
+    };
+    const result2 = await processNotificationJob(
+      mockSupabase,
+      invalidKeysJob,
+      mockFetch as unknown as typeof fetch,
+    );
+
+    expect(result2.result).toBe("permanent_failure");
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("computes 1-hour TTL when missed delivery is enabled", async () => {
@@ -167,44 +233,98 @@ describe("processNotificationJob Worker Logic", () => {
     expect(ttl).toBeLessThanOrEqual(3605);
   });
 
-  it("handles permanent 410 Gone failure by recording permanent_failure", async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      status: 410,
-    });
+  it("supports VAPID signing with raw 32-byte and PKCS#8 private keys, and fails closed if invalid", async () => {
+    // Generate a valid ECDSA P-256 key pair for test
+    const kp = await crypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      true,
+      ["sign", "verify"],
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+    const rawKey = jwk.d!;
+    const mockFetch = vi.fn().mockResolvedValue({ status: 200 });
 
     const result = await processNotificationJob(
       mockSupabase,
       baseJob,
       mockFetch as unknown as typeof fetch,
+      {
+        vapidPrivateKey: rawKey,
+        vapidPublicKey: "test-vapid-public-key",
+        vapidSubject: "mailto:support@cras.app",
+      },
     );
 
-    expect(result.result).toBe("permanent_failure");
+    expect(result.result).toBe("delivered");
+    const [, calledInit] = mockFetch.mock.calls[0];
+    expect(calledInit.headers.Authorization).toMatch(
+      /^vapid t=[^,]+, k=test-vapid-public-key$/,
+    );
+
+    // Fail closed if VAPID keys are misconfigured
+    const mockFetch2 = vi.fn();
+    const result2 = await processNotificationJob(
+      mockSupabase,
+      baseJob,
+      mockFetch2 as unknown as typeof fetch,
+      {
+        vapidPrivateKey: "bad-vapid-key",
+        vapidPublicKey: "test-vapid-public-key",
+      },
+    );
+
+    expect(result2.result).toBe("permanent_failure");
+    expect(mockFetch2).not.toHaveBeenCalled();
     expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
       p_job_id: "job-123",
       p_lease_token: "lease-token-abc",
       p_result: "permanent_failure",
-      p_status_code: 410,
+      p_status_code: null,
     });
   });
 
-  it("handles transient 503 Service Unavailable by recording transient_failure", async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      status: 503,
-    });
+  it("handles non-retryable statuses (400, 401, 403, 404, 410, 413) as permanent failures", async () => {
+    for (const status of [400, 401, 403, 404, 410, 413]) {
+      mockRpc.mockClear();
+      const mockFetch = vi.fn().mockResolvedValue({ status });
 
-    const result = await processNotificationJob(
-      mockSupabase,
-      baseJob,
-      mockFetch as unknown as typeof fetch,
-    );
+      const result = await processNotificationJob(
+        mockSupabase,
+        baseJob,
+        mockFetch as unknown as typeof fetch,
+      );
 
-    expect(result.result).toBe("transient_failure");
-    expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
-      p_job_id: "job-123",
-      p_lease_token: "lease-token-abc",
-      p_result: "transient_failure",
-      p_status_code: 503,
-    });
+      expect(result.result).toBe("permanent_failure");
+      expect(result.statusCode).toBe(status);
+      expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
+        p_job_id: "job-123",
+        p_lease_token: "lease-token-abc",
+        p_result: "permanent_failure",
+        p_status_code: status,
+      });
+    }
+  });
+
+  it("handles retryable server errors (500, 502, 503, 429) as transient failures", async () => {
+    for (const status of [500, 502, 503, 429]) {
+      mockRpc.mockClear();
+      const mockFetch = vi.fn().mockResolvedValue({ status });
+
+      const result = await processNotificationJob(
+        mockSupabase,
+        baseJob,
+        mockFetch as unknown as typeof fetch,
+      );
+
+      expect(result.result).toBe("transient_failure");
+      expect(result.statusCode).toBe(status);
+      expect(mockRpc).toHaveBeenCalledWith("record_notification_result", {
+        p_job_id: "job-123",
+        p_lease_token: "lease-token-abc",
+        p_result: "transient_failure",
+        p_status_code: status,
+      });
+    }
   });
 
   it("handles fetch network exception by recording transient_failure without status code", async () => {
@@ -223,5 +343,61 @@ describe("processNotificationJob Worker Logic", () => {
       p_result: "transient_failure",
       p_status_code: null,
     });
+  });
+
+  it("derives deterministic 32-character topic", async () => {
+    const topic1 = await deriveTopic(
+      "instant:2026-08-21T18:00:00Z",
+      "task-123",
+    );
+    const topic2 = await deriveTopic(
+      "instant:2026-08-21T18:00:00Z",
+      "task-123",
+    );
+    const topic3 = await deriveTopic(
+      "instant:2026-08-21T18:00:00Z",
+      "task-456",
+    );
+
+    expect(topic1).toBe(topic2);
+    expect(topic1.length).toBeLessThanOrEqual(32);
+    expect(topic1).not.toBe(topic3);
+  });
+
+  it("encryptWebPushPayload produces RFC 8291 payload for valid keys and returns null for invalid keys", async () => {
+    const payload = JSON.stringify({
+      taskId: "task-1",
+      occurrenceKey: "k",
+      title: "Test",
+    });
+    const encrypted = await encryptWebPushPayload(
+      payload,
+      validP256dh,
+      validAuth,
+    );
+    expect(encrypted).toBeInstanceOf(Uint8Array);
+    expect(encrypted!.length).toBeGreaterThan(86);
+
+    const invalidLength = await encryptWebPushPayload(
+      payload,
+      "short-key",
+      "short-auth",
+    );
+    expect(invalidLength).toBeNull();
+  });
+
+  it("generateVapidHeader creates valid JWT token string", async () => {
+    const kp = await crypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      true,
+      ["sign", "verify"],
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+    const header = await generateVapidHeader(
+      "https://push.example.com/sub/123",
+      jwk.d!,
+      "vapid-pub-key",
+    );
+    expect(header).toMatch(/^vapid t=[^,]+, k=vapid-pub-key$/);
   });
 });

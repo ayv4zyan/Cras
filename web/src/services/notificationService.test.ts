@@ -136,6 +136,55 @@ describe("Notification Service Seam", () => {
           p_p256dh: "key-p256",
           p_auth: "key-auth",
           p_installation_timezone: "America/New_York",
+          p_clear_subscription: false,
+        }),
+      );
+    });
+
+    it("sends p_clear_subscription = true when endpoint is explicitly null or clearSubscription is true", async () => {
+      const mockRpc = vi.fn().mockResolvedValue({
+        data: { id: "test-inst-id", is_active: true },
+        error: null,
+      });
+      const client = {
+        rpc: mockRpc,
+        schema: vi.fn().mockReturnValue({ rpc: mockRpc }),
+      } as unknown as SupabaseClient;
+
+      await syncInstallationWithServer(client, {
+        endpoint: null,
+      });
+
+      expect(mockRpc).toHaveBeenCalledWith(
+        "register_or_update_installation",
+        expect.objectContaining({
+          p_endpoint: null,
+          p_p256dh: null,
+          p_auth: null,
+          p_clear_subscription: true,
+        }),
+      );
+    });
+
+    it("sends p_clear_subscription = false and preserves existing fields when options are omitted", async () => {
+      const mockRpc = vi.fn().mockResolvedValue({
+        data: { id: "test-inst-id", is_active: true },
+        error: null,
+      });
+      const client = {
+        rpc: mockRpc,
+        schema: vi.fn().mockReturnValue({ rpc: mockRpc }),
+      } as unknown as SupabaseClient;
+
+      await syncInstallationWithServer(client);
+
+      expect(mockRpc).toHaveBeenCalledWith(
+        "register_or_update_installation",
+        expect.objectContaining({
+          p_endpoint: null,
+          p_p256dh: null,
+          p_auth: null,
+          p_clear_subscription: false,
         }),
       );
     });

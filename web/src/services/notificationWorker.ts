@@ -58,6 +58,55 @@ export function uint8ArrayToBase64Url(bytes: Uint8Array): string {
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/**
+ * Converts a raw 32-byte P-256 private key scalar to a PKCS#8 DER structure
+ * suitable for Web Crypto importKey("pkcs8", ...).
+ */
+export function rawP256PrivateKeyToPkcs8(rawBytes: Uint8Array): Uint8Array {
+  // PKCS#8 PrivateKeyInfo prefix for P-256 (secp256r1) containing a 32-byte ECPrivateKey
+  const pkcs8Prefix = new Uint8Array([
+    0x30,
+    0x41, // SEQUENCE (65 bytes)
+    0x02,
+    0x01,
+    0x00, // INTEGER 0 (version v1)
+    0x30,
+    0x13, // SEQUENCE (AlgorithmIdentifier, 19 bytes)
+    0x06,
+    0x07,
+    0x2a,
+    0x86,
+    0x48,
+    0xce,
+    0x3d,
+    0x02,
+    0x01, // OID 1.2.840.10045.2.1 (id-ecPublicKey)
+    0x06,
+    0x08,
+    0x2a,
+    0x86,
+    0x48,
+    0xce,
+    0x3d,
+    0x03,
+    0x01,
+    0x07, // OID 1.2.840.10045.3.1.7 (secp256r1)
+    0x04,
+    0x27, // OCTET STRING (39 bytes)
+    0x30,
+    0x25, // SEQUENCE (ECPrivateKey, 37 bytes)
+    0x02,
+    0x01,
+    0x01, // INTEGER 1 (ECPrivateKey version)
+    0x04,
+    0x20, // OCTET STRING (32 bytes)
+  ]);
+  const pkcs8 = new Uint8Array(pkcs8Prefix.length + rawBytes.length);
+  pkcs8.set(pkcs8Prefix, 0);
+  pkcs8.set(rawBytes, pkcs8Prefix.length);
+  return pkcs8;
+}
+
 export async function deriveTopic(
   occurrenceKey: string,
   taskId: string,
@@ -190,6 +239,7 @@ export async function encryptWebPushPayload(
 
 /**
  * Generates an RFC 8292 VAPID Authorization header token if keys are available.
+ * Handles both raw 32-byte base64url keys and PKCS#8 DER base64url keys.
  */
 export async function generateVapidHeader(
   endpoint: string,
@@ -213,10 +263,15 @@ export async function generateVapidHeader(
       ),
     );
 
-    const privateKeyBytes = base64UrlToUint8Array(vapidPrivateKey);
+    const rawKeyBytes = base64UrlToUint8Array(vapidPrivateKey);
+    const pkcs8Bytes =
+      rawKeyBytes.length === 32
+        ? rawP256PrivateKeyToPkcs8(rawKeyBytes)
+        : rawKeyBytes;
+
     const key = await crypto.subtle.importKey(
       "pkcs8",
-      privateKeyBytes,
+      pkcs8Bytes,
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["sign"],
@@ -231,12 +286,17 @@ export async function generateVapidHeader(
 
     const jwt = `${header}.${payload}.${uint8ArrayToBase64Url(new Uint8Array(sig))}`;
     return `vapid t=${jwt}, k=${vapidPublicKey}`;
-  } catch {
+  } catch (err) {
+    console.error("Failed to generate VAPID header:", err);
     return null;
   }
 }
 
-async function recordResult(
+export function isPermanentFailureStatus(statusCode: number): boolean {
+  return [400, 401, 403, 404, 410, 413].includes(statusCode);
+}
+
+export async function recordResult(
   supabase: SupabaseClient,
   jobId: string,
   leaseToken: string,
@@ -333,7 +393,7 @@ export async function processNotificationJob(
     Topic: topic,
   };
 
-  // Optional VAPID Authorization header
+  // Optional VAPID Authorization header - fail closed if keys provided but header generation fails
   if (options?.vapidPrivateKey && options?.vapidPublicKey) {
     const vapidAuth = await generateVapidHeader(
       job.endpoint,
@@ -341,30 +401,66 @@ export async function processNotificationJob(
       options.vapidPublicKey,
       options.vapidSubject,
     );
-    if (vapidAuth) {
-      headers["Authorization"] = vapidAuth;
+    if (!vapidAuth) {
+      console.error(
+        `Failed to generate VAPID header for job ${job.job_id}: invalid VAPID configuration or key`,
+      );
+      await recordResult(
+        supabase,
+        job.job_id,
+        job.lease_token,
+        "permanent_failure",
+      );
+      return {
+        jobId: job.job_id,
+        result: "permanent_failure",
+        error: "VAPID header generation failed",
+      };
     }
+    headers["Authorization"] = vapidAuth;
   }
 
-  let body: BodyInit;
-  if (job.p256dh && job.auth) {
-    const encrypted = await encryptWebPushPayload(
-      jsonPayload,
-      job.p256dh,
-      job.auth,
+  // Web Push requires encrypted payload (RFC 8291 aes128gcm) - fail permanently if encryption not possible
+  if (!job.p256dh || !job.auth) {
+    console.error(
+      `Missing push encryption keys (p256dh/auth) for job ${job.job_id}`,
     );
-    if (encrypted) {
-      headers["Content-Type"] = "application/octet-stream";
-      headers["Content-Encoding"] = "aes128gcm";
-      body = encrypted as unknown as BodyInit;
-    } else {
-      headers["Content-Type"] = "application/json";
-      body = jsonPayload;
-    }
-  } else {
-    headers["Content-Type"] = "application/json";
-    body = jsonPayload;
+    await recordResult(
+      supabase,
+      job.job_id,
+      job.lease_token,
+      "permanent_failure",
+    );
+    return {
+      jobId: job.job_id,
+      result: "permanent_failure",
+      error: "Missing push encryption keys",
+    };
   }
+
+  const encrypted = await encryptWebPushPayload(
+    jsonPayload,
+    job.p256dh,
+    job.auth,
+  );
+  if (!encrypted) {
+    console.error(`Failed to encrypt Web Push payload for job ${job.job_id}`);
+    await recordResult(
+      supabase,
+      job.job_id,
+      job.lease_token,
+      "permanent_failure",
+    );
+    return {
+      jobId: job.job_id,
+      result: "permanent_failure",
+      error: "Failed to encrypt Web Push payload",
+    };
+  }
+
+  headers["Content-Type"] = "application/octet-stream";
+  headers["Content-Encoding"] = "aes128gcm";
+  const body = encrypted as unknown as BodyInit;
 
   try {
     const response = await fetchFn(job.endpoint, {
@@ -391,8 +487,8 @@ export async function processNotificationJob(
         result: "delivered",
         statusCode: response.status,
       };
-    } else if (response.status === 404 || response.status === 410) {
-      // Permanent failure / unsubscribed
+    } else if (isPermanentFailureStatus(response.status)) {
+      // Permanent failure (400, 401, 403, 404, 410, 413)
       await recordResult(
         supabase,
         job.job_id,
@@ -406,7 +502,7 @@ export async function processNotificationJob(
         statusCode: response.status,
       };
     } else {
-      // Transient failure
+      // Transient failure (5xx, 429, etc.)
       await recordResult(
         supabase,
         job.job_id,

@@ -1039,13 +1039,27 @@ export function AuthenticatedApp({
                   onClick={async () => {
                     try {
                       await deactivateInstallation(client);
-                      await onSignOut();
-                    } catch (err) {
+                    } catch (deactivateErr) {
+                      console.error(
+                        "Failed to deactivate installation during sign out:",
+                        deactivateErr,
+                      );
                       setErrorMessage(
-                        err instanceof Error
-                          ? err.message
+                        deactivateErr instanceof Error
+                          ? deactivateErr.message
                           : "Failed to deactivate installation during sign out",
                       );
+                    } finally {
+                      try {
+                        await onSignOut();
+                      } catch (signOutErr) {
+                        console.error("Failed to sign out:", signOutErr);
+                        setErrorMessage(
+                          signOutErr instanceof Error
+                            ? signOutErr.message
+                            : "Failed to sign out",
+                        );
+                      }
                     }
                   }}
                   aria-label="Sign out"

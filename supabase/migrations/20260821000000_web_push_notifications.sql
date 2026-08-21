@@ -340,7 +340,8 @@ CREATE OR REPLACE FUNCTION api.register_or_update_installation(
     p_endpoint TEXT DEFAULT NULL,
     p_p256dh TEXT DEFAULT NULL,
     p_auth TEXT DEFAULT NULL,
-    p_installation_timezone TEXT DEFAULT 'UTC'
+    p_installation_timezone TEXT DEFAULT 'UTC',
+    p_clear_subscription BOOLEAN DEFAULT false
 )
 RETURNS public.installations
 LANGUAGE plpgsql
@@ -365,7 +366,7 @@ BEGIN
     -- If another installation of this operator holds this endpoint, rotate/reassign cleanly
     IF p_endpoint IS NOT NULL THEN
         UPDATE public.installations
-        SET endpoint = NULL, is_active = false, updated_at = now()
+        SET endpoint = NULL, p256dh = NULL, auth = NULL, is_active = false, updated_at = now()
         WHERE operator_id = auth.uid()
           AND endpoint = p_endpoint
           AND id <> v_inst_id;
@@ -390,9 +391,9 @@ BEGIN
         p_platform,
         COALESCE(p_local_enabled, true),
         COALESCE(p_permission_state, 'prompt'),
-        p_endpoint,
-        p_p256dh,
-        p_auth,
+        CASE WHEN p_clear_subscription THEN NULL ELSE p_endpoint END,
+        CASE WHEN p_clear_subscription THEN NULL ELSE p_p256dh END,
+        CASE WHEN p_clear_subscription THEN NULL ELSE p_auth END,
         COALESCE(NULLIF(trim(p_installation_timezone), ''), 'UTC'),
         now(),
         true,
@@ -402,9 +403,21 @@ BEGIN
         platform = EXCLUDED.platform,
         local_enabled = EXCLUDED.local_enabled,
         permission_state = EXCLUDED.permission_state,
-        endpoint = COALESCE(EXCLUDED.endpoint, public.installations.endpoint),
-        p256dh = COALESCE(EXCLUDED.p256dh, public.installations.p256dh),
-        auth = COALESCE(EXCLUDED.auth, public.installations.auth),
+        endpoint = CASE
+            WHEN p_clear_subscription THEN NULL
+            WHEN EXCLUDED.endpoint IS NOT NULL THEN EXCLUDED.endpoint
+            ELSE public.installations.endpoint
+        END,
+        p256dh = CASE
+            WHEN p_clear_subscription THEN NULL
+            WHEN EXCLUDED.endpoint IS NOT NULL THEN EXCLUDED.p256dh
+            ELSE public.installations.p256dh
+        END,
+        auth = CASE
+            WHEN p_clear_subscription THEN NULL
+            WHEN EXCLUDED.endpoint IS NOT NULL THEN EXCLUDED.auth
+            ELSE public.installations.auth
+        END,
         installation_timezone = EXCLUDED.installation_timezone,
         timezone_observed_at = now(),
         is_active = true,
@@ -415,7 +428,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION api.register_or_update_installation(UUID, TEXT, BOOLEAN, TEXT, TEXT, TEXT, TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION api.register_or_update_installation(UUID, TEXT, BOOLEAN, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) TO authenticated;
 
 CREATE OR REPLACE FUNCTION api.deactivate_installation(
     p_id UUID
@@ -589,7 +602,7 @@ BEGIN
 
         -- Permanent rejection disables endpoint and cancels jobs
         UPDATE public.installations
-        SET is_active = false, endpoint = NULL, updated_at = now()
+        SET is_active = false, endpoint = NULL, p256dh = NULL, auth = NULL, updated_at = now()
         WHERE id = v_job.installation_id;
 
         UPDATE public.notification_jobs

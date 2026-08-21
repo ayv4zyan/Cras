@@ -352,4 +352,37 @@ describe("Web Push Notifications Journey & Lifecycle", () => {
       expect(callOrder).toEqual(["deactivate", "signOut"]);
     });
   });
+
+  it("Sign-out proceeds with onSignOut even if deactivation rejects", async () => {
+    mockRpc.mockImplementation((name) => {
+      if (name === "deactivate_installation") {
+        return Promise.resolve({
+          data: null,
+          error: { message: "Network offline", code: "PGRST000" },
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const onSignOut = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <AuthenticatedApp
+        client={mockClient}
+        user={mockUser}
+        onSignOut={onSignOut}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Sign out")).toBeInTheDocument();
+    });
+
+    const signOutBtn = screen.getByLabelText("Sign out");
+    fireEvent.click(signOutBtn);
+
+    await waitFor(() => {
+      expect(onSignOut).toHaveBeenCalled();
+    });
+  });
 });

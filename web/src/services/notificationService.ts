@@ -239,6 +239,7 @@ export async function syncInstallationWithServer(
     p256dh?: string | null;
     auth?: string | null;
     installationTimezone?: string;
+    clearSubscription?: boolean;
   },
 ): Promise<InstallationRecord | null> {
   const installationId = getOrCreateInstallationId();
@@ -251,6 +252,8 @@ export async function syncInstallationWithServer(
         ? "denied"
         : "prompt";
   const tz = options?.installationTimezone ?? getObservedTimezone();
+  const clearSubscription =
+    options?.clearSubscription ?? options?.endpoint === null;
 
   const api =
     typeof client.schema === "function" ? client.schema("api") : client;
@@ -259,10 +262,11 @@ export async function syncInstallationWithServer(
     p_platform: "web",
     p_local_enabled: localEnabled,
     p_permission_state: permissionState,
-    p_endpoint: options?.endpoint !== undefined ? options.endpoint : null,
-    p_p256dh: options?.p256dh !== undefined ? options.p256dh : null,
-    p_auth: options?.auth !== undefined ? options.auth : null,
+    p_endpoint: clearSubscription ? null : (options?.endpoint ?? null),
+    p_p256dh: clearSubscription ? null : (options?.p256dh ?? null),
+    p_auth: clearSubscription ? null : (options?.auth ?? null),
     p_installation_timezone: tz,
+    p_clear_subscription: clearSubscription,
   });
 
   if (error) {

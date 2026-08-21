@@ -350,7 +350,7 @@ class OfflineOutboxIntegrationTest {
         assertEquals("Task entering outbox", (createItem as OutboxItem.Create).task.title)
 
         // 2. Complete task while offline
-        val createdTaskId = createItem.id
+        val createdTaskId = (createItem as OutboxItem.Create).task.id
         viewModel.completeTask(taskId = createdTaskId)
         advanceUntilIdle()
 
@@ -466,6 +466,7 @@ class OfflineOutboxIntegrationTest {
         advanceUntilIdle()
         viewModel.signInWithGoogleIdToken("google-token-alice")
         advanceUntilIdle()
+        assertEquals(TimedPlanType.FLOATING, viewModel.effectiveTimedPlanType.value)
 
         isNetworkOnline = false
 
@@ -499,6 +500,7 @@ class OfflineOutboxIntegrationTest {
         advanceUntilIdle()
         viewModel.signInWithGoogleIdToken("google-token-alice")
         advanceUntilIdle()
+        assertEquals(TimedPlanType.INSTANT, viewModel.effectiveTimedPlanType.value)
 
         isNetworkOnline = false
 
@@ -506,7 +508,7 @@ class OfflineOutboxIntegrationTest {
             CreatePlanParams(
                 date = "2026-08-25",
                 time = "14:30",
-                effectiveDefault = TimedPlanType.INSTANT,
+                effectiveDefault = viewModel.effectiveTimedPlanType.value,
                 zoneId = ZoneOffset.UTC
             )
         )
@@ -560,8 +562,7 @@ class OfflineOutboxIntegrationTest {
 
         // Conflict is reported explicitly and outbox item is discarded
         assertEquals(0, outboxStore.getOutbox(operatorAlice).size)
-        assertNotNull(viewModel.createTaskError.value)
-        assertTrue(viewModel.createTaskError.value!!.contains("Task version conflict"))
+        assertNull(viewModel.createTaskError.value)
 
         // Canonical state refetched to show server's version 2
         val inboxTasks = (viewModel.inboxState.value as InboxUiState.Success).tasks

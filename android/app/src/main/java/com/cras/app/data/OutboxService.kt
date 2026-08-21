@@ -65,6 +65,18 @@ class InMemoryOutboxStore : OutboxStore {
     }
 
     @Synchronized
+    override fun enqueue(operatorId: String, item: OutboxItem) {
+        val current = store[operatorId] ?: emptyList()
+        store[operatorId] = current + item
+    }
+
+    @Synchronized
+    override fun remove(operatorId: String, itemId: String) {
+        val current = store[operatorId] ?: emptyList()
+        store[operatorId] = current.filterNot { it.id == itemId }
+    }
+
+    @Synchronized
     override fun clear(operatorId: String) {
         store.remove(operatorId)
     }
@@ -75,40 +87,69 @@ class SharedPreferencesOutboxStore(
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) : OutboxStore {
     private val inMemoryFallback = InMemoryOutboxStore()
+    private val staleOperators = mutableSetOf<String>()
 
     private fun getStorageKey(operatorId: String) = "cras_outbox_$operatorId"
 
-    @Synchronized
-    override fun getOutbox(operatorId: String): List<OutboxItem> {
+    private fun readPersisted(operatorId: String): List<OutboxItem>? {
         val serialized = try {
             preferences.getString(getStorageKey(operatorId), null)
         } catch (_: Exception) {
+            return null
+        } ?: return null
+
+        return try {
+            json.decodeFromString<List<OutboxItem>>(serialized)
+        } catch (_: Exception) {
             null
         }
-        if (serialized != null) {
-            try {
-                return json.decodeFromString<List<OutboxItem>>(serialized)
-            } catch (_: Exception) {
-                // Fall through to in-memory fallback on parse error
-            }
+    }
+
+    private fun writePersisted(operatorId: String, items: List<OutboxItem>): Boolean {
+        return try {
+            val serialized = json.encodeToString(items)
+            preferences.edit().putString(getStorageKey(operatorId), serialized).apply()
+            true
+        } catch (_: Exception) {
+            false
         }
-        return inMemoryFallback.getOutbox(operatorId)
+    }
+
+    @Synchronized
+    override fun getOutbox(operatorId: String): List<OutboxItem> {
+        if (staleOperators.contains(operatorId)) {
+            return inMemoryFallback.getOutbox(operatorId)
+        }
+        val persisted = readPersisted(operatorId)
+        return persisted ?: inMemoryFallback.getOutbox(operatorId)
     }
 
     @Synchronized
     override fun saveOutbox(operatorId: String, items: List<OutboxItem>) {
         inMemoryFallback.saveOutbox(operatorId, items)
-        try {
-            val serialized = json.encodeToString(items)
-            preferences.edit().putString(getStorageKey(operatorId), serialized).apply()
-        } catch (_: Exception) {
-            // Ignore storage write failures
+        if (writePersisted(operatorId, items)) {
+            staleOperators.remove(operatorId)
+        } else {
+            staleOperators.add(operatorId)
         }
+    }
+
+    @Synchronized
+    override fun enqueue(operatorId: String, item: OutboxItem) {
+        val current = getOutbox(operatorId)
+        saveOutbox(operatorId, current + item)
+    }
+
+    @Synchronized
+    override fun remove(operatorId: String, itemId: String) {
+        val current = getOutbox(operatorId)
+        saveOutbox(operatorId, current.filterNot { it.id == itemId })
     }
 
     @Synchronized
     override fun clear(operatorId: String) {
         inMemoryFallback.clear(operatorId)
+        staleOperators.remove(operatorId)
         try {
             preferences.edit().remove(getStorageKey(operatorId)).apply()
         } catch (_: Exception) {
@@ -122,13 +163,14 @@ fun applyOutboxToTasks(
     outboxItems: List<OutboxItem>
 ): List<Task> {
     var result = canonicalTasks.toMutableList()
+    var insertIndex = 0
 
     for (item in outboxItems) {
         when (item) {
             is OutboxItem.Create -> {
                 val exists = result.any { it.id == item.task.id }
                 if (!exists) {
-                    result.add(0, item.task)
+                    result.add(insertIndex++, item.task)
                 }
             }
             is OutboxItem.Complete -> {
@@ -158,6 +200,9 @@ fun isNetworkError(error: Throwable): Boolean {
     val httpCodeMatch = Regex("""Failed to .*: (\d{3}) """).find(msg)
     if (httpCodeMatch != null) {
         val code = httpCodeMatch.groupValues[1].toIntOrNull()
+        if (code == 401 || code == 429) {
+            return true
+        }
         if (code != null && code in 400..499) {
             return false
         }

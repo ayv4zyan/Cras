@@ -151,6 +151,8 @@ class InboxViewModel(
     private val _createLabelError = MutableStateFlow<String?>(null)
     val createLabelError: StateFlow<String?> = _createLabelError.asStateFlow()
 
+    private val outboxDrainer by lazy { OutboxDrainer(taskService, outboxStore) }
+
     private var realtimeSubscription: RealtimeSubscription? = null
     private val queue = ArrayDeque<QueueItem>()
     private val queueSignal = Channel<Unit>(Channel.CONFLATED)
@@ -532,8 +534,7 @@ class InboxViewModel(
             return
         }
 
-        val drainer = OutboxDrainer(taskService, outboxStore)
-        drainer.drain(
+        outboxDrainer.drain(
             session = session,
             callbacks = object : OutboxDrainCallbacks {
                 override suspend fun onTaskCreated(task: Task) {
@@ -546,7 +547,9 @@ class InboxViewModel(
 
                 override suspend fun onConflict(error: Throwable, item: OutboxItem) {
                     val errorMsg = error.message ?: "Task version conflict"
-                    _createTaskError.value = errorMsg
+                    if (item is OutboxItem.Create) {
+                        _createTaskError.value = errorMsg
+                    }
                     onConflictError?.invoke(errorMsg)
                     triggerLoadTasks(session)
                 }
@@ -954,6 +957,14 @@ class InboxViewModel(
         val version = expectedVersion ?: task?.version
         if (version == null) {
             onError("Task state is unavailable. Refresh and try again.")
+            return
+        }
+
+        val alreadyQueued = outboxStore.getOutbox(session.operatorId).any {
+            it is OutboxItem.Complete && it.taskId == taskId
+        }
+        if (alreadyQueued) {
+            onSuccess()
             return
         }
 

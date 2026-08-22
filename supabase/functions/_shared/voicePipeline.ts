@@ -16,6 +16,42 @@ export interface VoiceReservationResult {
   readonly message?: string;
 }
 
+/**
+ * Normalizes the raw snake_case JSONB payload returned by the
+ * api.reserve_voice_allowance RPC into a VoiceReservationResult.
+ *
+ * The Postgres function builds its response with jsonb_build_object using
+ * snake_case keys ('reservation_id', 'earliest_retry_at',
+ * 'retry_after_seconds'), so the payload must never be trusted as an
+ * already-camelCase object. Fields are read loosely from an unknown record:
+ * anything missing or of the wrong type is dropped to undefined, and
+ * 'allowed' is only true when explicitly boolean true (garbage payloads
+ * degrade to a conservative rejection).
+ */
+export function normalizeVoiceReservation(
+  payload: unknown,
+): VoiceReservationResult {
+  const record =
+    typeof payload === "object" && payload !== null
+      ? (payload as Record<string, unknown>)
+      : {};
+
+  const str = (value: unknown): string | undefined =>
+    typeof value === "string" ? value : undefined;
+
+  return {
+    allowed: record["allowed"] === true,
+    reservationId: str(record["reservation_id"]),
+    reason: str(record["reason"]),
+    earliestRetryAt: str(record["earliest_retry_at"]),
+    retryAfterSeconds:
+      typeof record["retry_after_seconds"] === "number"
+        ? record["retry_after_seconds"]
+        : undefined,
+    message: str(record["message"]),
+  };
+}
+
 export interface ExtractedPlan {
   readonly date?: string | null;
   readonly time?: string | null;
@@ -593,7 +629,7 @@ export async function processVoiceCapture(
     };
   }
 
-  const reservation = reserveData as VoiceReservationResult;
+  const reservation = normalizeVoiceReservation(reserveData);
   if (!reservation.allowed) {
     if (
       reservation.reason === "voice_disabled" ||

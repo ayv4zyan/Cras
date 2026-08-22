@@ -193,6 +193,8 @@ class VoiceServiceTest {
         assertTrue(body.contains("\"target_draft_index\":0"))
         assertTrue(body.contains("\"title\":\"Go to pool\""))
         assertTrue(body.contains("\"plan_date\":\"2026-08-25\""))
+        // Untimed drafts omit plan_type entirely, like JSON.stringify dropping undefined.
+        assertFalse(body.contains("\"plan_type\""))
     }
 
     // ---- successful response mapping ----

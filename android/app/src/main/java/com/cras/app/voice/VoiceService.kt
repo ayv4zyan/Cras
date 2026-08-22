@@ -216,7 +216,8 @@ class SupabaseVoiceCaptureApi(
                     put("priority", draft.priority)
                     put("plan_date", formatPlanDate(draft.plan))
                     put("plan_time", formatPlanTime(draft.plan))
-                    put("plan_type", timedPlanTypeOf(draft.plan)?.value)
+                    // Omitted when untimed, mirroring JSON.stringify dropping undefined.
+                    timedPlanTypeOf(draft.plan)?.let { put("plan_type", it.value) }
                 }
             )
         }

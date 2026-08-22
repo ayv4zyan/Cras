@@ -99,6 +99,12 @@ class MicAudioRecorder(
         } catch (e: SecurityException) {
             active = false
             throw MicPermissionDeniedException(e)
+        } catch (e: IOException) {
+            // Some platforms report a denied RECORD_AUDIO grant by handing back
+            // an uninitialized AudioRecord instead of throwing SecurityException;
+            // both surface the documented permission-denied signal to callers.
+            active = false
+            throw MicPermissionDeniedException(e)
         }
     }
 

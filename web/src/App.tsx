@@ -830,7 +830,14 @@ export function AuthenticatedApp({
         // Retained in outbox on network error
       }
     },
-    [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError, handleDrainNetworkError],
+    [
+      userId,
+      client,
+      applyTaskUpdate,
+      handleDrainConflict,
+      handleDrainError,
+      handleDrainNetworkError,
+    ],
   );
 
   const handleUncompleteTask = useCallback(

@@ -341,7 +341,9 @@ describe("OutboxService", () => {
   });
 
   it("does not invoke onNetworkError when a non-network error drops an item", async () => {
-    const mockRpc = vi.fn().mockRejectedValue(new Error("constraint violation"));
+    const mockRpc = vi
+      .fn()
+      .mockRejectedValue(new Error("constraint violation"));
     const mockClient = {
       schema: vi.fn().mockReturnValue({
         rpc: mockRpc,

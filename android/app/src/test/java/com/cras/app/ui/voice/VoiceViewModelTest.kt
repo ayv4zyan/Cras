@@ -260,6 +260,53 @@ class VoiceViewModelTest {
         }
 
     @Test
+    fun `cancelling during processing discards the late result instead of surfacing it`() =
+        runTest {
+            val api = FakeVoiceCaptureApi().apply {
+                gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+                response = createResponse("Stale draft")
+            }
+            val viewModel = newViewModel(api)
+
+            viewModel.open(focusedTask = null)
+            val fake = startRecording(viewModel) { advanceUntilIdle() }
+            fake.emitSamples(1_600)
+            viewModel.stopAndProcess()
+            advanceUntilIdle() // suspends inside the gated API call
+
+            assertTrue(viewModel.uiState.value is VoiceUiState.Processing)
+
+            viewModel.cancelRecording()
+            assertEquals(VoiceUiState.Idle, viewModel.uiState.value)
+
+            api.gate?.complete(Unit)
+            advanceUntilIdle()
+
+            // The cancelled send must not overwrite Idle with Drafts or Failed.
+            assertEquals(VoiceUiState.Idle, viewModel.uiState.value)
+        }
+
+    @Test
+    fun `clearing all retained recordings empties the retry store`() = runTest {
+        val api = FakeVoiceCaptureApi().apply {
+            error = VoiceError(502, "provider_error", "Voice processing failed.")
+        }
+        val viewModel = newViewModel(api)
+
+        viewModel.open(focusedTask = null)
+        val fake = startRecording(viewModel) { advanceUntilIdle() }
+        fake.emitSamples(1_600)
+        viewModel.stopAndProcess()
+        advanceUntilIdle()
+        assertTrue(viewModel.retainedRecordings.value.isNotEmpty())
+
+        viewModel.deleteAllRetainedRecordings()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+    }
+
+    @Test
     fun `successful capture presents drafts anchored to the recording start`() = runTest {
         val api = FakeVoiceCaptureApi().apply { response = createResponse("Buy milk") }
         val viewModel = newViewModel(api)

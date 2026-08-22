@@ -119,7 +119,12 @@ class MainActivity : ComponentActivity() {
             installationSync = sync
         )
 
-        val voiceCaptureApi = SupabaseVoiceCaptureApi(config, httpClient)
+        // Voice gets its own timeouts: a 4 MB upload plus server transcription
+        // exceeds the shared client's ~10 s defaults.
+        val voiceCaptureApi = SupabaseVoiceCaptureApi(
+            config,
+            SupabaseVoiceCaptureApi.voiceHttpClient(httpClient),
+        )
         val voiceRecordingStore = DirectoryVoiceRecordingStore(
             File(applicationContext.filesDir, "voice-recordings")
         )
@@ -140,6 +145,21 @@ class MainActivity : ComponentActivity() {
                 val authState = inboxViewModel.authState.value
                 val session = (authState as? AuthUiState.Authenticated)?.session
                 runCatching { sync.onFcmTokenRotated(token, session) }
+            }
+        }
+
+        // Retained recordings live in an install-wide directory: drop them the
+        // moment an Operator signs out so a later Operator cannot replay
+        // earlier audio through Voice retry.
+        lifecycleScope.launch {
+            var previousState: AuthUiState? = null
+            inboxViewModel.authState.collect { state ->
+                if (previousState is AuthUiState.Authenticated &&
+                    state is AuthUiState.Unauthenticated
+                ) {
+                    voiceViewModel.deleteAllRetainedRecordings()
+                }
+                previousState = state
             }
         }
 

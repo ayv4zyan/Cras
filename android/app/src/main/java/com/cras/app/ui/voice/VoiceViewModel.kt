@@ -186,6 +186,10 @@ class VoiceViewModel(
         activeRecorder = null
         recordingStart = null
         if (_uiState.value is VoiceUiState.Recording || _uiState.value is VoiceUiState.Processing) {
+            // Like close(): a cancelled take must not let the in-flight send
+            // overwrite Idle with a late Drafts/Failed result.
+            sendJob?.cancel()
+            sendJob = null
             _uiState.value = VoiceUiState.Idle
         }
     }

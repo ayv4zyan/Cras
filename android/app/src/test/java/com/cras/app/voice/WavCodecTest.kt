@@ -279,4 +279,78 @@ class WavCodecTest {
         assertTrue(expected.contentEquals(result.wav))
         assertEquals(1L * (expected.size - 44) / 2 * 1000 / 16000, (result.durationSeconds * 1000).toLong())
     }
+
+    @Test
+    fun `RecordingBuffer streaming build stays byte-identical to the merge-resample-encode reference across rates`() {
+        val rates = intArrayOf(48000, 44100, 32000, 24000, 16000, 12000, 8000)
+        val random = java.util.Random(54L)
+
+        for (inputRate in rates) {
+            // A few sizes per rate, including single-sample and bound-straddling lengths.
+            val sizePool = intArrayOf(1, 2, 3, 17, 999, 4096, 50_000 + random.nextInt(7_000))
+            for (size in sizePool) {
+                val signal = FloatArray(size) { i ->
+                    ((random.nextDouble() * 2.0) - 1.0).toFloat()
+                }
+
+                // Reference pipeline: merge everything, downsample, encode.
+                val expected = encodePcmWav(downsampleTo16kHz(signal, inputRate))
+
+                // Production pipeline: random chunk splits through append().
+                val buffer = RecordingBuffer(inputSampleRate = inputRate)
+                var offset = 0
+                while (offset < size) {
+                    val step = 1 + random.nextInt(1500)
+                    val end = minOf(offset + step, size)
+                    buffer.append(signal.copyOfRange(offset, end))
+                    offset = end
+                }
+
+                val result = buffer.build()
+                assertTrue(
+                    "rate=$inputRate size=$size",
+                    expected.contentEquals(result.wav),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `RecordingBuffer keeps peak memory near the compact WAV instead of float chunk history`() {
+        val inputRate = 48000
+        val totalSamples = (MAX_RECORDING_DURATION_MS * inputRate / 1000L).toInt()
+
+        System.gc()
+        val baseline = usedMemoryAfterGc()
+
+        val buffer = RecordingBuffer(inputSampleRate = inputRate)
+        var offset = 0
+        while (offset < totalSamples) {
+            val end = minOf(offset + inputRate / 10, totalSamples)
+            buffer.append(FloatArray(end - offset) { i -> (i % 7) * 0.01f })
+            offset = end
+        }
+        val result = buffer.build()
+
+        // The pre-sized PCM16 destination (~4 MB) plus small state is retained;
+        // the historical design additionally held ~23 MB of capture-rate floats.
+        val retained = usedMemoryAfterGc() - baseline
+
+        assertTrue("expected bounded WAV", result.sizeBytes <= MAX_AUDIO_SIZE_BYTES)
+        val outputSamples = (result.wav.size - 44) / 2
+        assertEquals(MAX_RECORDING_DURATION_MS / 1000, outputSamples.toLong() / TARGET_SAMPLE_RATE)
+        assertTrue(
+            "retained ${retained / (1024 * 1024)} MB exceeds the compact-output budget",
+            retained < 12L * 1024 * 1024,
+        )
+
+        buffer.cancel()
+    }
+
+    private fun usedMemoryAfterGc(): Long {
+        System.gc()
+        System.gc()
+        val runtime = Runtime.getRuntime()
+        return runtime.totalMemory() - runtime.freeMemory()
+    }
 }

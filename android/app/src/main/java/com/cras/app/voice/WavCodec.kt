@@ -147,16 +147,37 @@ class AudioRecordingResult(
  * bounded, normalized WAV result. Pure JVM logic shared by mic capture and tests:
  * auto-stops at the shared 120 s limit and refuses samples that would push the
  * encoded WAV past the shared 4 MB limit.
+ *
+ * Memory profile: each chunk is converted and resampled to the 16 kHz PCM16
+ * output the moment it arrives, so neither the capture-rate float history nor a
+ * merged/resampled intermediate is ever held. Retained state is the pre-sized
+ * output byte area (~4 MB worst case) plus one float and two counters; peak
+ * live memory stays near the final WAV regardless of take length or rate.
  */
 class RecordingBuffer(private val inputSampleRate: Int) {
 
-    private val chunks = mutableListOf<FloatArray>()
+    private val ratio: Double = inputSampleRate.toDouble() / TARGET_SAMPLE_RATE
+
     private val maxInputSamplesForSizeBound: Long =
         (((MAX_AUDIO_SIZE_BYTES - WAV_HEADER_LENGTH - SIZE_BOUND_SAFETY_BYTES) / 2).toDouble() *
             inputSampleRate / TARGET_SAMPLE_RATE).toLong().coerceAtLeast(0L)
 
+    // Single pre-sized destination: header slot plus the largest data section
+    // the shared 4 MB bound can ever produce at this capture rate. The header
+    // is written over the front once the final length is known at build time.
+    private val encoded = ByteArray(
+        WAV_HEADER_LENGTH + ((maxInputSamplesForSizeBound / ratio).roundToInt() + 1) * 2
+    )
+
     var totalInputSamples: Long = 0L
         private set
+
+    // Newest accepted input sample. It resolves interpolation windows that
+    // straddle an append boundary without retaining the previous chunk.
+    private var lastSample: Float = 0f
+
+    // Output samples already finalized into [encoded], in order.
+    private var emittedSamples: Int = 0
 
     val isEmpty: Boolean get() = totalInputSamples == 0L
 
@@ -170,6 +191,14 @@ class RecordingBuffer(private val inputSampleRate: Int) {
     val wouldExceedSizeBound: Boolean
         get() = totalInputSamples >= maxInputSamplesForSizeBound
 
+    /**
+     * Converts and resamples one capture-rate chunk straight into the compact
+     * PCM16 output. Every output sample whose two-point interpolation window is
+     * fully covered by arrived data is finalized immediately; a window reaching
+     * past the newest sample stays pending until the next append closes it, so
+     * chunk boundaries never alter the arithmetic. The per-sample math matches
+     * downsampleTo16kHz over a merged buffer byte-for-byte.
+     */
     fun append(chunk: FloatArray) {
         if (shouldAutoStop || chunk.isEmpty()) return
 
@@ -177,16 +206,37 @@ class RecordingBuffer(private val inputSampleRate: Int) {
         if (capacity == 0L) return
 
         val accepted = min(chunk.size.toLong(), capacity).toInt()
-        chunks.add(if (accepted == chunk.size) chunk.copyOf() else chunk.copyOf(accepted))
+        val newestAvailable = totalInputSamples + accepted - 1L
+        val chunkStart = totalInputSamples
+
+        fun sampleAt(index: Int): Float =
+            if (index >= chunkStart) chunk[(index - chunkStart).toInt()] else lastSample
+
+        while (true) {
+            val originalIndex = emittedSamples * ratio
+            val indexLowDouble = floor(originalIndex)
+            val indexLow = indexLowDouble.toInt()
+            // The high neighbour has not arrived yet: defer this output.
+            if (indexLow + 1 > newestAvailable) break
+            val fraction = originalIndex - indexLowDouble
+
+            val value = (sampleAt(indexLow) * (1 - fraction) +
+                sampleAt(indexLow + 1) * fraction).toFloat()
+
+            writeSample(emittedSamples, quantizeSample(value))
+            emittedSamples++
+        }
+
+        lastSample = chunk[accepted - 1]
         totalInputSamples += accepted
     }
 
     /**
-     * Resamples the accumulated audio to 16 kHz and encodes it, streaming
-     * straight off the chunk list. The per-sample arithmetic matches
-     * downsampleTo16kHz over a merged buffer byte-for-byte, without ever
-     * materialising the full-rate merged copy that dominated peak memory.
-     * Throws like the web recorder when nothing was recorded.
+     * Encodes the accumulated audio. Outputs whose window ran past the final
+     * sample resolve here against the clamped high index of the reference
+     * pipeline: both neighbours are the last sample, so the interpolation
+     * collapses onto it with identical arithmetic. Throws like the web
+     * recorder when nothing was recorded.
      */
     fun build(): AudioRecordingResult =
         buildOrNull() ?: throw IllegalStateException("No active recording to stop.")
@@ -194,57 +244,40 @@ class RecordingBuffer(private val inputSampleRate: Int) {
     fun buildOrNull(): AudioRecordingResult? {
         if (isEmpty) return null
 
-        val ratio = inputSampleRate.toDouble() / TARGET_SAMPLE_RATE
         val mergedSize = totalInputSamples.toInt()
         val newLength = (mergedSize / ratio).roundToInt()
 
-        val wav = ByteArray(WAV_HEADER_LENGTH + newLength * 2)
-        writeWavHeaderInto(wav, newLength * 2, TARGET_SAMPLE_RATE, 1, 16)
-
-        // Cursor over the chunk list: resample indices rise monotonically, so
-        // lookups stay O(1) amortised. Under upsampling (input rate below the
-        // 16 kHz target) indexLow repeats after indexHigh already stepped the
-        // cursor across a boundary, so it must be able to step back too.
-        var chunkIndex = 0
-        var chunkStartSample = 0L
-
-        fun sampleAt(index: Int): Float {
-            while (index < chunkStartSample) {
-                chunkIndex--
-                chunkStartSample -= chunks[chunkIndex].size
-            }
-            while (index >= chunkStartSample + chunks[chunkIndex].size) {
-                chunkStartSample += chunks[chunkIndex].size
-                chunkIndex++
-            }
-            return chunks[chunkIndex][index - chunkStartSample.toInt()]
-        }
-
-        for (i in 0 until newLength) {
-            val originalIndex = i * ratio
-            val indexLow = floor(originalIndex).toInt()
-            val indexHigh = min(indexLow + 1, mergedSize - 1)
+        while (emittedSamples < newLength) {
+            val originalIndex = emittedSamples * ratio
+            val indexLow = floor(originalIndex)
             val fraction = originalIndex - indexLow
 
-            val value = (sampleAt(indexLow) * (1 - fraction) +
-                sampleAt(indexHigh) * fraction).toFloat()
+            val value = (lastSample * (1 - fraction) +
+                lastSample * fraction).toFloat()
 
-            val truncated = quantizeSample(value)
-            wav[WAV_HEADER_LENGTH + i * 2] = (truncated and 0xFF).toByte()
-            wav[WAV_HEADER_LENGTH + i * 2 + 1] = ((truncated shr 8) and 0xFF).toByte()
+            writeSample(emittedSamples, quantizeSample(value))
+            emittedSamples++
         }
+
+        writeWavHeaderInto(encoded, newLength * 2, TARGET_SAMPLE_RATE, 1, 16)
 
         val durationSeconds = newLength.toDouble() / TARGET_SAMPLE_RATE
 
         return AudioRecordingResult(
-            wav = wav,
+            wav = encoded.copyOf(WAV_HEADER_LENGTH + newLength * 2),
             durationSeconds = durationSeconds.times(100).roundToInt() / 100.0,
         )
     }
 
+    private fun writeSample(outputIndex: Int, truncated: Int) {
+        encoded[WAV_HEADER_LENGTH + outputIndex * 2] = (truncated and 0xFF).toByte()
+        encoded[WAV_HEADER_LENGTH + outputIndex * 2 + 1] = ((truncated shr 8) and 0xFF).toByte()
+    }
+
     fun cancel() {
-        chunks.clear()
         totalInputSamples = 0L
+        emittedSamples = 0
+        lastSample = 0f
     }
 
     companion object {

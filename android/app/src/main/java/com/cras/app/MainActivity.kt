@@ -39,7 +39,6 @@ import com.cras.app.voice.DirectoryVoiceRecordingStore
 import com.cras.app.voice.MicAudioRecorderFactory
 import com.cras.app.voice.SupabaseVoiceCaptureApi
 import com.cras.app.ui.voice.VoiceViewModel
-import com.cras.app.domain.TimedPlanType
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.File
@@ -131,7 +130,8 @@ class MainActivity : ComponentActivity() {
             micRecorderProvider = { MicAudioRecorderFactory.create() },
             effectiveDefaultTimedPlanTypeProvider = {
                 inboxViewModel.effectiveTimedPlanType.value
-            }
+            },
+            micPermissionProvider = { hasMicrophonePermission() }
         )
         googleAuthManager = GoogleAuthManager(this)
 

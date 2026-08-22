@@ -435,7 +435,7 @@ private fun FailedBody(
             is VoiceFailure.AllowanceExhausted -> {
                 val retryAt = failure.earliestRetryAt?.let { " Earliest retry: $it." }.orEmpty()
                 val retryIn = failure.retryAfterSeconds?.let { " Retry after ${it}s." }.orEmpty()
-                "${failure.messageIfPresent()}$retryAt$retryIn"
+                "${messageFor(failure)}$retryAt$retryIn"
             }
             else -> messageFor(failure)
         },
@@ -462,9 +462,6 @@ private fun FailedBody(
         )
     }
 }
-
-private fun VoiceFailure.AllowanceExhausted.messageIfPresent(): String =
-    "Voice allowance or rate limit reached."
 
 private fun messageFor(failure: VoiceFailure): String = when (failure) {
     is VoiceFailure.NetworkError -> failure.message

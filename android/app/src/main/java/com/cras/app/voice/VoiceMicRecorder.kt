@@ -1,6 +1,12 @@
 package com.cras.app.voice
 
+import java.io.IOException
 import java.time.Instant
+
+/** Thrown when microphone capture cannot start because RECORD_AUDIO is denied. */
+class MicPermissionDeniedException(
+    cause: Throwable? = null,
+) : IOException("Microphone permission denied.", cause)
 
 /**
  * Microphone capture boundary for Voice capture. Mirrors the web AudioRecorder

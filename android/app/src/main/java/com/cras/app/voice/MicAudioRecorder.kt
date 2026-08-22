@@ -71,7 +71,7 @@ class MicAudioRecorder(
             }
         } catch (e: SecurityException) {
             active = false
-            throw IOException("Microphone permission denied.", e)
+            throw MicPermissionDeniedException(e)
         }
     }
 

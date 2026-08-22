@@ -39,9 +39,13 @@ export function normalizeVoiceReservation(
   const str = (value: unknown): string | undefined =>
     typeof value === "string" ? value : undefined;
 
+  // A blank (whitespace-only) reservation id is unusable for reconciliation,
+  // so map it to undefined like any other invalid value.
+  const reservationId = str(record["reservation_id"])?.trim();
+
   return {
     allowed: record["allowed"] === true,
-    reservationId: str(record["reservation_id"]),
+    reservationId: reservationId || undefined,
     reason: str(record["reason"]),
     earliestRetryAt: str(record["earliest_retry_at"]),
     retryAfterSeconds:

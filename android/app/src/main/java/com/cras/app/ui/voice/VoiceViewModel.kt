@@ -58,6 +58,7 @@ class VoiceViewModel(
     private var recordingStart: Instant? = null
     private var tickerJob: Job? = null
     private var elapsedStartMs: Long = 0L
+    private var sendJob: Job? = null
 
     private var focusedTask: Task? = null
     private var workingDrafts: List<DraftTask> = emptyList()
@@ -68,8 +69,10 @@ class VoiceViewModel(
         refreshRetainedRecordings()
     }
 
-    /** Leaves the Voice surface, cancelling any live recording. */
+    /** Leaves the Voice surface, cancelling any live recording or in-flight send. */
     fun close() {
+        sendJob?.cancel()
+        sendJob = null
         cancelRecording()
         workingDrafts = emptyList()
         focusedTask = null
@@ -77,6 +80,12 @@ class VoiceViewModel(
     }
 
     fun startRecording() {
+        // A live recorder must never be replaced: the orphaned instance would keep
+        // holding the microphone. Processing waits for the in-flight send instead.
+        if (activeRecorder != null || _uiState.value is VoiceUiState.Processing) {
+            return
+        }
+
         if (!micPermissionProvider()) {
             _uiState.value = VoiceUiState.Failed(VoiceFailure.MicPermissionMissing)
             return
@@ -150,6 +159,7 @@ class VoiceViewModel(
 
     /** Re-sends the latest retained recording without re-recording. */
     fun retryProcessing() {
+        if (_uiState.value is VoiceUiState.Processing) return
         val latest = recordingStore.latest() ?: run {
             startRecording()
             return
@@ -249,7 +259,7 @@ class VoiceViewModel(
             effectiveDefaultTimedPlanType = effectiveDefault(),
         )
 
-        viewModelScope.launch {
+        sendJob = viewModelScope.launch {
             try {
                 val result = voiceCaptureApi.sendVoiceCapture(session, options)
                 workingDrafts = result.drafts.toList()

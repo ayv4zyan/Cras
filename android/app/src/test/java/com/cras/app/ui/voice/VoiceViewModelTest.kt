@@ -134,11 +134,15 @@ class VoiceViewModelTest {
         var response: ((VoiceCaptureRequestOptions) -> VoiceCaptureResult)? = null
         var error: VoiceError? = null
 
+        /** When set, calls suspend here until completed, simulating an in-flight send. */
+        var gate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
         override suspend fun sendVoiceCapture(
             session: OperatorSession,
             options: VoiceCaptureRequestOptions,
         ): VoiceCaptureResult {
             requests.add(options)
+            gate?.await()
             error?.let { throw it }
             return response?.invoke(options)
                 ?: VoiceCaptureResult("", VoiceCaptureMode.CREATE, emptyList())
@@ -212,6 +216,48 @@ class VoiceViewModelTest {
         assertEquals(VoiceFailure.MicPermissionMissing, state.failure)
         assertEquals(0, api.requests.size)
     }
+
+    @Test
+    fun `double-tapping start keeps a single live recorder instead of leaking the mic`() =
+        runTest {
+            val api = FakeVoiceCaptureApi().apply { response = createResponse("Once") }
+            val viewModel = newViewModel(api)
+
+            viewModel.open(focusedTask = null)
+            startRecording(viewModel) { advanceUntilIdle() }
+            viewModel.startRecording()
+            advanceUntilIdle()
+
+            assertEquals(1, createdRecorders.size)
+            assertTrue(viewModel.uiState.value is VoiceUiState.Recording)
+        }
+
+    @Test
+    fun `closing during processing discards the stale result instead of surfacing it later`() =
+        runTest {
+            val api = FakeVoiceCaptureApi().apply {
+                gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+                response = createResponse("Stale draft")
+            }
+            val viewModel = newViewModel(api)
+
+            viewModel.open(focusedTask = null)
+            val fake = startRecording(viewModel) { advanceUntilIdle() }
+            fake.emitSamples(1_600)
+            viewModel.stopAndProcess()
+            advanceUntilIdle() // suspends inside the gated API call
+
+            assertTrue(viewModel.uiState.value is VoiceUiState.Processing)
+
+            viewModel.close()
+            assertEquals(VoiceUiState.Idle, viewModel.uiState.value)
+
+            api.gate?.complete(Unit)
+            advanceUntilIdle()
+
+            // The late response must not overwrite the fresh Idle session.
+            assertEquals(VoiceUiState.Idle, viewModel.uiState.value)
+        }
 
     @Test
     fun `successful capture presents drafts anchored to the recording start`() = runTest {

@@ -255,4 +255,28 @@ class WavCodecTest {
         val expected = encodePcmWav(downsampleTo16kHz(signal, inputRate))
         assertTrue(expected.contentEquals(fromChunks.wav))
     }
+
+    @Test
+    fun `RecordingBuffer build handles upsampling across multi-chunk boundaries`() {
+        val inputRate = 8000 // ratio < 1: resample indices repeat across steps
+        val signal = FloatArray(4001) { i ->
+            kotlin.math.sin(2.0 * Math.PI * 440.0 * i / inputRate).toFloat()
+        }
+
+        val buffer = RecordingBuffer(inputSampleRate = inputRate)
+        var offset = 0
+        for (size in intArrayOf(1000, 1000, 1000, 1001)) {
+            val end = minOf(offset + size, signal.size)
+            buffer.append(signal.copyOfRange(offset, end))
+            offset = end
+        }
+
+        val result = buffer.build()
+
+        // Chunk boundaries land on whole resample indexes here, forcing the
+        // interpolation window to straddle them repeatedly.
+        val expected = encodePcmWav(downsampleTo16kHz(signal, inputRate))
+        assertTrue(expected.contentEquals(result.wav))
+        assertEquals(1L * (expected.size - 44) / 2 * 1000 / 16000, (result.durationSeconds * 1000).toLong())
+    }
 }

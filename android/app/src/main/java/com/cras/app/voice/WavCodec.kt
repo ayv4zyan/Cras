@@ -202,11 +202,17 @@ class RecordingBuffer(private val inputSampleRate: Int) {
         writeWavHeaderInto(wav, newLength * 2, TARGET_SAMPLE_RATE, 1, 16)
 
         // Cursor over the chunk list: resample indices rise monotonically, so
-        // the cursor only ever advances and each lookup stays O(1) amortised.
+        // lookups stay O(1) amortised. Under upsampling (input rate below the
+        // 16 kHz target) indexLow repeats after indexHigh already stepped the
+        // cursor across a boundary, so it must be able to step back too.
         var chunkIndex = 0
         var chunkStartSample = 0L
 
         fun sampleAt(index: Int): Float {
+            while (index < chunkStartSample) {
+                chunkIndex--
+                chunkStartSample -= chunks[chunkIndex].size
+            }
             while (index >= chunkStartSample + chunks[chunkIndex].size) {
                 chunkStartSample += chunks[chunkIndex].size
                 chunkIndex++

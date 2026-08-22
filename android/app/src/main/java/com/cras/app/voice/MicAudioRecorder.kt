@@ -23,12 +23,28 @@ class MicAudioRecorder(
     @Volatile
     private var active = false
 
+    @Volatile
     private var audioRecord: AudioRecord? = null
+
+    @Volatile
     private var captureThread: Thread? = null
+
+    @Volatile
     private var buffer: RecordingBuffer? = null
+
+    @Volatile
     private var pendingResult: AudioRecordingResult? = null
     private var autoStopFired = false
     private var inputSampleRate: Int = TARGET_SAMPLE_RATE
+
+    /**
+     * Identity of the current take. Capture threads carry their take's value
+     * and refuse to touch shared state once it no longer matches, so a thread
+     * that outlives a timed-out stop/cancel becomes harmless even if it wakes
+     * up later.
+     */
+    @Volatile
+    private var generation = 0L
 
     override var startedAt: Instant? = null
         private set
@@ -57,17 +73,30 @@ class MicAudioRecorder(
                 throw IOException("Microphone initialisation failed. Check RECORD_AUDIO permission.")
             }
 
-            buffer = RecordingBuffer(inputSampleRate = config)
-            pendingResult = null
-            autoStopFired = false
-            inputSampleRate = config
-            audioRecord = record
-            startedAt = Instant.now()
-            active = true
-            record.startRecording()
+            try {
+                generation += 1
+                val takeGeneration = generation
+                buffer = RecordingBuffer(inputSampleRate = config)
+                pendingResult = null
+                autoStopFired = false
+                inputSampleRate = config
+                audioRecord = record
+                startedAt = Instant.now()
+                active = true
+                record.startRecording()
 
-            captureThread = thread(name = "cras-voice-capture") {
-                captureLoop(record, config)
+                captureThread = thread(name = "cras-voice-capture") {
+                    captureLoop(record, config, takeGeneration)
+                }
+            } catch (e: Throwable) {
+                // A failure after construction must neither leak the native
+                // microphone session nor wedge the recorder into a state where
+                // every later start() returns early: release and clear first.
+                active = false
+                audioRecord = null
+                releaseRecordQuietly(record)
+                reset()
+                throw e
             }
         } catch (e: SecurityException) {
             active = false
@@ -81,7 +110,14 @@ class MicAudioRecorder(
         }
         active = false
         // When auto-stop fired from the capture thread it already finalized.
-        joinCaptureThreadIfExternal()
+        if (!joinCaptureThreadIfExternal()) {
+            // The capture thread is wedged past the bounded join. Invalidate its
+            // finalization instead of racing it, and refuse the unsalvageable
+            // take rather than reading a buffer it may still be mutating.
+            generation += 1
+            reset()
+            throw IllegalStateException("Microphone capture did not finish; recording abandoned.")
+        }
         val result = pendingResult
             ?: buffer?.buildOrNull()
             ?: throw IllegalStateException("No active recording to stop.")
@@ -91,15 +127,18 @@ class MicAudioRecorder(
 
     override fun cancel() {
         active = false
-        joinCaptureThreadIfExternal()
+        if (!joinCaptureThreadIfExternal()) {
+            generation += 1
+        }
         reset()
     }
 
-    private fun joinCaptureThreadIfExternal() {
-        val thread = captureThread ?: return
-        if (thread != Thread.currentThread()) {
-            runCatching { thread.join(JOIN_TIMEOUT_MS) }
-        }
+    /** Returns true when the capture thread finished (or the call comes from it). */
+    private fun joinCaptureThreadIfExternal(): Boolean {
+        val thread = captureThread ?: return true
+        if (thread == Thread.currentThread()) return true
+        runCatching { thread.join(JOIN_TIMEOUT_MS) }
+        return !thread.isAlive
     }
 
     private fun reset() {
@@ -110,7 +149,7 @@ class MicAudioRecorder(
         autoStopFired = false
     }
 
-    private fun captureLoop(record: AudioRecord, sampleRate: Int) {
+    private fun captureLoop(record: AudioRecord, sampleRate: Int, takeGeneration: Long) {
         val chunkShorts = ShortArray(sampleRate / CHUNKS_PER_SECOND)
         var boundReached = false
 
@@ -128,24 +167,39 @@ class MicAudioRecorder(
         }
         active = false
 
-        finalizeCapture(record, boundReached)
+        if (takeGeneration != generation) {
+            // This take was abandoned by a caller whose bounded join timed out;
+            // the caller owns the shared state now. Release locally, stay quiet.
+            releaseRecordQuietly(record)
+            return
+        }
+
+        finalizeCapture(record, boundReached, takeGeneration)
     }
 
-    private fun finalizeCapture(record: AudioRecord, boundReached: Boolean) {
-        try {
-            record.stop()
-        } catch (_: Exception) {
-            // Already stopped or never started.
-        }
-        record.release()
-        audioRecord = null
+    private fun finalizeCapture(record: AudioRecord, boundReached: Boolean, takeGeneration: Long) {
+        releaseRecordQuietly(record)
 
+        // Re-check after the potentially slow native calls: the caller may have
+        // abandoned this take in between, and it must not see stale writes.
+        if (takeGeneration != generation) return
+
+        audioRecord = null
         pendingResult = buffer?.buildOrNull()
 
         if (boundReached && !autoStopFired) {
             autoStopFired = true
             onAutoStop?.invoke()
         }
+    }
+
+    private fun releaseRecordQuietly(record: AudioRecord) {
+        try {
+            record.stop()
+        } catch (_: Exception) {
+            // Already stopped or never started.
+        }
+        record.release()
     }
 
     /**

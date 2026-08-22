@@ -295,6 +295,60 @@ class VoiceServiceTest {
     }
 
     @Test
+    fun `correction payload matching by title without target index merges once`() = runTest {
+        enqueueSuccess(
+            """
+            {"transcript": "No, milk today at nine", "mode": "create",
+             "drafts": [
+               {"title": "Buy milk", "description": "Semi-skimmed",
+                "priority": 3, "plan_date": "2026-08-21", "plan_time": "09:00:00",
+                "plan_type": null}
+             ], "edit": null}
+            """.trimIndent()
+        )
+
+        val existingDrafts = listOf(
+            DraftTask(
+                id = "draft-1", title = "Buy milk", description = null, priority = 4,
+                plan = Plan.DateOnly(date = "2026-08-22"),
+            ),
+            DraftTask(
+                id = "draft-2", title = "Go to pool", description = null, priority = 4,
+                plan = Plan.DateOnly(date = "2026-08-25"),
+            ),
+        )
+        val result = api.sendVoiceCapture(
+            session(),
+            options(existingDrafts = existingDrafts),
+        )
+
+        // The title-matched correction is merged into the first draft exactly
+        // once instead of also being appended as a duplicate third draft.
+        assertEquals(2, result.drafts.size)
+        assertEquals("Buy milk", result.drafts[0].title)
+        assertEquals("Semi-skimmed", result.drafts[0].description)
+        assertEquals(Plan.Instant(at = "2026-08-21T09:00:00Z"), result.drafts[0].plan)
+        assertEquals("Go to pool", result.drafts[1].title)
+        assertEquals(Plan.DateOnly(date = "2026-08-25"), result.drafts[1].plan)
+    }
+
+    @Test
+    fun `malformed drafts value maps to an empty create result instead of throwing`() = runTest {
+        enqueueSuccess(
+            """
+            {"transcript": "garbled extraction", "mode": "create",
+             "drafts": "not-an-array", "edit": null}
+            """.trimIndent()
+        )
+
+        val result = api.sendVoiceCapture(session(), options())
+
+        assertEquals(VoiceCaptureMode.CREATE, result.mode)
+        assertTrue(result.drafts.isEmpty())
+        assertNull(result.editProposal)
+    }
+
+    @Test
     fun `clear_plan removes the plan from an edit draft`() = runTest {
         enqueueSuccess(
             """
@@ -329,6 +383,33 @@ class VoiceServiceTest {
             editDraft.validationError,
         )
         assertEquals(Plan.DateOnly(date = "2026-08-22"), editDraft.plan)
+    }
+
+    // ---- http client timeouts ----
+
+    @Test
+    fun `voice http client sizes timeouts for upload plus server transcription`() {
+        val client = SupabaseVoiceCaptureApi.voiceHttpClient()
+
+        assertEquals(15_000, client.connectTimeoutMillis)
+        assertEquals(120_000, client.writeTimeoutMillis)
+        assertEquals(180_000, client.readTimeoutMillis)
+        assertEquals(300_000, client.callTimeoutMillis)
+    }
+
+    @Test
+    fun `voice http client derives from a caller-provided base without dropping its settings`() {
+        val base = okhttp3.OkHttpClient.Builder()
+            .followRedirects(false)
+            .build()
+
+        val tuned = SupabaseVoiceCaptureApi.voiceHttpClient(base)
+
+        assertEquals(15_000, tuned.connectTimeoutMillis)
+        assertEquals(120_000, tuned.writeTimeoutMillis)
+        assertEquals(180_000, tuned.readTimeoutMillis)
+        assertEquals(300_000, tuned.callTimeoutMillis)
+        assertFalse(tuned.followRedirects)
     }
 
     // ---- error mapping ----

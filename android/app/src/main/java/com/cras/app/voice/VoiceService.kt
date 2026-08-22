@@ -72,7 +72,7 @@ interface VoiceCaptureApi {
 
 class SupabaseVoiceCaptureApi(
     private val config: PublicSupabaseConfig,
-    private val httpClient: OkHttpClient = OkHttpClient(),
+    private val httpClient: OkHttpClient = voiceHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
     private val zoneIdProvider: () -> ZoneId = { ZoneId.systemDefault() },
 ) : VoiceCaptureApi {
@@ -167,7 +167,9 @@ class SupabaseVoiceCaptureApi(
 
         val extractedDrafts = root["drafts"]
             ?.takeIf { it !is JsonNull }
-            ?.jsonArray
+            // A malformed boundary response may carry drafts as a non-array;
+            // degrade to "no drafts" instead of escaping as a raw exception.
+            ?.let { runCatching { it.jsonArray }.getOrNull() }
             ?.mapNotNull { element ->
                 runCatching {
                     json.decodeFromJsonElement<ExtractedDraftPayload>(element)
@@ -225,6 +227,22 @@ class SupabaseVoiceCaptureApi(
 
     companion object {
         private val AUDIO_MEDIA_TYPE = "audio/wav".toMediaType()
+
+        /**
+         * Voice captures upload up to a 4 MB WAV and wait for server-side
+         * transcription and extraction, so the shared ~10 s defaults abort
+         * healthy requests. Sized for a 4 MB upload on a slow mobile uplink
+         * (write), long-running transcription/extraction (read), and an
+         * overall ceiling that still bounds the coroutine (call). Caller
+         * settings such as interceptors or connection pools are preserved.
+         */
+        fun voiceHttpClient(base: OkHttpClient = OkHttpClient()): OkHttpClient =
+            base.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(15))
+                .writeTimeout(java.time.Duration.ofSeconds(120))
+                .readTimeout(java.time.Duration.ofSeconds(180))
+                .callTimeout(java.time.Duration.ofSeconds(300))
+                .build()
     }
 }
 
@@ -282,14 +300,17 @@ fun buildVoiceCaptureResult(
     val previousDrafts = existingDrafts.orEmpty()
     val finalDrafts: List<DraftTask> = if (previousDrafts.isNotEmpty()) {
         // Merge Voice correction updates into existing drafts
+        val consumedMergeIndexes = mutableSetOf<Int>()
         val merged = previousDrafts.mapIndexed { index, prevDraft ->
-            val match = extractedDrafts.firstOrNull { ed ->
+            val matchIndex = extractedDrafts.indexOfFirst { ed ->
                 ed.target_draft_index == index ||
                     ed.title?.lowercase() == prevDraft.title.lowercase()
             }
-            if (match != null) {
+            if (matchIndex >= 0) {
+                // A payload applied by the merge step must not also be appended.
+                consumedMergeIndexes.add(matchIndex)
                 createDraftTaskFromExtracted(
-                    payload = match,
+                    payload = extractedDrafts[matchIndex],
                     effectiveDefault = effectiveDefaultTimedPlanType,
                     originalTaskId = prevDraft.originalTaskId,
                     zoneId = zoneId,
@@ -301,8 +322,9 @@ fun buildVoiceCaptureResult(
         }.toMutableList()
 
         // Add any completely new drafts
-        val newItems = extractedDrafts.filter {
-            it.target_draft_index == null || it.target_draft_index >= previousDrafts.size
+        val newItems = extractedDrafts.filterIndexed { index, ed ->
+            (ed.target_draft_index == null || ed.target_draft_index >= previousDrafts.size) &&
+                index !in consumedMergeIndexes
         }
         for (item in newItems) {
             merged += createDraftTaskFromExtracted(

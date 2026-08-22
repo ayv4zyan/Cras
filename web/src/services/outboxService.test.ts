@@ -278,6 +278,120 @@ describe("OutboxService", () => {
     expect(getOutbox(operatorId)).toEqual([createItem]);
   });
 
+  it("reports network failures via onNetworkError instead of stopping silently", async () => {
+    const mockRpc = vi.fn().mockRejectedValue(new Error("Failed to fetch"));
+    const mockClient = {
+      schema: vi.fn().mockReturnValue({
+        rpc: mockRpc,
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockRejectedValue(new Error("Failed to fetch")),
+            }),
+          }),
+        }),
+      }),
+    } as unknown as SupabaseClient;
+
+    const createItem: CreateOutboxItem = {
+      id: "task-1",
+      type: "create",
+      task: {
+        id: "task-1",
+        title: "Offline Create",
+        description: null,
+        priority: 4,
+        plan: null,
+        labels: [],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-21T10:00:00.000Z",
+        updatedAt: "2026-08-21T10:00:00.000Z",
+        version: 1,
+      },
+      params: { id: "task-1", title: "Offline Create" },
+      createdAt: "2026-08-21T10:00:00.000Z",
+    };
+
+    enqueueOutboxItem(operatorId, createItem);
+
+    const seenNetworkErrors: unknown[] = [];
+    const otherCallbacks = {
+      onError: vi.fn(),
+      onConflict: vi.fn(),
+      onTaskCreated: vi.fn(),
+    };
+
+    await drainOutbox({
+      client: mockClient,
+      operatorId,
+      ...otherCallbacks,
+      onNetworkError: (err) => {
+        seenNetworkErrors.push(err);
+      },
+    });
+
+    expect(seenNetworkErrors).toHaveLength(1);
+    expect((seenNetworkErrors[0] as Error).message).toBe("Failed to fetch");
+    // Non-network callbacks stay silent for network failures.
+    expect(otherCallbacks.onError).not.toHaveBeenCalled();
+    expect(otherCallbacks.onConflict).not.toHaveBeenCalled();
+    // The failed item stays queued for a later retry.
+    expect(getOutbox(operatorId)).toEqual([createItem]);
+  });
+
+  it("does not invoke onNetworkError when a non-network error drops an item", async () => {
+    const mockRpc = vi.fn().mockRejectedValue(new Error("constraint violation"));
+    const mockClient = {
+      schema: vi.fn().mockReturnValue({
+        rpc: mockRpc,
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: null }), // not on server
+            }),
+          }),
+        }),
+      }),
+    } as unknown as SupabaseClient;
+
+    const createItem: CreateOutboxItem = {
+      id: "task-1",
+      type: "create",
+      task: {
+        id: "task-1",
+        title: "Doomed Create",
+        description: null,
+        priority: 4,
+        plan: null,
+        labels: [],
+        parentId: null,
+        completedAt: null,
+        createdAt: "2026-08-21T10:00:00.000Z",
+        updatedAt: "2026-08-21T10:00:00.000Z",
+        version: 1,
+      },
+      params: { id: "task-1", title: "Doomed Create" },
+      createdAt: "2026-08-21T10:00:00.000Z",
+    };
+
+    enqueueOutboxItem(operatorId, createItem);
+
+    const onNetworkError = vi.fn();
+    const onError = vi.fn();
+
+    await drainOutbox({
+      client: mockClient,
+      operatorId,
+      onError,
+      onNetworkError,
+    });
+
+    expect(onNetworkError).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(getOutbox(operatorId)).toEqual([]);
+  });
+
   it("discards unrecognized outbox item types to prevent infinite drain loop", async () => {
     const mockClient = {
       schema: vi.fn(),

@@ -125,7 +125,6 @@ class DirectoryVoiceRecordingStore(
             ?: emptyList()
 
     companion object {
-        private val ID_REGEX = Regex("""^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$""")
         private val FILE_NAME_REGEX = Regex("""^voice-capture-\d+-[0-9a-fA-F\-]{36}\.wav$""")
 
         private fun newId(): String = java.util.UUID.randomUUID().toString()

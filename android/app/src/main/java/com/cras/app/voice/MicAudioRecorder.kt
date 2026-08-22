@@ -35,7 +35,6 @@ class MicAudioRecorder(
     @Volatile
     private var pendingResult: AudioRecordingResult? = null
     private var autoStopFired = false
-    private var inputSampleRate: Int = TARGET_SAMPLE_RATE
 
     /**
      * Identity of the current take. Capture threads carry their take's value
@@ -79,7 +78,6 @@ class MicAudioRecorder(
                 buffer = RecordingBuffer(inputSampleRate = config)
                 pendingResult = null
                 autoStopFired = false
-                inputSampleRate = config
                 audioRecord = record
                 startedAt = Instant.now()
                 active = true

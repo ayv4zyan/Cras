@@ -670,8 +670,16 @@ private fun DraftCard(
 ) {
     var typeMenuOpen by remember { mutableStateOf(false) }
 
-    val planDate = formatPlanDate(draft.plan, zoneId).orEmpty()
-    val planTime = formatPlanTime(draft.plan, zoneId).orEmpty()
+    // Raw field text lives in local state keyed to the draft: while typed
+    // input is incomplete, rebuildPlan yields a null plan and deriving the
+    // display value from it would wipe the field mid-edit. (Web never hits
+    // this because native date/time inputs only commit complete values.)
+    var planDate by remember(draft.id) {
+        mutableStateOf(formatPlanDate(draft.plan, zoneId).orEmpty())
+    }
+    var planTime by remember(draft.id) {
+        mutableStateOf(formatPlanTime(draft.plan, zoneId).orEmpty())
+    }
     val currentType = when (draft.plan) {
         is Plan.Instant -> TimedPlanType.INSTANT
         is Plan.Floating -> TimedPlanType.FLOATING
@@ -819,6 +827,7 @@ private fun DraftCard(
                 OutlinedTextField(
                     value = planDate,
                     onValueChange = { value ->
+                        planDate = value
                         val plan = rebuildPlan(
                             value,
                             planTime.ifBlank { null },
@@ -841,6 +850,7 @@ private fun DraftCard(
                 OutlinedTextField(
                     value = planTime,
                     onValueChange = { value ->
+                        planTime = value
                         val plan = if (planDate.isBlank()) {
                             null
                         } else {

@@ -1094,7 +1094,8 @@ class InboxViewModel(
             drainOutboxInternal(
                 session = session,
                 onConflictError = onError,
-                onGeneralError = onError
+                onGeneralError = onError,
+                onNetworkError = onError
             )
         }
     }

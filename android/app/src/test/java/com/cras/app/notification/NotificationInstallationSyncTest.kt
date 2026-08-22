@@ -181,21 +181,57 @@ class NotificationInstallationSyncTest {
         sync.onFcmTokenRotated(null, sessionA)
 
         // The explicit loss must reach the server as a cleared endpoint, not
-        // be resurrected from the provider as a stale endpoint.
-        assertEquals(PendingFcmTokenEvent.Loss, preferences.getPendingFcmTokenEvent())
-        assertNull(service.registerCalls.last().params.endpoint)
-        assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.status.value)
-
-        // Even after the cleared endpoint is confirmed, the loss stays
-        // parked: a follow-up reconciliation must re-send it rather than
-        // consult a provider whose cache still serves the lost token. Only a
-        // genuine replacement token lifts the loss.
-        assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.reconcile(sessionA))
-
-        assertEquals(3, service.registerCalls.size)
+        // be resurrected from the provider as a stale endpoint; confirming
+        // that registration consumes the parked loss.
+        assertEquals(2, service.registerCalls.size)
         assertNull(service.registerCalls[1].params.endpoint)
-        assertNull(service.registerCalls[2].params.endpoint)
+        assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.status.value)
+        assertNull(preferences.getPendingFcmTokenEvent())
+    }
+
+    @Test
+    fun `a confirmed reconciliation lifts a parked loss so the provider answers again`() = runTest {
+        val sync = createSync()
+
+        // The loss arrives before any session exists, so it parks without
+        // reconciling.
+        sync.onFcmTokenRotated(null, session = null)
         assertEquals(PendingFcmTokenEvent.Loss, preferences.getPendingFcmTokenEvent())
+
+        // The first reconciliation delivers the parked loss as a cleared
+        // endpoint...
+        assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.reconcile(sessionA))
+        assertNull(service.registerCalls.single().params.endpoint)
+
+        // ...and its confirmation consumes the parked loss, so the next pass
+        // consults the provider again; whatever it serves — even a cache of
+        // the lost token — is authoritative and gets registered.
+        fcmToken = "fcm-token-provider"
+        assertEquals(AndroidNotificationStatus.Enabled, sync.reconcile(sessionA))
+
+        assertEquals(2, service.registerCalls.size)
+        assertEquals("fcm-token-provider", service.registerCalls[1].params.endpoint)
+    }
+
+    @Test
+    fun `a parked loss reports no endpoint while unauthenticated even when the provider answers`() = runTest {
+        val sync = createSync()
+
+        // The loss arrives before any session exists and stays parked.
+        sync.onFcmTokenRotated(null, session = null)
+        fcmToken = "fcm-token-still-cached"
+
+        // Without a session the toggle derives status locally; the parked
+        // loss counts as no usable endpoint regardless of the cached
+        // provider token.
+        assertEquals(
+            AndroidNotificationStatus.DisabledLocally,
+            sync.setLocalEnabled(false, session = null)
+        )
+        assertEquals(
+            AndroidNotificationStatus.EndpointUnavailable,
+            sync.setLocalEnabled(true, session = null)
+        )
     }
 
     @Test
@@ -227,12 +263,10 @@ class NotificationInstallationSyncTest {
         sync.deactivateForSignOut(sessionA)
 
         // The server may still hold an active endpoint for this Operator, so
-        // the identity needed to retry deactivation must survive.
+        // the identity needed to retry deactivation must survive; the earlier
+        // confirmed reconciliation already consumed any parked token event.
         assertEquals(installationId, preferences.getOrCreateInstallationId())
-        assertEquals(
-            PendingFcmTokenEvent.Token("fcm-token-initial"),
-            preferences.getPendingFcmTokenEvent()
-        )
+        assertNull(preferences.getPendingFcmTokenEvent())
         assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.status.value)
 
         // A later retry completes sign-out and resets the installation.
@@ -254,12 +288,10 @@ class NotificationInstallationSyncTest {
         sync.deactivateForSignOut(sessionA)
 
         // Without a confirmed removal of the active row, the retry state
-        // must survive exactly as it does for a thrown error.
+        // must survive exactly as it does for a thrown error; the earlier
+        // confirmed reconciliation already consumed any parked token event.
         assertEquals(installationId, preferences.getOrCreateInstallationId())
-        assertEquals(
-            PendingFcmTokenEvent.Token("fcm-token-initial"),
-            preferences.getPendingFcmTokenEvent()
-        )
+        assertNull(preferences.getPendingFcmTokenEvent())
         assertEquals(AndroidNotificationStatus.EndpointUnavailable, sync.status.value)
 
         // A later confirmed deactivation completes sign-out and resets the installation.

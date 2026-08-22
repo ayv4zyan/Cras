@@ -184,7 +184,8 @@ class NotificationInstallationSync(
             permissionProvider(),
             hasEndpoint = when (preferences.getPendingFcmTokenEvent()) {
                 is PendingFcmTokenEvent.Token -> true
-                null, PendingFcmTokenEvent.Loss -> fcmTokenProvider() != null
+                PendingFcmTokenEvent.Loss -> false
+                null -> fcmTokenProvider() != null
             }
         )
         _status.value = status
@@ -213,18 +214,18 @@ class NotificationInstallationSync(
         val permission = permissionProvider()
         // The most recently observed FCM token wins. An explicit token-loss
         // event must reach the server as a cleared endpoint, so the provider
-        // is consulted only while no token event is parked. A confirmed
-        // registration deliberately does not lift [PendingFcmTokenEvent.Loss]:
-        // clearing it would let reconciliation consult the provider again,
-        // whose cache can still serve the lost token and resurrect an
-        // endpoint Firebase already reported dead. Only a genuine replacement
-        // token from rotation (or a reset) replaces the parked loss.
-        val token = when (val parked = preferences.getPendingFcmTokenEvent()) {
-            is PendingFcmTokenEvent.Token -> parked.value
+        // is consulted only while no token event is parked. A parked event is
+        // consumed only by a server-confirmed registration: an unconfirmed
+        // pass leaves it parked so the delivery can be retried, while a
+        // confirmation lifts it. The accepted consequence is that afterwards
+        // the provider is authoritative on later passes; following a
+        // confirmed loss its cache may re-serve the stale token, which is
+        // then simply registered again.
+        val parkedEvent = preferences.getPendingFcmTokenEvent()
+        val token = when (parkedEvent) {
+            is PendingFcmTokenEvent.Token -> parkedEvent.value
             PendingFcmTokenEvent.Loss -> null
-            null -> fcmTokenProvider()?.also { observed ->
-                preferences.setPendingFcmTokenEvent(PendingFcmTokenEvent.Token(observed))
-            }
+            null -> fcmTokenProvider()
         }
         val timezone = timezoneProvider()
 
@@ -256,6 +257,14 @@ class NotificationInstallationSync(
                 deriveAndroidInstallationStatus(localEnabled, permission, hasEndpoint = false)
             _status.value = unverifiedStatus
             return unverifiedStatus
+        }
+
+        // The server confirmed the registration that consumed [parkedEvent],
+        // so it no longer needs to survive for a retry; lifting it lets the
+        // provider answer again instead of replaying a stale token or loss
+        // forever.
+        if (parkedEvent != null) {
+            preferences.setPendingFcmTokenEvent(null)
         }
 
         // A permanent provider rejection deactivates the installation server-side;

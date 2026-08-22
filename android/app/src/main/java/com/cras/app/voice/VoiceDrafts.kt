@@ -1,5 +1,7 @@
 package com.cras.app.voice
 
+import kotlinx.serialization.Serializable
+
 import com.cras.app.domain.CreatePlanParams
 import com.cras.app.domain.TimedPlanType
 import com.cras.app.domain.createPlanFromInputs
@@ -27,6 +29,7 @@ data class DraftTask(
 )
 
 /** Draft payload extracted by the Voice boundary (wire contract of voice-capture). */
+@Serializable
 data class ExtractedDraftPayload(
     val title: String? = null,
     val description: String? = null,
@@ -38,6 +41,7 @@ data class ExtractedDraftPayload(
 )
 
 /** Edit payload extracted by the Voice boundary (wire contract of voice-capture). */
+@Serializable
 data class ExtractedEditPayload(
     val title: String? = null,
     val description: String? = null,

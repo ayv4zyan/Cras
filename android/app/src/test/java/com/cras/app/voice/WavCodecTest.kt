@@ -89,6 +89,18 @@ class WavCodecTest {
     }
 
     @Test
+    fun `encodePcmWav truncates fractional samples toward zero like the web encoder`() {
+        // -0.7 * 0x8000 = -22937.6: JS Int16Array assignment truncates toward zero
+        // (-22937), it does not floor (-22938). Positive 0.3 * 0x7fff = 9830.1.
+        val samples = floatArrayOf(-0.7f, 0.3f)
+        val wav = encodePcmWav(samples, 16000)
+
+        val data = wav.copyOfRange(44, wav.size)
+        assertEquals(-22937, leShort(data, 0))
+        assertEquals(9830, leShort(data, 2))
+    }
+
+    @Test
     fun `downsampleTo16kHz downsamples a 48 kHz buffer to 16 kHz mono correctly`() {
         val input48k = FloatArray(48000) { i ->
             Math.sin((i / 48000.0) * 2.0 * Math.PI * 440.0).toFloat()

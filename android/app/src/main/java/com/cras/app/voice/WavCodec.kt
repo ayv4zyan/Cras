@@ -71,7 +71,8 @@ fun createWavHeader(
 
 /**
  * Encodes an array of float audio samples (-1.0 to 1.0) into a 16-bit PCM WAV file.
- * Negative samples scale by 0x8000, non-negative by 0x7fff, exactly like the web encoder.
+ * Negative samples scale by 0x8000, non-negative by 0x7fff, truncated toward zero
+ * exactly like the JS Int16Array assignment in the web encoder.
  */
 fun encodePcmWav(samples: FloatArray, sampleRate: Int = TARGET_SAMPLE_RATE): ByteArray {
     val pcmData = ByteArray(samples.size * 2)
@@ -79,7 +80,7 @@ fun encodePcmWav(samples: FloatArray, sampleRate: Int = TARGET_SAMPLE_RATE): Byt
     for (i in samples.indices) {
         val s = samples[i].coerceIn(-1f, 1f)
         val scaled = if (s < 0) s * 0x8000 else s * 0x7fff
-        val truncated = floor(scaled).toInt()
+        val truncated = scaled.toInt()
         pcmData[i * 2] = (truncated and 0xFF).toByte()
         pcmData[i * 2 + 1] = ((truncated shr 8) and 0xFF).toByte()
     }

@@ -1,27 +1,50 @@
 package com.cras.app.ui.voice
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,8 +54,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.cras.app.domain.CreatePlanParams
 import com.cras.app.domain.TimedPlanType
 import com.cras.app.domain.createPlanFromInputs
@@ -40,14 +69,15 @@ import com.cras.app.models.Plan
 import com.cras.app.models.TaskPriorities
 import com.cras.app.voice.DraftTask
 import com.cras.app.voice.RetainedRecording
+import com.cras.app.voice.VoiceCaptureMode
 import com.cras.app.voice.formatPlanDate
 import com.cras.app.voice.formatPlanTime
 import java.time.ZoneId
 
 /**
- * Functional-but-plain Voice capture dialog covering recording, processing,
+ * Material3 Voice capture dialog covering recording, processing,
  * Draft (create/edit/correction), rejection via per-draft validation errors,
- * and every unavailable-Voice state. Visual polish is a later designer pass.
+ * and every unavailable-Voice state.
  */
 @Composable
 fun VoiceCaptureDialog(
@@ -72,112 +102,369 @@ fun VoiceCaptureDialog(
     onDismiss: () -> Unit,
     zoneId: ZoneId = ZoneId.systemDefault(),
 ) {
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Mic, contentDescription = null)
-                Spacer(Modifier.padding(4.dp))
-                Text(
-                    text = when {
-                        focusedTaskTitle != null -> "Voice Edit Task"
-                        else -> "Voice Capture"
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            }
-        },
-        text = {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .padding(16.dp)
+        ) {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (focusedTaskTitle != null) "Voice Edit Task" else "Voice Capture",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (focusedTaskTitle != null) {
+                                Text(
+                                    text = "Target: \"$focusedTaskTitle\"",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close dialog"
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
                 when (val state = uiState) {
                     VoiceUiState.Idle -> {
-                        Text("Ready to record.")
-                        Button(onClick = onStartRecording, modifier = Modifier.fillMaxWidth()) {
-                            Text("Start recording")
-                        }
-                        if (retainedRecordings.isNotEmpty()) {
-                            RetainedSection(
-                                retainedRecordings = retainedRecordings,
-                                onDeleteRetained = onDeleteRetained,
-                                onDeleteAllRetained = onDeleteAllRetained,
-                            )
-                        }
+                        IdleBody(
+                            onStartRecording = onStartRecording,
+                            retainedRecordings = retainedRecordings,
+                            onDeleteRetained = onDeleteRetained,
+                            onDeleteAllRetained = onDeleteAllRetained,
+                        )
                     }
 
                     is VoiceUiState.Recording -> {
-                        RecordingBody(state = state)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = onStopAndProcess) { Text("Done") }
-                            OutlinedButton(onClick = onCancelRecording) { Text("Cancel") }
-                        }
+                        RecordingBody(
+                            state = state,
+                            onStopAndProcess = onStopAndProcess,
+                            onCancelRecording = onCancelRecording,
+                        )
                     }
 
-                    VoiceUiState.Processing -> ProcessingBody()
+                    VoiceUiState.Processing -> {
+                        ProcessingBody()
+                    }
 
-                    is VoiceUiState.Drafts -> DraftsBody(
-                        state = state,
-                        effectiveDefault = effectiveDefault,
-                        focusedTaskTitle = focusedTaskTitle,
-                        zoneId = zoneId,
-                        onCorrectByVoice = onCorrectByVoice,
-                        onStartOver = onStartOver,
-                        onDraftChange = onDraftChange,
-                        onSwitchDraftPlanType = onSwitchDraftPlanType,
-                        onRemoveDraft = onRemoveDraft,
-                        onAcceptCreate = onAcceptCreate,
-                        onAcceptEdit = onAcceptEdit,
-                    )
+                    is VoiceUiState.Drafts -> {
+                        DraftsBody(
+                            state = state,
+                            effectiveDefault = effectiveDefault,
+                            focusedTaskTitle = focusedTaskTitle,
+                            zoneId = zoneId,
+                            onCorrectByVoice = onCorrectByVoice,
+                            onStartOver = onStartOver,
+                            onDraftChange = onDraftChange,
+                            onSwitchDraftPlanType = onSwitchDraftPlanType,
+                            onRemoveDraft = onRemoveDraft,
+                            onAcceptCreate = onAcceptCreate,
+                            onAcceptEdit = onAcceptEdit,
+                        )
+                    }
 
-                    is VoiceUiState.Failed -> FailedBody(
-                        failure = state.failure,
-                        canRetryWithSavedAudio = state.canRetryWithSavedAudio,
-                        retainedRecordings = retainedRecordings,
-                        onRetryProcessing = onRetryProcessing,
-                        onStartRecording = onStartRecording,
-                        onRequestMicPermission = onRequestMicPermission,
-                        onDeleteRetained = onDeleteRetained,
-                        onDeleteAllRetained = onDeleteAllRetained,
-                    )
+                    is VoiceUiState.Failed -> {
+                        FailedBody(
+                            failure = state.failure,
+                            canRetryWithSavedAudio = state.canRetryWithSavedAudio,
+                            retainedRecordings = retainedRecordings,
+                            onRetryProcessing = onRetryProcessing,
+                            onStartRecording = onStartRecording,
+                            onRequestMicPermission = onRequestMicPermission,
+                            onDeleteRetained = onDeleteRetained,
+                            onDeleteAllRetained = onDeleteAllRetained,
+                        )
+                    }
                 }
             }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
-        },
-    )
+        }
+    }
 }
 
 @Composable
-private fun RecordingBody(state: VoiceUiState.Recording) {
+private fun IdleBody(
+    onStartRecording: () -> Unit,
+    retainedRecordings: List<RetainedRecording>,
+    onDeleteRetained: (String) -> Unit,
+    onDeleteAllRetained: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .size(60.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onStartRecording)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = "Start recording",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "Ready to record",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Speak naturally with task titles, dates, times, and priorities (e.g. \"Buy groceries tomorrow at 5pm P1\").",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            Button(
+                onClick = onStartRecording,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Mic,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Start Recording")
+            }
+        }
+    }
+
+    if (retainedRecordings.isNotEmpty()) {
+        RetainedSection(
+            retainedRecordings = retainedRecordings,
+            onDeleteRetained = onDeleteRetained,
+            onDeleteAllRetained = onDeleteAllRetained,
+        )
+    }
+}
+
+@Composable
+private fun RecordingBody(
+    state: VoiceUiState.Recording,
+    onStopAndProcess: () -> Unit,
+    onCancelRecording: () -> Unit,
+) {
     val totalSeconds = state.elapsedMs / 1000
     val maxSeconds = state.maxDurationMs / 1000
     val remaining = (maxSeconds - totalSeconds).coerceAtLeast(0)
-    Text(
-        text = "Listening... %02d:%02d / %02d:%02d".format(
-            totalSeconds / 60, totalSeconds % 60, maxSeconds / 60, maxSeconds % 60
-        ),
-        style = MaterialTheme.typography.titleLarge,
-        fontWeight = FontWeight.SemiBold,
-    )
-    Text(
-        text = "Auto-stops in ${remaining}s. Speak naturally with titles, dates and priorities.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    val progress = (state.elapsedMs.toFloat() / state.maxDurationMs.toFloat()).coerceIn(0f, 1f)
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.error)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "LISTENING",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Auto-stops in ${remaining}s",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (remaining <= 10) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (remaining <= 10) FontWeight.Bold else FontWeight.Normal
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                Text(
+                    text = "%02d:%02d".format(totalSeconds / 60, totalSeconds % 60),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Max %02d:%02d".format(maxSeconds / 60, maxSeconds % 60),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+
+            Text(
+                text = "Speak naturally. Tap Done when finished or let the recording auto-stop.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        OutlinedButton(
+            onClick = onCancelRecording,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Cancel")
+        }
+        Button(
+            onClick = onStopAndProcess,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Done")
+        }
+    }
 }
 
 @Composable
 private fun ProcessingBody() {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        CircularProgressIndicator(modifier = Modifier.height(24.dp))
-        Text("Transcribing and extracting task metadata...")
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(40.dp),
+                strokeWidth = 3.dp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Processing Speech",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Transcribing audio and extracting task metadata...",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 
@@ -195,38 +482,108 @@ private fun DraftsBody(
     onAcceptCreate: (List<DraftTask>) -> Unit,
     onAcceptEdit: (DraftTask) -> Unit,
 ) {
-    val isEditMode = state.mode == com.cras.app.voice.VoiceCaptureMode.EDIT && state.editProposal != null
+    val isEditMode = state.mode == VoiceCaptureMode.EDIT && state.editProposal != null
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(
+                text = if (focusedTaskTitle != null || isEditMode) {
+                    "Proposed Change"
+                } else {
+                    "Proposed Tasks (${state.drafts.size})"
+                },
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Review and edit before saving",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (state.isCorrection) {
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Text(
+                    text = "Corrected",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                )
+            }
+        }
+    }
 
     if (state.transcript.isNotBlank()) {
-        Text(
-            text = "Heard: \"${state.transcript}\"",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Icon(
+                    imageVector = Icons.Default.GraphicEq,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column {
+                    Text(
+                        text = "Heard",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "\"${state.transcript}\"",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontStyle = FontStyle.Italic,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
     }
 
     // Rejection banner: invalid plan entries must be corrected before accept.
     if (state.hasValidationErrors) {
-        Text(
-            text = "Please correct invalid plan entries below (an explicit Instant or Floating plan requires a clock time) before accepting.",
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
-        )
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ErrorOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Please correct invalid plan entries below (timed tasks require a clock time in HH:mm) before accepting.",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+        }
     }
-
-    Text(
-        text = if (focusedTaskTitle != null || isEditMode) {
-            "Proposed Change (Editable Draft):"
-        } else {
-            "Proposed Tasks (${state.drafts.size}):"
-        },
-        style = MaterialTheme.typography.labelLarge,
-    )
-    Text(
-        text = "Not saved until you click Accept",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
 
     state.drafts.forEachIndexed { index, draft ->
         DraftCard(
@@ -241,9 +598,34 @@ private fun DraftsBody(
         )
     }
 
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = onCorrectByVoice) { Text("Correct by Voice") }
-        TextButton(onClick = onStartOver) { Text("Start over") }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        OutlinedButton(
+            onClick = onCorrectByVoice,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Mic,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Correct by Voice")
+        }
+        OutlinedButton(
+            onClick = onStartOver,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Start Over")
+        }
     }
 
     val hasErrors = state.hasValidationErrors || state.drafts.isEmpty()
@@ -257,9 +639,21 @@ private fun DraftsBody(
             }
         },
         enabled = !hasErrors,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Text(if (isEditMode) "Accept Changes" else "Accept All")
+        Icon(
+            imageVector = Icons.Default.Check,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = when {
+                isEditMode -> "Accept Changes"
+                state.drafts.size > 1 -> "Accept All (${state.drafts.size} Tasks)"
+                else -> "Accept Task"
+            }
+        )
     }
 }
 
@@ -274,7 +668,6 @@ private fun DraftCard(
     onSwitchDraftPlanType: (Int, TimedPlanType) -> Unit,
     onRemoveDraft: (Int) -> Unit,
 ) {
-    var priorityMenuOpen by remember { mutableStateOf(false) }
     var typeMenuOpen by remember { mutableStateOf(false) }
 
     val planDate = formatPlanDate(draft.plan, zoneId).orEmpty()
@@ -284,106 +677,249 @@ private fun DraftCard(
         is Plan.Floating -> TimedPlanType.FLOATING
         else -> effectiveDefault
     }
+    val hasError = draft.validationError != null
 
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        border = if (hasError) {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f))
+        } else {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Text(
+                        text = "Task #${index + 1}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+
+                if (showRemove) {
+                    IconButton(
+                        onClick = { onRemoveDraft(index) },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = "Remove draft",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
             OutlinedTextField(
                 value = draft.title,
                 onValueChange = { value ->
                     onDraftChange(index, draft.copy(title = value))
                 },
-                label = { Text("Title") },
-                modifier = Modifier.weight(1f),
+                placeholder = { Text("Task title") },
                 singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                ),
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth()
             )
-            if (showRemove) {
-                IconButton(onClick = { onRemoveDraft(index) }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove draft")
-                }
-            }
-        }
 
-        OutlinedTextField(
-            value = draft.description.orEmpty(),
-            onValueChange = { value ->
-                onDraftChange(index, draft.copy(description = value.ifBlank { null }))
-            },
-            label = { Text("Description") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-        )
-
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            // Priority
-            androidx.compose.material3.OutlinedButton(onClick = { priorityMenuOpen = true }) {
-                Text(TaskPriorities.ALL.firstOrNull { it.value == draft.priority }?.label ?: "P${draft.priority}")
-            }
-            DropdownMenu(expanded = priorityMenuOpen, onDismissRequest = { priorityMenuOpen = false }) {
-                TaskPriorities.ALL.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option.label) },
-                        onClick = {
-                            priorityMenuOpen = false
-                            onDraftChange(index, draft.copy(priority = option.value))
-                        }
-                    )
-                }
-            }
-
-            // Date (plain YYYY-MM-DD entry; polish comes later)
             OutlinedTextField(
-                value = planDate,
+                value = draft.description.orEmpty(),
                 onValueChange = { value ->
-                    val plan = rebuildPlan(value, planTime.ifBlank { null }, currentType.takeIf { planTime.isNotBlank() }, effectiveDefault, zoneId)
-                    onDraftChange(index, draft.copy(plan = plan, validationError = null))
+                    onDraftChange(index, draft.copy(description = value.ifBlank { null }))
                 },
-                label = { Text("YYYY-MM-DD") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
+                placeholder = { Text("Optional description...") },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                ),
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                maxLines = 4
             )
-        }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = planTime,
-                onValueChange = { value ->
-                    val plan = if (planDate.isBlank()) {
-                        null
-                    } else {
-                        rebuildPlan(planDate, value.ifBlank { null }, currentType.takeIf { value.isNotBlank() }, effectiveDefault, zoneId)
+            // Priority Selection (Chips mirroring TaskDetailDialog)
+            Text(
+                text = "Priority",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                TaskPriorities.ALL.forEach { opt ->
+                    val isSelected = draft.priority == opt.value
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (isSelected) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        border = if (isSelected) {
+                            BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                        } else null,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable {
+                                onDraftChange(index, draft.copy(priority = opt.value))
+                            }
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "P${opt.value}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
                     }
-                    onDraftChange(index, draft.copy(plan = plan, validationError = null))
-                },
-                label = { Text("HH:mm") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-
-            if (planDate.isNotBlank() && planTime.isNotBlank()) {
-                androidx.compose.material3.OutlinedButton(onClick = { typeMenuOpen = true }) {
-                    Text(if (currentType == TimedPlanType.INSTANT) "Instant" else "Floating")
-                }
-                DropdownMenu(expanded = typeMenuOpen, onDismissRequest = { typeMenuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Instant") },
-                        onClick = {
-                            typeMenuOpen = false
-                            onSwitchDraftPlanType(index, TimedPlanType.INSTANT)
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Floating") },
-                        onClick = {
-                            typeMenuOpen = false
-                            onSwitchDraftPlanType(index, TimedPlanType.FLOATING)
-                        }
-                    )
                 }
             }
-        }
 
-        draft.validationError?.let { error ->
-            Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            // Date & Time
+            Text(
+                text = "Plan Date & Time",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = planDate,
+                    onValueChange = { value ->
+                        val plan = rebuildPlan(
+                            value,
+                            planTime.ifBlank { null },
+                            currentType.takeIf { planTime.isNotBlank() },
+                            effectiveDefault,
+                            zoneId
+                        )
+                        onDraftChange(index, draft.copy(plan = plan, validationError = null))
+                    },
+                    placeholder = { Text("YYYY-MM-DD", style = MaterialTheme.typography.labelSmall) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    ),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.weight(1.2f)
+                )
+
+                OutlinedTextField(
+                    value = planTime,
+                    onValueChange = { value ->
+                        val plan = if (planDate.isBlank()) {
+                            null
+                        } else {
+                            rebuildPlan(
+                                planDate,
+                                value.ifBlank { null },
+                                currentType.takeIf { value.isNotBlank() },
+                                effectiveDefault,
+                                zoneId
+                            )
+                        }
+                        onDraftChange(index, draft.copy(plan = plan, validationError = null))
+                    },
+                    placeholder = { Text("HH:mm", style = MaterialTheme.typography.labelSmall) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    ),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.weight(1f)
+                )
+
+                if (planDate.isNotBlank() && planTime.isNotBlank()) {
+                    Box {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { typeMenuOpen = true }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = if (currentType == TimedPlanType.INSTANT) "Instant" else "Floating",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Select type",
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = typeMenuOpen,
+                            onDismissRequest = { typeMenuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Instant") },
+                                onClick = {
+                                    typeMenuOpen = false
+                                    onSwitchDraftPlanType(index, TimedPlanType.INSTANT)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Floating") },
+                                onClick = {
+                                    typeMenuOpen = false
+                                    onSwitchDraftPlanType(index, TimedPlanType.FLOATING)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (draft.validationError != null) {
+                Text(
+                    text = draft.validationError ?: "",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
     }
 }
@@ -416,41 +952,119 @@ private fun FailedBody(
     onDeleteRetained: (String) -> Unit,
     onDeleteAllRetained: () -> Unit,
 ) {
-    val headline = when (failure) {
-        VoiceFailure.MicPermissionMissing -> "Microphone access needed"
-        VoiceFailure.CircuitBreakerTripped -> "Voice capture temporarily unavailable"
-        VoiceFailure.VoiceDisabled -> "Voice capture disabled"
-        is VoiceFailure.AllowanceExhausted -> "Voice allowance reached"
-        VoiceFailure.ProviderFailed -> "Voice processing failed"
-        is VoiceFailure.NetworkError -> "Network error"
-        is VoiceFailure.InvalidAudio -> "Recording rejected"
-        is VoiceFailure.Unknown -> "Voice Capture Unavailable"
+    val (headline, icon) = when (failure) {
+        VoiceFailure.MicPermissionMissing -> "Microphone Permission Needed" to Icons.Default.MicOff
+        VoiceFailure.CircuitBreakerTripped -> "Voice Temporarily Paused" to Icons.Default.Warning
+        VoiceFailure.VoiceDisabled -> "Voice Capture Disabled" to Icons.Default.MicOff
+        is VoiceFailure.AllowanceExhausted -> "Voice Allowance Reached" to Icons.Default.HourglassEmpty
+        VoiceFailure.ProviderFailed -> "Voice Processing Issue" to Icons.Default.ErrorOutline
+        is VoiceFailure.NetworkError -> "Network Connection Error" to Icons.Default.CloudOff
+        is VoiceFailure.InvalidAudio -> "Audio Recording Rejected" to Icons.Default.ErrorOutline
+        is VoiceFailure.Unknown -> "Voice Capture Unavailable" to Icons.Default.ErrorOutline
     }
 
-    Text(headline, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
-    Text(
-        text = when (failure) {
-            VoiceFailure.MicPermissionMissing ->
-                "Grant microphone access to use Voice capture. Ordinary tasks are unaffected."
-            is VoiceFailure.AllowanceExhausted -> {
-                val retryAt = failure.earliestRetryAt?.let { " Earliest retry: $it." }.orEmpty()
-                val retryIn = failure.retryAfterSeconds?.let { " Retry after ${it}s." }.orEmpty()
-                "${messageFor(failure)}$retryAt$retryIn"
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = headline,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Text(
+                    text = when (failure) {
+                        VoiceFailure.MicPermissionMissing ->
+                            "Grant microphone access to create and edit tasks with Voice. Ordinary task management remains unaffected."
+                        is VoiceFailure.AllowanceExhausted -> {
+                            val retryAt = failure.earliestRetryAt?.let { " Earliest retry: $it." }.orEmpty()
+                            val retryIn = failure.retryAfterSeconds?.let { " Retry in ${it}s." }.orEmpty()
+                            "${messageFor(failure)}$retryAt$retryIn Ordinary task management remains unaffected."
+                        }
+                        else -> messageFor(failure)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
+                )
             }
-            else -> messageFor(failure)
-        },
-        style = MaterialTheme.typography.bodySmall,
-    )
-
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        when (failure) {
-            VoiceFailure.MicPermissionMissing -> Button(onClick = onRequestMicPermission) {
-                Text("Grant access")
-            }
-            else -> OutlinedButton(onClick = onStartRecording) { Text("Record Again") }
         }
-        if (canRetryWithSavedAudio) {
-            Button(onClick = onRetryProcessing) { Text("Retry with Saved Audio") }
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        when (failure) {
+            VoiceFailure.MicPermissionMissing -> {
+                Button(
+                    onClick = onRequestMicPermission,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Grant Permission")
+                }
+            }
+            else -> {
+                if (canRetryWithSavedAudio) {
+                    Button(
+                        onClick = onRetryProcessing,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Retry Saved")
+                    }
+                    OutlinedButton(
+                        onClick = onStartRecording,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Record Again")
+                    }
+                } else {
+                    Button(
+                        onClick = onStartRecording,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Record Again")
+                    }
+                }
+            }
         }
     }
 
@@ -468,11 +1082,11 @@ private fun messageFor(failure: VoiceFailure): String = when (failure) {
     is VoiceFailure.InvalidAudio -> failure.message
     is VoiceFailure.Unknown -> failure.message
     VoiceFailure.CircuitBreakerTripped ->
-        "The Deployment spending boundary tripped. Voice is paused for everyone; ordinary tasks keep working."
+        "The Deployment spending boundary tripped. Voice is paused for everyone; ordinary tasks continue working normally."
     VoiceFailure.VoiceDisabled ->
-        "Voice is disabled for this Deployment."
+        "Voice is disabled for this Deployment. Ordinary task management is unaffected."
     VoiceFailure.ProviderFailed ->
-        "Voice processing failed upstream. Your recording is saved so you can retry."
+        "Voice processing failed upstream. Your recording is preserved locally so you can retry."
     VoiceFailure.MicPermissionMissing -> ""
     is VoiceFailure.AllowanceExhausted -> "Voice allowance or rate limit reached."
 }
@@ -483,23 +1097,125 @@ private fun RetainedSection(
     onDeleteRetained: (String) -> Unit,
     onDeleteAllRetained: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            text = "Saved recordings (${retainedRecordings.size}, bounded)",
-            style = MaterialTheme.typography.labelMedium,
-        )
-        retainedRecordings.forEach { recording ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "${recording.fileName} · ${recording.sizeBytes / 1024} KB",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = { onDeleteRetained(recording.id) }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete recording")
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Audiotrack,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Saved Recordings (${retainedRecordings.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Text(
+                        text = "Offline backup",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
                 }
             }
+
+            Text(
+                text = "Recordings preserved locally for retry when offline or interrupted.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                retainedRecordings.forEach { recording ->
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = recording.fileName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${recording.sizeBytes / 1024} KB",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = { onDeleteRetained(recording.id) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = "Delete recording",
+                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            TextButton(
+                onClick = onDeleteAllRetained,
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DeleteOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "Delete All Recordings",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
-        TextButton(onClick = onDeleteAllRetained) { Text("Delete all recordings") }
     }
 }

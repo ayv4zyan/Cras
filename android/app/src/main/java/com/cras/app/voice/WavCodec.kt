@@ -21,8 +21,19 @@ fun createWavHeader(
     sampleRate: Int = TARGET_SAMPLE_RATE,
     numChannels: Int = 1,
     bitsPerSample: Int = 16,
-): ByteArray {
-    val buffer = ByteBuffer.allocate(WAV_HEADER_LENGTH).order(ByteOrder.LITTLE_ENDIAN)
+): ByteArray =
+    ByteArray(WAV_HEADER_LENGTH).also {
+        writeWavHeaderInto(it, dataByteLength, sampleRate, numChannels, bitsPerSample)
+    }
+
+private fun writeWavHeaderInto(
+    target: ByteArray,
+    dataByteLength: Int,
+    sampleRate: Int,
+    numChannels: Int,
+    bitsPerSample: Int,
+) {
+    val buffer = ByteBuffer.wrap(target).order(ByteOrder.LITTLE_ENDIAN)
 
     // "RIFF" chunk descriptor
     buffer.put('R'.code.toByte())
@@ -65,28 +76,34 @@ fun createWavHeader(
     buffer.put('a'.code.toByte())
     // Subchunk2Size
     buffer.putInt(dataByteLength)
+}
 
-    return buffer.array()
+/**
+ * Scales one float sample (-1.0 to 1.0) into its PCM16 representation.
+ * Negative samples scale by 0x8000, non-negative by 0x7fff, truncated toward
+ * zero exactly like the JS Int16Array assignment in the web encoder.
+ */
+private fun quantizeSample(sample: Float): Int {
+    val s = sample.coerceIn(-1f, 1f)
+    val scaled = if (s < 0) s * 0x8000 else s * 0x7fff
+    return scaled.toInt()
 }
 
 /**
  * Encodes an array of float audio samples (-1.0 to 1.0) into a 16-bit PCM WAV file.
- * Negative samples scale by 0x8000, non-negative by 0x7fff, truncated toward zero
- * exactly like the JS Int16Array assignment in the web encoder.
  */
 fun encodePcmWav(samples: FloatArray, sampleRate: Int = TARGET_SAMPLE_RATE): ByteArray {
-    val pcmData = ByteArray(samples.size * 2)
+    // Header and PCM land in a single allocation instead of a concatenated copy.
+    val wav = ByteArray(WAV_HEADER_LENGTH + samples.size * 2)
+    writeWavHeaderInto(wav, samples.size * 2, sampleRate, 1, 16)
 
     for (i in samples.indices) {
-        val s = samples[i].coerceIn(-1f, 1f)
-        val scaled = if (s < 0) s * 0x8000 else s * 0x7fff
-        val truncated = scaled.toInt()
-        pcmData[i * 2] = (truncated and 0xFF).toByte()
-        pcmData[i * 2 + 1] = ((truncated shr 8) and 0xFF).toByte()
+        val truncated = quantizeSample(samples[i])
+        wav[WAV_HEADER_LENGTH + i * 2] = (truncated and 0xFF).toByte()
+        wav[WAV_HEADER_LENGTH + i * 2 + 1] = ((truncated shr 8) and 0xFF).toByte()
     }
 
-    val header = createWavHeader(pcmData.size, sampleRate, 1, 16)
-    return header + pcmData
+    return wav
 }
 
 /**
@@ -165,7 +182,10 @@ class RecordingBuffer(private val inputSampleRate: Int) {
     }
 
     /**
-     * Merges, resamples to 16 kHz and encodes the accumulated audio.
+     * Resamples the accumulated audio to 16 kHz and encodes it, streaming
+     * straight off the chunk list. The per-sample arithmetic matches
+     * downsampleTo16kHz over a merged buffer byte-for-byte, without ever
+     * materialising the full-rate merged copy that dominated peak memory.
      * Throws like the web recorder when nothing was recorded.
      */
     fun build(): AudioRecordingResult =
@@ -174,16 +194,41 @@ class RecordingBuffer(private val inputSampleRate: Int) {
     fun buildOrNull(): AudioRecordingResult? {
         if (isEmpty) return null
 
-        val merged = FloatArray(totalInputSamples.toInt())
-        var offset = 0
-        for (chunk in chunks) {
-            chunk.copyInto(merged, offset)
-            offset += chunk.size
+        val ratio = inputSampleRate.toDouble() / TARGET_SAMPLE_RATE
+        val mergedSize = totalInputSamples.toInt()
+        val newLength = (mergedSize / ratio).roundToInt()
+
+        val wav = ByteArray(WAV_HEADER_LENGTH + newLength * 2)
+        writeWavHeaderInto(wav, newLength * 2, TARGET_SAMPLE_RATE, 1, 16)
+
+        // Cursor over the chunk list: resample indices rise monotonically, so
+        // the cursor only ever advances and each lookup stays O(1) amortised.
+        var chunkIndex = 0
+        var chunkStartSample = 0L
+
+        fun sampleAt(index: Int): Float {
+            while (index >= chunkStartSample + chunks[chunkIndex].size) {
+                chunkStartSample += chunks[chunkIndex].size
+                chunkIndex++
+            }
+            return chunks[chunkIndex][index - chunkStartSample.toInt()]
         }
 
-        val resampled = downsampleTo16kHz(merged, inputSampleRate)
-        val wav = encodePcmWav(resampled, TARGET_SAMPLE_RATE)
-        val durationSeconds = resampled.size.toDouble() / TARGET_SAMPLE_RATE
+        for (i in 0 until newLength) {
+            val originalIndex = i * ratio
+            val indexLow = floor(originalIndex).toInt()
+            val indexHigh = min(indexLow + 1, mergedSize - 1)
+            val fraction = originalIndex - indexLow
+
+            val value = (sampleAt(indexLow) * (1 - fraction) +
+                sampleAt(indexHigh) * fraction).toFloat()
+
+            val truncated = quantizeSample(value)
+            wav[WAV_HEADER_LENGTH + i * 2] = (truncated and 0xFF).toByte()
+            wav[WAV_HEADER_LENGTH + i * 2 + 1] = ((truncated shr 8) and 0xFF).toByte()
+        }
+
+        val durationSeconds = newLength.toDouble() / TARGET_SAMPLE_RATE
 
         return AudioRecordingResult(
             wav = wav,

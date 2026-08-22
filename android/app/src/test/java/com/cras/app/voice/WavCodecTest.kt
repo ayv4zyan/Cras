@@ -223,4 +223,36 @@ class WavCodecTest {
         // Buffer still holds its samples after a preview build.
         assertTrue(buffer.build().sizeBytes == result!!.sizeBytes)
     }
+
+    @Test
+    fun `RecordingBuffer build resamples across chunk boundaries like a single merged buffer`() {
+        val inputRate = 48000
+        val totalSamples = 9871 // deliberately not a multiple of the 3x ratio
+        val signal = FloatArray(totalSamples) { i ->
+            kotlin.math.sin(2.0 * Math.PI * 440.0 * i / inputRate).toFloat()
+        }
+
+        val merged = RecordingBuffer(inputSampleRate = inputRate)
+        merged.append(signal)
+
+        val chunked = RecordingBuffer(inputSampleRate = inputRate)
+        var offset = 0
+        for (size in intArrayOf(1000, 33_333, 7, 4000)) {
+            if (offset >= totalSamples) break
+            val end = minOf(offset + size, totalSamples)
+            chunked.append(signal.copyOfRange(offset, end))
+            offset = end
+        }
+
+        val fromMerged = merged.build()
+        val fromChunks = chunked.build()
+
+        // Streaming the resample straight off the chunk list must stay
+        // byte-identical to the web-parity pipeline: merge, downsample, encode.
+        assertTrue(fromMerged.wav.contentEquals(fromChunks.wav))
+        assertEquals(fromMerged.durationSeconds, fromChunks.durationSeconds, 0.0)
+
+        val expected = encodePcmWav(downsampleTo16kHz(signal, inputRate))
+        assertTrue(expected.contentEquals(fromChunks.wav))
+    }
 }

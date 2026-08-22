@@ -83,7 +83,9 @@ export function createDraftTaskFromExtracted(
   originalTaskId?: string | null,
 ): DraftTask {
   const id = crypto.randomUUID();
-  const title = (payload.title || "Untitled task").trim();
+  // Trim first, then fall back when empty — mirrors Android VoiceDrafts, so a
+  // whitespace-only title cannot survive as an empty string.
+  const title = (payload.title ?? "").trim() || "Untitled task";
   const description = payload.description?.trim() || null;
   const priority = (
     payload.priority && payload.priority >= 1 && payload.priority <= 4
@@ -389,16 +391,19 @@ export async function sendVoiceCapture(
 
   if (existingDrafts && existingDrafts.length > 0) {
     // Merge Voice correction updates into existing drafts
-    finalDrafts = existingDrafts.map((prevDraft, index) => {
-      const match = extractedDrafts.find(
+    const consumedMergeIndexes = new Set<number>();
+    const merged = existingDrafts.map((prevDraft, index) => {
+      const matchIndex = extractedDrafts.findIndex(
         (ed) =>
           ed.target_draft_index === index ||
           ed.title.toLowerCase() === prevDraft.title.toLowerCase(),
       );
 
-      if (match) {
+      if (matchIndex >= 0) {
+        // A payload applied by the merge step must not also be appended.
+        consumedMergeIndexes.add(matchIndex);
         return createDraftTaskFromExtracted(
-          match,
+          extractedDrafts[matchIndex],
           effectiveDefaultTimedPlanType,
           prevDraft.originalTaskId,
         );
@@ -408,16 +413,18 @@ export async function sendVoiceCapture(
 
     // Add any completely new drafts
     const newItems = extractedDrafts.filter(
-      (ed) =>
-        ed.target_draft_index === undefined ||
-        ed.target_draft_index === null ||
-        ed.target_draft_index >= existingDrafts.length,
+      (ed, index) =>
+        (ed.target_draft_index === undefined ||
+          ed.target_draft_index === null ||
+          ed.target_draft_index >= existingDrafts.length) &&
+        !consumedMergeIndexes.has(index),
     );
     for (const item of newItems) {
-      finalDrafts.push(
+      merged.push(
         createDraftTaskFromExtracted(item, effectiveDefaultTimedPlanType, null),
       );
     }
+    finalDrafts = merged;
   } else {
     finalDrafts = extractedDrafts.map((d) =>
       createDraftTaskFromExtracted(d, effectiveDefaultTimedPlanType, null),

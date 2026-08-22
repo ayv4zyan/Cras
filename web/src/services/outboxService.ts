@@ -37,6 +37,14 @@ export interface DrainOutboxOptions {
     item: OutboxItem,
   ) => void | Promise<void>;
   readonly onError?: (error: unknown, item: OutboxItem) => void | Promise<void>;
+  /**
+   * Invoked when draining stops because an item hit a network failure.
+   * The failed item stays queued for a later retry.
+   */
+  readonly onNetworkError?: (
+    error: unknown,
+    item?: OutboxItem,
+  ) => void | Promise<void>;
 }
 
 const OUTBOX_STORAGE_PREFIX = "cras_outbox_";
@@ -221,6 +229,7 @@ export async function drainOutbox(options: DrainOutboxOptions): Promise<void> {
     onTaskCompleted,
     onConflict,
     onError,
+    onNetworkError,
   } = options;
 
   const previousDrain = activeDrains.get(operatorId) || Promise.resolve();
@@ -250,6 +259,7 @@ export async function drainOutbox(options: DrainOutboxOptions): Promise<void> {
           await onTaskCreated?.(created);
         } catch (err) {
           if (isNetworkError(err)) {
+            await onNetworkError?.(err, item);
             break;
           }
           // Check if task already exists on server (e.g. prior unacknowledged attempt)
@@ -278,6 +288,7 @@ export async function drainOutbox(options: DrainOutboxOptions): Promise<void> {
           await onTaskCompleted?.(completed);
         } catch (err) {
           if (isNetworkError(err)) {
+            await onNetworkError?.(err, item);
             break;
           }
           removeOutboxItem(operatorId, item.id);

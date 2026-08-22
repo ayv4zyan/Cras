@@ -597,7 +597,8 @@ class InboxViewModel(
     private suspend fun drainOutboxInternal(
         session: OperatorSession,
         onConflictError: ((String) -> Unit)? = null,
-        onGeneralError: ((String) -> Unit)? = null
+        onGeneralError: ((String) -> Unit)? = null,
+        onNetworkError: ((String) -> Unit)? = null
     ) {
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) {
@@ -642,6 +643,18 @@ class InboxViewModel(
                     }
                     onGeneralError?.invoke(errorMsg)
                     triggerLoadTasks(session)
+                }
+
+                override suspend fun onNetworkError(error: Throwable, item: OutboxItem) {
+                    if (!isSessionValid() || onNetworkError == null) return
+                    val errorMsg = error.message?.takeIf { it.isNotBlank() }
+                        ?: "Network unavailable. The task is saved and will sync once you reconnect."
+                    // The optimistic task and its outbox entry stay queued for
+                    // the next successful drain; only the failure is surfaced.
+                    if (item is OutboxItem.Create) {
+                        _createTaskError.value = errorMsg
+                    }
+                    onNetworkError.invoke(errorMsg)
                 }
             }
         )
@@ -906,6 +919,7 @@ class InboxViewModel(
         priority: Int = 4,
         labels: List<String> = emptyList(),
         plan: Plan? = null,
+        onError: (String) -> Unit = {},
         onSuccess: () -> Unit = {}
     ) {
         val trimmed = title.trim()
@@ -962,7 +976,11 @@ class InboxViewModel(
             _isCreatingTask.value = true
             _createTaskError.value = null
             try {
-                drainOutboxInternal(session)
+                drainOutboxInternal(
+                    session,
+                    onGeneralError = onError,
+                    onNetworkError = onError
+                )
             } finally {
                 _isCreatingTask.value = false
             }
@@ -1076,7 +1094,8 @@ class InboxViewModel(
             drainOutboxInternal(
                 session = session,
                 onConflictError = onError,
-                onGeneralError = onError
+                onGeneralError = onError,
+                onNetworkError = onError
             )
         }
     }

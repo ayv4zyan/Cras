@@ -35,13 +35,19 @@ import com.cras.app.ui.CrasApp
 import com.cras.app.ui.inbox.AuthUiState
 import com.cras.app.ui.inbox.InboxViewModel
 import com.cras.app.ui.theme.CrasTheme
+import com.cras.app.voice.DirectoryVoiceRecordingStore
+import com.cras.app.voice.MicAudioRecorderFactory
+import com.cras.app.voice.SupabaseVoiceCaptureApi
+import com.cras.app.ui.voice.VoiceViewModel
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import java.io.File
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var googleAuthManager: GoogleAuthManager
     private lateinit var inboxViewModel: InboxViewModel
+    private lateinit var voiceViewModel: VoiceViewModel
     private var installationSync: NotificationInstallationSync? = null
     private lateinit var notificationPrefs: android.content.SharedPreferences
 
@@ -55,6 +61,17 @@ class MainActivity : ComponentActivity() {
             // permission_state = "denied", not stay parked as "prompt".
             inboxViewModel.reconcileInstallation()
         }
+
+    private val requestMicrophonePermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            // The Voice dialog surfaces the outcome; the Operator retries capture.
+        }
+
+    private fun hasMicrophonePermission(): Boolean =
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -101,6 +118,26 @@ class MainActivity : ComponentActivity() {
             outboxStore = outboxStore,
             installationSync = sync
         )
+
+        // Voice gets its own timeouts: a 4 MB upload plus server transcription
+        // exceeds the shared client's ~10 s defaults.
+        val voiceCaptureApi = SupabaseVoiceCaptureApi(
+            config,
+            SupabaseVoiceCaptureApi.voiceHttpClient(httpClient),
+        )
+        val voiceRecordingStore = DirectoryVoiceRecordingStore(
+            File(applicationContext.filesDir, "voice-recordings")
+        )
+        voiceViewModel = VoiceViewModel(
+            authService = authService,
+            voiceCaptureApi = voiceCaptureApi,
+            recordingStore = voiceRecordingStore,
+            micRecorderProvider = { MicAudioRecorderFactory.create() },
+            effectiveDefaultTimedPlanTypeProvider = {
+                inboxViewModel.effectiveTimedPlanType.value
+            },
+            micPermissionProvider = { hasMicrophonePermission() }
+        )
         googleAuthManager = GoogleAuthManager(this)
 
         lifecycleScope.launch {
@@ -111,10 +148,29 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Retained recordings live in an install-wide directory: drop them the
+        // moment an Operator signs out so a later Operator cannot replay
+        // earlier audio through Voice retry.
+        lifecycleScope.launch {
+            var previousState: AuthUiState? = null
+            inboxViewModel.authState.collect { state ->
+                if (previousState is AuthUiState.Authenticated &&
+                    state is AuthUiState.Unauthenticated
+                ) {
+                    voiceViewModel.deleteAllRetainedRecordings()
+                }
+                previousState = state
+            }
+        }
+
         setContent {
             CrasTheme {
                 CrasApp(
                     viewModel = inboxViewModel,
+                    voiceViewModel = voiceViewModel,
+                    onRequestMicPermission = {
+                        requestMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                    },
                     onGoogleSignInRequested = {
                         lifecycleScope.launch {
                             when (val result = googleAuthManager.getGoogleIdToken()) {

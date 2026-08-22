@@ -348,6 +348,69 @@ class OutboxServiceTest {
     }
 
     @Test
+    fun testDrainerInvokesOnNetworkErrorWhenDrainStops() = runTest {
+        val store = InMemoryOutboxStore()
+        val completeTask1 = createTask(title = "Task 1", completedAt = "2026-08-21T10:05:00Z")
+        val completeItem = OutboxItem.Complete(
+            id = UUID.randomUUID().toString(),
+            taskId = completeTask1.id,
+            expectedVersion = 2,
+            completedAt = "2026-08-21T10:05:00Z",
+            createdAt = "2026-08-21T10:05:30Z"
+        )
+        store.enqueue(session.operatorId, completeItem)
+
+        var isOffline = false
+        val fakeTaskService = object : TaskService {
+            override suspend fun fetchTasks(session: OperatorSession): List<Task> = emptyList()
+            override suspend fun fetchTaskById(session: OperatorSession, taskId: String): Task? =
+                if (taskId == completeTask1.id) completeTask1 else null
+
+            override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task = throw NotImplementedError()
+
+            override suspend fun updateTask(session: OperatorSession, params: UpdateTaskParams): Task = throw NotImplementedError()
+
+            override suspend fun completeTask(session: OperatorSession, taskId: String, expectedVersion: Int, completedAt: String?): Task {
+                if (isOffline) throw UnknownHostException("Offline")
+                return createTask(id = taskId, completedAt = completedAt)
+                    .copy(version = expectedVersion + 1)
+            }
+
+            override suspend fun uncompleteTask(session: OperatorSession, taskId: String, expectedVersion: Int): Task = throw NotImplementedError()
+        }
+
+        val drainer = OutboxDrainer(fakeTaskService, store)
+        val networkErrors = mutableListOf<Pair<Throwable, OutboxItem>>()
+        val callbacks = object : OutboxDrainCallbacks {
+            override suspend fun onNetworkError(error: Throwable, item: OutboxItem) {
+                networkErrors.add(error to item)
+            }
+        }
+
+        // Online: completes without any network callback.
+        drainer.drain(session, callbacks)
+        assertEquals(0, store.getOutbox(session.operatorId).size)
+        assertTrue(networkErrors.isEmpty())
+
+        // Offline with a queued completion: drain stops and reports the network error.
+        isOffline = true
+        val offlineComplete = OutboxItem.Complete(
+            id = UUID.randomUUID().toString(),
+            taskId = completeTask1.id,
+            expectedVersion = 3,
+            completedAt = "2026-08-21T10:06:00Z",
+            createdAt = "2026-08-21T10:06:30Z"
+        )
+        store.enqueue(session.operatorId, offlineComplete)
+
+        drainer.drain(session, callbacks)
+        assertEquals(1, networkErrors.size)
+        assertEquals(offlineComplete, networkErrors[0].second)
+        // The item is retained for a later retry.
+        assertEquals(1, store.getOutbox(session.operatorId).size)
+    }
+
+    @Test
     fun testDrainerRetriesOn401And429() = runTest {
         val store = InMemoryOutboxStore()
         val task1 = createTask(title = "Task 1")

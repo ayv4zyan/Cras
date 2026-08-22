@@ -368,6 +368,16 @@ export function AuthenticatedApp({
     [handleVersionConflict],
   );
 
+  // Draining stops (item stays queued) when the network fails; the Operator
+  // must hear about it instead of the queue silently waiting.
+  const handleDrainNetworkError = useCallback((err: unknown) => {
+    setErrorMessage(
+      err instanceof Error && err.message
+        ? `Network error while syncing changes: ${err.message}. They will retry automatically.`
+        : "Network unavailable. Your changes are saved and will sync once you reconnect.",
+    );
+  }, []);
+
   useEffect(() => {
     let isCancelled = false;
 
@@ -440,6 +450,9 @@ export function AuthenticatedApp({
           onError: (err, item) => {
             if (!isCancelled) handleDrainError(err, item);
           },
+          onNetworkError: (err) => {
+            if (!isCancelled) handleDrainNetworkError(err);
+          },
         }).catch(() => {});
       })
       .catch((err: unknown) => {
@@ -454,7 +467,14 @@ export function AuthenticatedApp({
     return () => {
       isCancelled = true;
     };
-  }, [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError]);
+  }, [
+    userId,
+    client,
+    applyTaskUpdate,
+    handleDrainConflict,
+    handleDrainError,
+    handleDrainNetworkError,
+  ]);
 
   // Realtime subscription for Operator domain invalidations
   useEffect(() => {
@@ -515,6 +535,7 @@ export function AuthenticatedApp({
           onTaskCompleted: (completed) => applyTaskUpdate(completed),
           onConflict: handleDrainConflict,
           onError: handleDrainError,
+          onNetworkError: handleDrainNetworkError,
         })
           .catch(() => {})
           .finally(() => {
@@ -556,6 +577,7 @@ export function AuthenticatedApp({
     reconcileFreshTasks,
     handleDrainConflict,
     handleDrainError,
+    handleDrainNetworkError,
   ]);
 
   // Window online event listener to drain queued outbox work on reconnect
@@ -568,6 +590,7 @@ export function AuthenticatedApp({
         onTaskCompleted: (completed) => applyTaskUpdate(completed),
         onConflict: handleDrainConflict,
         onError: handleDrainError,
+        onNetworkError: handleDrainNetworkError,
       })
         .catch(() => {})
         .finally(() => {
@@ -589,6 +612,7 @@ export function AuthenticatedApp({
     applyTaskUpdate,
     handleDrainConflict,
     handleDrainError,
+    handleDrainNetworkError,
     reconcileFreshTasks,
   ]);
 
@@ -697,6 +721,7 @@ export function AuthenticatedApp({
             }
             handleDrainError(err, item);
           },
+          onNetworkError: handleDrainNetworkError,
         });
       } catch {
         // Retained in outbox on network error
@@ -718,7 +743,14 @@ export function AuthenticatedApp({
         }
       }
     },
-    [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError],
+    [
+      userId,
+      client,
+      applyTaskUpdate,
+      handleDrainConflict,
+      handleDrainError,
+      handleDrainNetworkError,
+    ],
   );
 
   const handleUpdateTask = useCallback(
@@ -792,12 +824,20 @@ export function AuthenticatedApp({
           },
           onConflict: handleDrainConflict,
           onError: handleDrainError,
+          onNetworkError: handleDrainNetworkError,
         });
       } catch {
         // Retained in outbox on network error
       }
     },
-    [userId, client, applyTaskUpdate, handleDrainConflict, handleDrainError],
+    [
+      userId,
+      client,
+      applyTaskUpdate,
+      handleDrainConflict,
+      handleDrainError,
+      handleDrainNetworkError,
+    ],
   );
 
   const handleUncompleteTask = useCallback(

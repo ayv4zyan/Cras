@@ -434,6 +434,93 @@ class InboxViewModelTest {
     }
 
     @Test
+    fun `createTask surfaces network drain failures instead of stopping silently`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        // A healthy create drains without any error state.
+        viewModel.createTask("Synced task")
+        advanceUntilIdle()
+        assertNull(viewModel.createTaskError.value)
+
+        // Network failure during the post-create drain must reach the UI:
+        // createTaskError state plus the caller's onError callback.
+        taskService.shouldFail = true
+        var reportedError: String? = null
+        viewModel.createTask("Offline task", onError = { errorMsg -> reportedError = errorMsg })
+        advanceUntilIdle()
+
+        assertEquals("Network error", viewModel.createTaskError.value)
+        assertEquals("Network error", reportedError)
+
+        // The optimistic task stays visible and queued (unlike non-network
+        // failures, which drop it from view immediately).
+        val inboxNow = viewModel.inboxState.value
+        assertTrue(inboxNow is InboxUiState.Success)
+        assertTrue((inboxNow as InboxUiState.Success).tasks.any { it.title == "Offline task" })
+        assertEquals(0, taskService.tasksInDb.count { it.title == "Offline task" })
+
+        // Recovery drains the retained outbox entry without dropping it.
+        taskService.shouldFail = false
+        viewModel.loadTasks()
+        advanceUntilIdle()
+        assertEquals(1, taskService.tasksInDb.count { it.title == "Offline task" })
+        assertEquals(2, taskService.tasksInDb.size)
+    }
+
+    @Test
+    fun `completeTask surfaces network drain failures while retaining the queued completion`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        viewModel.createTask("Offline completion")
+        advanceUntilIdle()
+        val task = (viewModel.inboxState.value as InboxUiState.Success)
+            .tasks
+            .first { it.title == "Offline completion" }
+
+        // Network failure during the completion drain must reach the UI via
+        // the caller's onError callback instead of being swallowed.
+        taskService.shouldFail = true
+        var reportedError: String? = null
+        viewModel.completeTask(
+            taskId = task.id,
+            expectedVersion = task.version,
+            onError = { errorMsg -> reportedError = errorMsg }
+        )
+        advanceUntilIdle()
+
+        assertEquals("Network error", reportedError)
+
+        // The optimistic completion stays visible and the outbox entry is
+        // retained for the next successful drain.
+        val completedNow = viewModel.completedState.value
+        assertTrue(completedNow is CompletedUiState.Success)
+        assertTrue((completedNow as CompletedUiState.Success).tasks.any { it.title == "Offline completion" })
+        assertEquals(null, taskService.tasksInDb.single { it.title == "Offline completion" }.completedAt)
+
+        // Recovery drains the retained completion entry.
+        taskService.shouldFail = false
+        viewModel.loadTasks()
+        advanceUntilIdle()
+        assertNotNull(taskService.tasksInDb.single { it.title == "Offline completion" }.completedAt)
+    }
+
+    @Test
     fun `loadTasks preserves task success state when labelService fails`() = runTest {
         val authService = FakeAuthService()
         val taskService = FakeTaskService()

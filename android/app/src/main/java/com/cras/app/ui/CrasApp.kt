@@ -38,6 +38,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.cras.app.ui.auth.SignInScreen
+import com.cras.app.models.Task
+import com.cras.app.data.UpdateTaskParams
 import com.cras.app.domain.filterSubtasks
 import com.cras.app.ui.completed.CompletedScreen
 import com.cras.app.ui.detail.TaskDetailDialog
@@ -47,6 +49,8 @@ import com.cras.app.ui.inbox.InboxViewModel
 import com.cras.app.ui.labels.LabelManagerDialog
 import com.cras.app.ui.today.TodayScreen
 import com.cras.app.ui.upcoming.UpcomingScreen
+import com.cras.app.ui.voice.VoiceCaptureDialog
+import com.cras.app.ui.voice.VoiceViewModel
 import kotlinx.coroutines.launch
 
 enum class AppView(
@@ -62,7 +66,9 @@ enum class AppView(
 @Composable
 fun CrasApp(
     viewModel: InboxViewModel,
-    onGoogleSignInRequested: (() -> Unit)? = null
+    onGoogleSignInRequested: (() -> Unit)? = null,
+    voiceViewModel: VoiceViewModel? = null,
+    onRequestMicPermission: (() -> Unit)? = null
 ) {
     val authState by viewModel.authState.collectAsState()
     val inboxState by viewModel.inboxState.collectAsState()
@@ -79,6 +85,8 @@ fun CrasApp(
 
     var currentView by remember { mutableStateOf(AppView.INBOX) }
     var isLabelManagerOpen by remember { mutableStateOf(false) }
+    var isVoiceCaptureOpen by remember { mutableStateOf(false) }
+    var voiceFocusedTask by remember { mutableStateOf<Task?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
@@ -154,6 +162,11 @@ fun CrasApp(
                                     viewModel.selectTask(task)
                                 },
                                 onOpenLabelManager = { isLabelManagerOpen = true },
+                                onStartVoiceCapture = {
+                                    voiceFocusedTask = null
+                                    voiceViewModel?.open(null)
+                                    isVoiceCaptureOpen = true
+                                },
                                 onRefresh = { viewModel.loadTasks() },
                                 onSignOut = { viewModel.signOut() }
                             )
@@ -271,6 +284,11 @@ fun CrasApp(
                             },
                             onSelectSubtask = { subtask ->
                                 viewModel.selectTask(subtask)
+                            },
+                            onVoiceEdit = {
+                                voiceFocusedTask = selectedTask
+                                voiceViewModel?.open(selectedTask)
+                                isVoiceCaptureOpen = true
                             }
                         )
                     }
@@ -287,6 +305,81 @@ fun CrasApp(
                             },
                             onDeleteLabel = { id, onSuccess, onError ->
                                 viewModel.deleteLabel(id, onSuccess, onError)
+                            }
+                        )
+                    }
+
+                    if (isVoiceCaptureOpen && voiceViewModel != null) {
+                        val voiceState by voiceViewModel.uiState.collectAsState()
+                        val retainedRecordings by voiceViewModel.retainedRecordings.collectAsState()
+                        VoiceCaptureDialog(
+                            uiState = voiceState,
+                            effectiveDefault = effectiveTimedPlanType,
+                            retainedRecordings = retainedRecordings,
+                            focusedTaskTitle = voiceFocusedTask?.title,
+                            onStartRecording = { voiceViewModel.startRecording() },
+                            onStopAndProcess = { voiceViewModel.stopAndProcess() },
+                            onCancelRecording = { voiceViewModel.cancelRecording() },
+                            onRetryProcessing = { voiceViewModel.retryProcessing() },
+                            onCorrectByVoice = { voiceViewModel.correctByVoice() },
+                            onStartOver = { voiceViewModel.startOver() },
+                            onDraftChange = { index, draft -> voiceViewModel.replaceDraft(index, draft) },
+                            onSwitchDraftPlanType = { index, type ->
+                                voiceViewModel.switchDraftPlanType(index, type)
+                            },
+                            onRemoveDraft = { index -> voiceViewModel.removeDraft(index) },
+                            onDeleteRetained = { id -> voiceViewModel.deleteRetainedRecording(id) },
+                            onDeleteAllRetained = { voiceViewModel.deleteAllRetainedRecordings() },
+                            onRequestMicPermission = {
+                                val request = onRequestMicPermission
+                                if (request != null) {
+                                    request()
+                                } else {
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar("Microphone permission unavailable")
+                                    }
+                                }
+                            },
+                            onAcceptCreate = { drafts ->
+                                drafts.forEach { draft ->
+                                    viewModel.createTask(
+                                        title = draft.title,
+                                        description = draft.description,
+                                        priority = draft.priority,
+                                        plan = draft.plan
+                                    )
+                                }
+                                isVoiceCaptureOpen = false
+                                voiceViewModel.close()
+                            },
+                            onAcceptEdit = { draft ->
+                                val focused = voiceFocusedTask
+                                if (focused != null) {
+                                    viewModel.updateTask(
+                                        params = UpdateTaskParams(
+                                            id = focused.id,
+                                            title = draft.title.takeIf { it != focused.title },
+                                            description = draft.description,
+                                            clearDescription =
+                                                draft.description == null && focused.description != null,
+                                            priority = draft.priority.takeIf { it != focused.priority },
+                                            plan = draft.plan?.takeIf { it != focused.plan },
+                                            clearPlan = draft.plan == null && focused.plan != null,
+                                            expectedVersion = focused.version
+                                        ),
+                                        onError = { errorMsg ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
+                                    )
+                                }
+                                isVoiceCaptureOpen = false
+                                voiceViewModel.close()
+                            },
+                            onDismiss = {
+                                isVoiceCaptureOpen = false
+                                voiceViewModel.close()
                             }
                         )
                     }

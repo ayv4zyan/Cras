@@ -186,11 +186,15 @@ class VoiceViewModel(
     }
 
     fun updateDraft(index: Int, transform: (DraftTask) -> DraftTask) {
-        mutateWorkingDrafts(index) { draft ->
-            val updated = transform(draft)
-            updated.copy(validationError = null)
-        }
+        val current = currentDraftsOrThrow()
+        if (index !in current.indices) return
+        workingDrafts = current.mapIndexed { i, draft -> if (i == index) transform(draft) else draft }
+        publishDraftsIfVisible()
     }
+
+    /** Replaces a whole draft card, as edited in Compose inputs. */
+    fun replaceDraft(index: Int, updated: DraftTask) =
+        updateDraft(index) { _ -> updated }
 
     fun removeDraft(index: Int) {
         val current = currentDraftsOrThrow()
@@ -201,7 +205,7 @@ class VoiceViewModel(
 
     /** Switches a timed draft between Instant and Floating, preserving its face. */
     fun switchDraftPlanType(index: Int, newType: TimedPlanType) {
-        mutateWorkingDrafts(index) { draft ->
+        updateDraft(index) { draft ->
             switchDraftTimedPlanType(draft, newType, effectiveDefault(), zoneIdProvider())
         }
     }
@@ -286,13 +290,6 @@ class VoiceViewModel(
     private fun currentDraftsOrThrow(): List<DraftTask> = when (val state = _uiState.value) {
         is VoiceUiState.Drafts -> state.drafts
         else -> workingDrafts
-    }
-
-    private fun mutateWorkingDrafts(index: Int, transform: (DraftTask) -> DraftTask) {
-        val current = currentDraftsOrThrow()
-        if (index !in current.indices) return
-        workingDrafts = current.toMutableList().also { it[index] = transform(current[index]) }
-        publishDraftsIfVisible()
     }
 
     private fun publishDraftsIfVisible() {

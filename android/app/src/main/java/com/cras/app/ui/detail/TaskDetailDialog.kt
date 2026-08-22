@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -134,7 +135,8 @@ fun TaskDetailDialog(
     onUncomplete: (String, onSuccess: () -> Unit, onError: (String) -> Unit) -> Unit,
     onAddComment: ((taskId: String, content: String, onSuccess: () -> Unit, onError: (String) -> Unit) -> Unit)? = null,
     onCreateSubtask: ((parentId: String, title: String, onSuccess: () -> Unit, onError: (String) -> Unit) -> Unit)? = null,
-    onSelectSubtask: ((Task) -> Unit)? = null
+    onSelectSubtask: ((Task) -> Unit)? = null,
+    onVoiceEdit: (() -> Unit)? = null
 ) {
     if (task == null) return
 
@@ -303,11 +305,21 @@ fun TaskDetailDialog(
                         }
                     }
 
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close dialog"
-                        )
+                    Row {
+                        if (onVoiceEdit != null && !isTaskCompleted) {
+                            IconButton(onClick = onVoiceEdit) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = "Voice edit task"
+                                )
+                            }
+                        }
+                        IconButton(onClick = onDismiss) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close dialog"
+                            )
+                        }
                     }
                 }
 

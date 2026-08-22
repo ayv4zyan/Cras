@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Inbox
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sell
@@ -65,6 +66,7 @@ fun InboxScreen(
     onCompleteTask: (String) -> Unit,
     onSelectTask: (Task) -> Unit,
     onOpenLabelManager: () -> Unit = {},
+    onStartVoiceCapture: () -> Unit = {},
     onRefresh: () -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -103,6 +105,9 @@ fun InboxScreen(
                 }
             },
             actions = {
+                IconButton(onClick = onStartVoiceCapture) {
+                    Icon(Icons.Default.Mic, contentDescription = "Voice capture")
+                }
                 IconButton(onClick = onOpenLabelManager) {
                     Icon(Icons.Default.Sell, contentDescription = "Manage labels")
                 }

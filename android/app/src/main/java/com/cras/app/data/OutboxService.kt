@@ -251,6 +251,9 @@ interface OutboxDrainCallbacks {
     suspend fun onTaskCompleted(task: Task) {}
     suspend fun onConflict(error: Throwable, item: OutboxItem) {}
     suspend fun onError(error: Throwable, item: OutboxItem) {}
+
+    /** Invoked when draining stops because an item hit a network failure. */
+    suspend fun onNetworkError(error: Throwable, item: OutboxItem) {}
 }
 
 class OutboxDrainer(
@@ -279,6 +282,7 @@ class OutboxDrainer(
                             throw e
                         } catch (e: Throwable) {
                             if (isNetworkError(e)) {
+                                callbacks.onNetworkError(e, item)
                                 break
                             }
                             // Check if task already exists on server (e.g. prior unacknowledged attempt)
@@ -314,6 +318,7 @@ class OutboxDrainer(
                             throw e
                         } catch (e: Throwable) {
                             if (isNetworkError(e)) {
+                                callbacks.onNetworkError(e, item)
                                 break
                             }
                             if (e is TaskConflictException || (e.message?.contains("version conflict", ignoreCase = true) == true)) {

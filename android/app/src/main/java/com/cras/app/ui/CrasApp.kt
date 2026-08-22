@@ -146,7 +146,7 @@ fun CrasApp(
                                 isCreatingTask = isCreatingTask,
                                 createTaskError = createTaskError,
                                 onCreateTask = { title, description, priority, taskLabels, plan, onSuccess ->
-                                    viewModel.createTask(title, description, priority, taskLabels, plan, onSuccess)
+                                    viewModel.createTask(title, description, priority, taskLabels, plan, onSuccess = onSuccess)
                                 },
                                 onCompleteTask = { taskId ->
                                     viewModel.completeTask(
@@ -181,7 +181,7 @@ fun CrasApp(
                                 isCreatingTask = isCreatingTask,
                                 createTaskError = createTaskError,
                                 onCreateTask = { title, description, priority, taskLabels, plan, onSuccess ->
-                                    viewModel.createTask(title, description, priority, taskLabels, plan, onSuccess)
+                                    viewModel.createTask(title, description, priority, taskLabels, plan, onSuccess = onSuccess)
                                 },
                                 onCompleteTask = { taskId ->
                                     viewModel.completeTask(
@@ -346,7 +346,12 @@ fun CrasApp(
                                         title = draft.title,
                                         description = draft.description,
                                         priority = draft.priority,
-                                        plan = draft.plan
+                                        plan = draft.plan,
+                                        onError = { errorMsg ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
                                     )
                                 }
                                 isVoiceCaptureOpen = false

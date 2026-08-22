@@ -99,7 +99,24 @@ describe("Voice Service - Draft Task Creation & Plan Semantics", () => {
     expect(draft.validationError).toBe(
       "An explicit Instant or Floating plan requires a clock time. Please provide a time or change to Date-only.",
     );
-    expect(draft.plan).toEqual({ date: "2026-08-25" });
+  });
+
+  it("falls back to Untitled task for a whitespace-only title instead of keeping an empty string", () => {
+    const draft = createDraftTaskFromExtracted(
+      { title: "   " } as ExtractedDraftPayload,
+      "instant",
+    );
+
+    expect(draft.title).toBe("Untitled task");
+  });
+
+  it("falls back to Untitled task for an empty title", () => {
+    const draft = createDraftTaskFromExtracted(
+      { title: "" } as ExtractedDraftPayload,
+      "instant",
+    );
+
+    expect(draft.title).toBe("Untitled task");
   });
 
   it("switching Instant <-> Floating preserves displayed calendar date and clock time", () => {
@@ -332,6 +349,119 @@ describe("Voice Service - API & Error Handling", () => {
     expect(result.drafts[0].plan).toEqual({ date: "2026-08-21" }); // updated!
     expect(result.drafts[1].title).toBe("Go to pool");
     expect(result.drafts[1].plan).toEqual({ date: "2026-08-25" }); // untouched!
+  });
+
+  it("does not duplicate a title-matched correction whose target_draft_index is absent", async () => {
+    const existingDrafts: DraftTask[] = [
+      {
+        id: "draft-1",
+        title: "Buy milk",
+        description: null,
+        priority: 4,
+        plan: { date: "2026-08-22" },
+        labels: [],
+        parentId: null,
+        validationError: null,
+      },
+      {
+        id: "draft-2",
+        title: "Go to pool",
+        description: null,
+        priority: 4,
+        plan: { date: "2026-08-25" },
+        labels: [],
+        parentId: null,
+        validationError: null,
+      },
+    ];
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        transcript: "Actually buy oat milk",
+        mode: "create",
+        drafts: [
+          {
+            // No target_draft_index: the merge must consume this payload via
+            // its title match instead of also appending it as new.
+            title: "Buy milk",
+            description: "Oat milk, two cartons",
+            priority: 2,
+            plan_date: "2026-08-21",
+            plan_time: null,
+            plan_type: null,
+          },
+        ],
+      }),
+    });
+
+    const result = await sendVoiceCapture(mockSupabaseClient, {
+      audioBlob: new Blob(["mock-wav"], { type: "audio/wav" }),
+      recordingStartTime: "2026-08-21T10:00:00Z",
+      timezone: "UTC",
+      existingDrafts,
+      effectiveDefaultTimedPlanType: "instant",
+    });
+
+    // The count must stay stable: merged in place, not appended a second time.
+    expect(result.drafts).toHaveLength(2);
+    expect(result.drafts[0].title).toBe("Buy milk");
+    expect(result.drafts[0].description).toBe("Oat milk, two cartons");
+    expect(result.drafts[1].title).toBe("Go to pool");
+    expect(result.drafts[1].plan).toEqual({ date: "2026-08-25" });
+  });
+
+  it("still appends genuinely new untethered payloads after merging corrections", async () => {
+    const existingDrafts: DraftTask[] = [
+      {
+        id: "draft-1",
+        title: "Buy milk",
+        description: null,
+        priority: 4,
+        plan: { date: "2026-08-22" },
+        labels: [],
+        parentId: null,
+        validationError: null,
+      },
+    ];
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        transcript: "Change the milk to oat and add walk the dog",
+        mode: "create",
+        drafts: [
+          {
+            title: "Buy milk",
+            description: "Oat milk",
+            priority: 4,
+            plan_date: "2026-08-22",
+            plan_time: null,
+            plan_type: null,
+          },
+          {
+            title: "Walk the dog",
+            description: null,
+            priority: 4,
+            plan_date: null,
+            plan_time: null,
+            plan_type: null,
+          },
+        ],
+      }),
+    });
+
+    const result = await sendVoiceCapture(mockSupabaseClient, {
+      audioBlob: new Blob(["mock-wav"], { type: "audio/wav" }),
+      recordingStartTime: "2026-08-21T10:00:00Z",
+      timezone: "UTC",
+      existingDrafts,
+      effectiveDefaultTimedPlanType: "instant",
+    });
+
+    expect(result.drafts).toHaveLength(2);
+    expect(result.drafts[0].description).toBe("Oat milk"); // merged
+    expect(result.drafts[1].title).toBe("Walk the dog"); // appended once
   });
 
   it("throws VoiceError on 429 rate limit with earliest retry timestamp", async () => {

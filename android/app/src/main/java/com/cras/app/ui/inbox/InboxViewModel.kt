@@ -33,6 +33,8 @@ import com.cras.app.models.Comment
 import com.cras.app.models.Label
 import com.cras.app.models.Plan
 import com.cras.app.models.Task
+import com.cras.app.notification.AndroidNotificationStatus
+import com.cras.app.notification.NotificationInstallationSync
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -102,6 +104,7 @@ class InboxViewModel(
     private val settingsService: SettingsService? = null,
     private val realtimeService: RealtimeService? = null,
     private val outboxStore: OutboxStore = InMemoryOutboxStore(),
+    private val installationSync: NotificationInstallationSync? = null,
     private val nowProvider: () -> Instant = { Instant.now() },
     private val zoneIdProvider: () -> ZoneId = { ZoneId.systemDefault() }
 ) : ViewModel() {
@@ -138,6 +141,8 @@ class InboxViewModel(
 
     private val _selectedTask = MutableStateFlow<Task?>(null)
     val selectedTask: StateFlow<Task?> = _selectedTask.asStateFlow()
+
+    private var routedTaskId: String? = null
 
     private val _isCreatingTask = MutableStateFlow(false)
     val isCreatingTask: StateFlow<Boolean> = _isCreatingTask.asStateFlow()
@@ -196,6 +201,11 @@ class InboxViewModel(
                     viewModelScope.launch {
                         loadSettingsInternal(session)
                     }
+                    installationSync?.let { sync ->
+                        viewModelScope.launch {
+                            runCatching { sync.reconcile(session) }
+                        }
+                    }
 
                     realtimeSubscription = realtimeService?.subscribeToInvalidations(
                         session = session,
@@ -247,6 +257,28 @@ class InboxViewModel(
         _selectedTask.value = task
     }
 
+    /**
+     * Opens the Task tapped through an Android Notification. When its data has
+     * not arrived yet, the identity is retained and applied at the next
+     * reconciliation.
+     */
+    fun focusRoutedTask(taskId: String) {
+        val match = _allTasks.value.firstOrNull { it.id == taskId }
+        if (match != null) {
+            routedTaskId = null
+            _selectedTask.value = match
+        } else {
+            routedTaskId = taskId
+        }
+    }
+
+    private fun consumePendingRoutedTask() {
+        val pendingId = routedTaskId ?: return
+        val match = _allTasks.value.firstOrNull { it.id == pendingId } ?: return
+        routedTaskId = null
+        _selectedTask.value = match
+    }
+
     fun signInWithGoogleIdToken(idToken: String, nonce: String? = null) {
         viewModelScope.launch {
             _authState.value = AuthUiState.Loading
@@ -267,6 +299,12 @@ class InboxViewModel(
         realtimeSubscription?.unsubscribe()
         realtimeSubscription = null
         viewModelScope.launch {
+            val currentAuth = _authState.value
+            // Sign-out immediately disables the Operator-bound installation and
+            // cancels its jobs before the session itself is cleared.
+            if (currentAuth is AuthUiState.Authenticated && installationSync != null) {
+                runCatching { installationSync.deactivateForSignOut(currentAuth.session) }
+            }
             authService.signOut()
         }
     }
@@ -277,6 +315,37 @@ class InboxViewModel(
             triggerLoadTasks(currentAuth.session)
             viewModelScope.launch {
                 loadSettingsInternal(currentAuth.session)
+            }
+        }
+    }
+
+    val installationStatus: StateFlow<AndroidNotificationStatus>?
+        get() = installationSync?.status
+
+    /**
+     * Reconciles endpoint and permission state when the app resumes while a
+     * session is active, per the shared installation lifecycle.
+     */
+    fun reconcileInstallation() {
+        val currentAuth = _authState.value
+        if (currentAuth is AuthUiState.Authenticated) {
+            installationSync?.let { sync ->
+                viewModelScope.launch {
+                    runCatching { sync.reconcile(currentAuth.session) }
+                }
+            }
+        }
+    }
+
+    fun setNotificationsEnabled(enabled: Boolean) {
+        installationSync ?: return
+        val currentAuth = _authState.value
+        viewModelScope.launch {
+            runCatching {
+                installationSync.setLocalEnabled(
+                    enabled,
+                    (currentAuth as? AuthUiState.Authenticated)?.session
+                )
             }
         }
     }
@@ -380,6 +449,7 @@ class InboxViewModel(
         if (previousSelected != null && _selectedTask.value == null) {
             _comments.value = emptyList()
         }
+        consumePendingRoutedTask()
     }
 
     private fun handleInvalidationEvent(session: OperatorSession, event: InvalidationPayload) {

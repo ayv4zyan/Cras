@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Cras</string>
+    <string name="notification_channel_name">Task notifications</string>
+    <string name="notification_channel_description">Best-effort reminders for timed tasks</string>
 </resources>

@@ -671,6 +671,21 @@ export async function processVoiceCapture(
 
   const reservationId = reservation.reservationId;
 
+  if (!reservationId) {
+    // Malformed success payload from the accounting RPC: an allowed
+    // reservation without a reservation_id can never be reconciled, so fail
+    // closed before spending on providers.
+    return {
+      success: false,
+      error: {
+        status: 500,
+        code: "accounting_unavailable",
+        message:
+          "Voice capture is temporarily unavailable. Please try again later.",
+      },
+    };
+  }
+
   // Step 3: Execute provider calls
   let transcript = "";
   let promptTokens = 0;

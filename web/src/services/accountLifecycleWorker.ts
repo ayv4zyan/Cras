@@ -114,7 +114,6 @@ async function purgeOperator(
   adminClient: SupabaseClient,
   storageApi: StorageAdminApi,
 ): Promise<PurgeOutcome> {
-  let objectRows: LifecycleStorageObjectRow[];
   const objectsQuery = adminClient
     .schema("storage")
     .from("objects")
@@ -132,7 +131,7 @@ async function purgeOperator(
       error: listError?.message ?? "storage listing failed",
     };
   }
-  objectRows = listed;
+  const objectRows: LifecycleStorageObjectRow[] = listed;
 
   const byBucket = new Map<string, string[]>();
   for (const row of objectRows) {

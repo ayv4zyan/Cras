@@ -26,6 +26,21 @@ import { LabelManagerModal } from "./components/LabelManagerModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { NotificationPermissionModal } from "./components/NotificationPermissionModal";
 import { VoiceCaptureModal } from "./components/VoiceCaptureModal";
+import {
+  AccountDeletionModal,
+  type DeletionFlowStep,
+} from "./components/AccountDeletionModal";
+import { FrozenAccountScreen } from "./components/FrozenAccountScreen";
+import {
+  clearLocalOperatorData,
+  consumeReauthIntent,
+  downloadAccountExport,
+  fetchAccountStatus,
+  recoverAccount,
+  requestAccountDeletion,
+  stageReauthIntent,
+  type AccountStatus,
+} from "./services/accountService";
 import type { DraftTask } from "./services/voiceService";
 import {
   hasExplainedPermission,
@@ -96,6 +111,8 @@ export interface AuthenticatedAppProps {
   readonly client: SupabaseClient;
   readonly user: User;
   readonly onSignOut: () => Promise<void>;
+  readonly onSignInWithGoogle?: () => Promise<void>;
+  readonly onRecovered?: () => void;
 }
 
 interface NavItem {
@@ -110,6 +127,8 @@ export function AuthenticatedApp({
   client,
   user,
   onSignOut,
+  onSignInWithGoogle,
+  onRecovered,
 }: AuthenticatedAppProps): React.JSX.Element {
   const [activeView, setActiveView] = useState<ViewMode>("inbox");
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -124,6 +143,14 @@ export function AuthenticatedApp({
   const [isPermissionModalOpen, setIsPermissionModalOpen] = useState(false);
   const [isVoiceCaptureOpen, setIsVoiceCaptureOpen] = useState(false);
   const [voiceFocusedTask, setVoiceFocusedTask] = useState<Task | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [deleteModalStep, setDeleteModalStep] =
+    useState<DeletionFlowStep>("overview");
+  const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(
+    null,
+  );
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(() => getIsOnline());
@@ -248,6 +275,42 @@ export function AuthenticatedApp({
       }
     };
   }, [client]);
+
+  // Observe current account lifecycle state from the server on every session.
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchAccountStatus(client)
+      .then((status) => {
+        if (!isMounted) return;
+        setAccountStatus(status);
+        if (status.deletionState === "pending_deletion") {
+          clearLocalOperatorData(userId);
+          setIsDetailModalOpen(false);
+          setIsSettingsModalOpen(false);
+          setIsVoiceCaptureOpen(false);
+          setVoiceFocusedTask(null);
+          setSelectedTask(null);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, [client, userId]);
+
+  // A staged reauthentication intent from a fresh Google flow resumes the
+  // deletion confirmation for the same identity.
+  const resumedDeleteIntent = React.useRef(false);
+  useEffect(() => {
+    if (resumedDeleteIntent.current) return;
+    resumedDeleteIntent.current = true;
+    if (consumeReauthIntent(userId)) {
+      setDeleteModalStep("confirm");
+      setIsDeleteModalOpen(true);
+    }
+  }, [userId]);
 
   const applyTaskUpdate = useCallback((updated: Task) => {
     setTasks((prev) => {
@@ -904,6 +967,69 @@ export function AuthenticatedApp({
     setIsVoiceCaptureOpen(true);
   }, []);
 
+  const handleSignOut = useCallback(async () => {
+    try {
+      await deactivateInstallation(client);
+    } catch (deactivateErr) {
+      console.error(
+        "Failed to deactivate installation during sign out:",
+        deactivateErr,
+      );
+      setErrorMessage(
+        deactivateErr instanceof Error
+          ? deactivateErr.message
+          : "Failed to deactivate installation during sign out",
+      );
+    } finally {
+      try {
+        await onSignOut();
+      } catch (signOutErr) {
+        console.error("Failed to sign out:", signOutErr);
+        setErrorMessage(
+          signOutErr instanceof Error
+            ? signOutErr.message
+            : "Failed to sign out",
+        );
+      }
+    }
+  }, [client, onSignOut]);
+
+  const handleDownloadExport = useCallback(async () => {
+    await downloadAccountExport(client);
+  }, [client]);
+
+  const handleReauthenticateForDeletion = useCallback(async () => {
+    stageReauthIntent(userId);
+    await onSignInWithGoogle?.();
+  }, [userId, onSignInWithGoogle]);
+
+  const handleConfirmDeletion = useCallback(async () => {
+    const confirmation = await requestAccountDeletion(client);
+    setAccountStatus({
+      deletionState: confirmation.deletionState,
+      deletionDeadline: confirmation.deletionDeadline,
+      recoveryAvailable: true,
+    });
+    clearLocalOperatorData(userId);
+    setIsDeleteModalOpen(false);
+    await onSignOut();
+  }, [client, userId, onSignOut]);
+
+  const handleRecoverFromFrozen = useCallback(async () => {
+    setIsRecovering(true);
+    setRecoveryError(null);
+    try {
+      await recoverAccount(client);
+      onRecovered?.();
+    } catch (err) {
+      setRecoveryError(
+        err instanceof Error ? err.message : "Failed to recover account",
+      );
+    } finally {
+      setIsRecovering(false);
+    }
+  }, [client, onRecovered]);
+
   const handleAcceptVoiceDrafts = useCallback(
     async (drafts: readonly DraftTask[]) => {
       for (const draft of drafts) {
@@ -1036,6 +1162,20 @@ export function AuthenticatedApp({
       completedTasks.length,
     ],
   );
+
+  if (accountStatus?.deletionState === "pending_deletion") {
+    return (
+      <FrozenAccountScreen
+        userEmail={user.email ?? undefined}
+        deletionDeadline={accountStatus.deletionDeadline}
+        recoveryAvailable={accountStatus.recoveryAvailable}
+        isRecovering={isRecovering}
+        errorMessage={recoveryError}
+        onRecover={handleRecoverFromFrozen}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
@@ -1232,32 +1372,7 @@ export function AuthenticatedApp({
 
                   <button
                     type="button"
-                    onClick={async () => {
-                      try {
-                        await deactivateInstallation(client);
-                      } catch (deactivateErr) {
-                        console.error(
-                          "Failed to deactivate installation during sign out:",
-                          deactivateErr,
-                        );
-                        setErrorMessage(
-                          deactivateErr instanceof Error
-                            ? deactivateErr.message
-                            : "Failed to deactivate installation during sign out",
-                        );
-                      } finally {
-                        try {
-                          await onSignOut();
-                        } catch (signOutErr) {
-                          console.error("Failed to sign out:", signOutErr);
-                          setErrorMessage(
-                            signOutErr instanceof Error
-                              ? signOutErr.message
-                              : "Failed to sign out",
-                          );
-                        }
-                      }
-                    }}
+                    onClick={handleSignOut}
                     aria-label="Sign out"
                     title="Sign out"
                     className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer shrink-0"
@@ -1350,6 +1465,21 @@ export function AuthenticatedApp({
         client={client}
         effectiveDefaultTimedPlanType={effectiveTimedPlanType}
         onTimedPlanTypeChanged={(type) => setEffectiveTimedPlanType(type)}
+        onDeleteAccount={() => {
+          setDeleteModalStep("overview");
+          setIsDeleteModalOpen(true);
+        }}
+      />
+
+      {/* Account Deletion Modal */}
+      <AccountDeletionModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        userEmail={user.email ?? undefined}
+        initialStep={deleteModalStep}
+        onReauthenticate={handleReauthenticateForDeletion}
+        onDownloadExport={handleDownloadExport}
+        onConfirmDeletion={handleConfirmDeletion}
       />
 
       {/* Notification Permission In-Context Modal */}
@@ -1385,6 +1515,7 @@ export function CrasApp({
     signInWithGoogle,
     signOut,
   } = useAuth();
+  const [lifecycleEpoch, setLifecycleEpoch] = useState(0);
 
   useEffect(() => {
     const handleBeforeInstall = (e: Event) => {
@@ -1418,10 +1549,12 @@ export function CrasApp({
 
   return (
     <AuthenticatedApp
-      key={user.id}
+      key={`${user.id}:${lifecycleEpoch}`}
       client={client}
       user={user}
       onSignOut={signOut}
+      onSignInWithGoogle={signInWithGoogle}
+      onRecovered={() => setLifecycleEpoch((epoch) => epoch + 1)}
     />
   );
 }

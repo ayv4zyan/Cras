@@ -43,6 +43,7 @@ export interface SettingsModalProps {
   readonly client: SupabaseClient;
   readonly effectiveDefaultTimedPlanType: TimedPlanType;
   readonly onTimedPlanTypeChanged?: (type: TimedPlanType) => void;
+  readonly onDeleteAccount?: () => void;
 }
 
 export function SettingsModal({
@@ -51,6 +52,7 @@ export function SettingsModal({
   client,
   effectiveDefaultTimedPlanType,
   onTimedPlanTypeChanged,
+  onDeleteAccount,
 }: SettingsModalProps): React.JSX.Element | null {
   const [operatorSettings, setOperatorSettings] =
     useState<OperatorSettings | null>(null);
@@ -639,6 +641,30 @@ export function SettingsModal({
                 />
               </div>
             </div>
+
+            {/* Account Danger Zone */}
+            {onDeleteAccount && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-2.5">
+                <div className="flex items-center space-x-2">
+                  <AlertTriangle className="h-4 w-4 text-destructive" />
+                  <span className="text-sm font-medium text-foreground">
+                    Danger Zone
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Deleting your account revokes access immediately and erases
+                  all data after a seven-day Recovery window.
+                </p>
+                <button
+                  type="button"
+                  onClick={onDeleteAccount}
+                  aria-label="Delete account"
+                  className="px-3 py-1.5 rounded-md bg-destructive text-destructive-foreground text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  Delete account...
+                </button>
+              </div>
+            )}
 
             {/* Best Effort Reliability Copy */}
             <div className="rounded-lg bg-secondary/50 p-3 border border-border/60 flex items-start space-x-2.5">

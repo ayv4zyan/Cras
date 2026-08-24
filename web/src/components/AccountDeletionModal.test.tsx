@@ -58,7 +58,7 @@ describe("AccountDeletionModal", () => {
   it("requires fresh Google reauthentication before showing the destructive confirmation", () => {
     renderModal();
 
-    fireEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /continue to verification/i }));
 
     expect(screen.getByText(/sign in with google again/i)).toBeInTheDocument();
 

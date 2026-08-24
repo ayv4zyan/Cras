@@ -28,7 +28,10 @@ export function FrozenAccountScreen({
     : null;
 
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground p-4">
+    <div
+      role="main"
+      className="flex h-screen w-screen items-center justify-center bg-background text-foreground p-4"
+    >
       <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl space-y-5 text-card-foreground">
         <div className="flex items-center space-x-2.5">
           <AlertTriangle className="h-5 w-5 text-destructive" />
@@ -80,7 +83,7 @@ export function FrozenAccountScreen({
           </p>
         )}
 
-        <div className="flex flex-col space-y-2 pt-1">
+        <div aria-live="polite" className="flex flex-col space-y-2 pt-1">
           <button
             type="button"
             onClick={onRecover}
@@ -88,7 +91,7 @@ export function FrozenAccountScreen({
             className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isRecovering && <Loader2 className="h-3 w-3 animate-spin" />}
-            <span>Recover my account</span>
+            <span>{isRecovering ? "Recovering…" : "Recover my account"}</span>
           </button>
           <button
             type="button"

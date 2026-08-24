@@ -25,17 +25,24 @@ export function AccountDeletionModal({
   const [step, setStep] = useState<DeletionFlowStep>(initialStep);
   const [acknowledged, setAcknowledged] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isReauthing, setIsReauthing] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (isOpen) {
+      previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
       setStep(initialStep);
       setAcknowledged(false);
       setIsExporting(false);
+      setIsReauthing(false);
       setIsConfirming(false);
       setErrorMessage(null);
+    } else {
+      previouslyFocusedRef.current?.focus();
+      previouslyFocusedRef.current = null;
     }
   }, [isOpen, initialStep]);
 
@@ -49,7 +56,7 @@ export function AccountDeletionModal({
       }
       if (event.key === "Tab" && modalRef.current) {
         const focusable = modalRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
         );
         if (focusable.length === 0) return;
         const firstElement = focusable[0];
@@ -79,7 +86,7 @@ export function AccountDeletionModal({
     const timeout = setTimeout(() => {
       if (modalRef.current) {
         const firstFocusable = modalRef.current.querySelector<HTMLElement>(
-          "button, input, select, [tabindex]:not([tabindex='-1'])",
+          "button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
         );
         firstFocusable?.focus();
       }
@@ -125,6 +132,9 @@ export function AccountDeletionModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="account-deletion-modal-title"
+      aria-describedby={
+        errorMessage ? "account-deletion-error" : undefined
+      }
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in-50"
     >
       <div className="relative w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl space-y-5 text-card-foreground">
@@ -150,6 +160,7 @@ export function AccountDeletionModal({
 
         {errorMessage && (
           <div
+            id="account-deletion-error"
             role="alert"
             className="rounded-md bg-destructive/10 p-3 text-xs text-destructive"
           >
@@ -203,7 +214,7 @@ export function AccountDeletionModal({
               onClick={() => setStep("reauthenticate")}
               className="w-full flex items-center justify-center px-3 py-2 rounded-md bg-destructive text-destructive-foreground text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
             >
-              Continue
+              Continue to verification
             </button>
           </div>
         )}
@@ -228,16 +239,25 @@ export function AccountDeletionModal({
             <div className="flex flex-col space-y-2">
               <button
                 type="button"
-                onClick={onReauthenticate}
-                className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-md border border-border text-xs font-medium hover:bg-secondary transition-colors cursor-pointer"
+                onClick={() => {
+                  setIsReauthing(true);
+                  onReauthenticate();
+                }}
+                disabled={isReauthing}
+                className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-md border border-border text-xs font-medium hover:bg-secondary transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <ShieldCheck className="h-3.5 w-3.5" />
-                <span>Continue with Google</span>
+                {isReauthing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                )}
+                <span>{isReauthing ? "Redirecting…" : "Continue with Google"}</span>
               </button>
               <button
                 type="button"
                 onClick={() => setStep("overview")}
-                className="text-xs text-muted-foreground underline hover:no-underline cursor-pointer self-center pt-1"
+                disabled={isReauthing}
+                className="text-xs text-muted-foreground underline hover:no-underline cursor-pointer self-center pt-1 disabled:opacity-50 disabled:pointer-events-none"
               >
                 Back
               </button>

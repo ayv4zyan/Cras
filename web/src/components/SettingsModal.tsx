@@ -119,6 +119,8 @@ export function SettingsModal({
   useEffect(() => {
     if (!isOpen) return;
 
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         onClose();
@@ -127,7 +129,7 @@ export function SettingsModal({
 
       if (event.key === "Tab" && modalRef.current) {
         const focusable = modalRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
         );
         if (focusable.length === 0) return;
 
@@ -154,7 +156,7 @@ export function SettingsModal({
     const timeout = setTimeout(() => {
       if (modalRef.current) {
         const firstFocusable = modalRef.current.querySelector<HTMLElement>(
-          "button, input, select, [tabindex]:not([tabindex='-1'])",
+          "button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
         );
         firstFocusable?.focus();
       }
@@ -163,6 +165,7 @@ export function SettingsModal({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       clearTimeout(timeout);
+      previouslyFocused?.focus();
     };
   }, [isOpen, onClose]);
 
@@ -354,7 +357,7 @@ export function SettingsModal({
         </div>
 
         {errorMessage && (
-          <div className="rounded-md bg-destructive/10 p-3 text-xs text-destructive">
+          <div role="alert" className="rounded-md bg-destructive/10 p-3 text-xs text-destructive">
             {errorMessage}
           </div>
         )}

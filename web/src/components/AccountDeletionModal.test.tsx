@@ -71,6 +71,25 @@ describe("AccountDeletionModal", () => {
     expect(onConfirmDeletion).not.toHaveBeenCalled();
   });
 
+  it("recovers when starting reauthentication rejects instead of stranding the busy state", async () => {
+    onReauthenticate = vi.fn().mockRejectedValue(new Error("Popup blocked"));
+
+    renderModal();
+    fireEvent.click(
+      screen.getByRole("button", { name: /continue to verification/i }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /continue with google/i }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /continue with google/i }),
+      ).toBeEnabled(),
+    );
+    expect(screen.getByText(/popup blocked/i)).toBeInTheDocument();
+  });
+
   it("jumps straight to confirmation when reauthentication already succeeded", () => {
     renderModal({ initialStep: "confirm" });
 

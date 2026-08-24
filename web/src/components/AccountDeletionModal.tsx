@@ -8,7 +8,7 @@ export interface AccountDeletionModalProps {
   readonly onClose: () => void;
   readonly userEmail?: string;
   readonly initialStep?: DeletionFlowStep;
-  readonly onReauthenticate: () => void;
+  readonly onReauthenticate: () => void | Promise<void>;
   readonly onDownloadExport: () => Promise<void>;
   readonly onConfirmDeletion: () => Promise<void>;
 }
@@ -32,19 +32,18 @@ export function AccountDeletionModal({
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      previouslyFocusedRef.current =
-        document.activeElement as HTMLElement | null;
-      setStep(initialStep);
-      setAcknowledged(false);
-      setIsExporting(false);
-      setIsReauthing(false);
-      setIsConfirming(false);
-      setErrorMessage(null);
-    } else {
+    if (!isOpen) return;
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+    setStep(initialStep);
+    setAcknowledged(false);
+    setIsExporting(false);
+    setIsReauthing(false);
+    setIsConfirming(false);
+    setErrorMessage(null);
+    return () => {
       previouslyFocusedRef.current?.focus();
       previouslyFocusedRef.current = null;
-    }
+    };
   }, [isOpen, initialStep]);
 
   useEffect(() => {
@@ -238,9 +237,19 @@ export function AccountDeletionModal({
             <div className="flex flex-col space-y-2">
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   setIsReauthing(true);
-                  onReauthenticate();
+                  setErrorMessage(null);
+                  try {
+                    await onReauthenticate();
+                  } catch (err) {
+                    setIsReauthing(false);
+                    setErrorMessage(
+                      err instanceof Error
+                        ? err.message
+                        : "Failed to start Google verification",
+                    );
+                  }
                 }}
                 disabled={isReauthing}
                 className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded-md border border-border text-xs font-medium hover:bg-secondary transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"

@@ -161,6 +161,9 @@ describe("account lifecycle edge worker", () => {
       expect(body.deletionState).toBe("pending_deletion");
       expect(body.deletionDeadline).toBe("2026-08-31T00:00:00+00:00");
       expect(body.recoveryAvailable).toBe(true);
+      expect(registry.get_lifecycle_status).toHaveBeenCalledWith({
+        p_operator: OP_ID,
+      });
     });
 
     it("treats a missing state row as an active Operator", async () => {
@@ -233,6 +236,10 @@ describe("account lifecycle edge worker", () => {
         "enter_pending_deletion",
         "revoke_operator_sessions",
       ]);
+      expect(registry.assert_active_session).toHaveBeenCalledWith({
+        p_session_id: "sess-1",
+        p_operator: OP_ID,
+      });
       expect(registry.enter_pending_deletion).toHaveBeenCalledWith({
         p_operator: OP_ID,
       });
@@ -438,9 +445,6 @@ describe("account lifecycle edge worker", () => {
     });
 
     it("treats already-absent Storage objects as removed", async () => {
-      removeCalls.length = 0;
-      storageApi = createStorageApi(removeCalls);
-      Object.assign(storageApi.from("exports"), {});
       const failingRemove = vi
         .fn()
         .mockResolvedValueOnce([
@@ -499,6 +503,56 @@ describe("account lifecycle edge worker", () => {
       };
       expect(body.results[0].purged).toBe(false);
       expect(body.results[0].error).toContain("storage unavailable");
+      expect(callLog).not.toContain("finalize_operator_purge");
+    });
+
+    it("reclaims the same Operator on a subsequent sweep after a failed purge", async () => {
+      registry.claim_due_purge_batch = vi.fn(() =>
+        Promise.resolve({
+          data: [
+            {
+              operator_id: OP_ID,
+              deletion_deadline: "2026-08-20T00:00:00+00:00",
+            },
+          ],
+          error: null,
+        }),
+      );
+      const failingStorage = {
+        from: vi.fn(() => ({
+          remove: vi.fn(async () => {
+            throw new Error("storage unavailable");
+          }),
+        })),
+      };
+      const deps = {
+        anonClient: createAnonClient(),
+        adminClient: createAdminClient(registry, callLog),
+        storageApi: failingStorage as unknown as ReturnType<
+          typeof createStorageApi
+        >,
+        lifecycleSecret: "sweep-secret",
+      };
+
+      await handleAccountLifecycleRequest(
+        post({ action: "purge-sweep" }, "Bearer sweep-secret"),
+        deps,
+      );
+      expect(registry.claim_due_purge_batch).toHaveBeenCalledTimes(1);
+      expect(callLog).not.toContain("finalize_operator_purge");
+
+      const res = await handleAccountLifecycleRequest(
+        post({ action: "purge-sweep" }, "Bearer sweep-secret"),
+        deps,
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { claimed: number };
+      expect(body.claimed).toBe(1);
+      expect(registry.claim_due_purge_batch).toHaveBeenCalledTimes(2);
+      expect(callLog.filter((name) => name === "__storageObjects").length).toBe(
+        2,
+      );
       expect(callLog).not.toContain("finalize_operator_purge");
     });
   });

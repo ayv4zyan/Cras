@@ -258,7 +258,9 @@ export async function handleAccountLifecycleRequest(
   const operatorId = userData.user.id;
 
   if (action === "status") {
-    const status = await rpc(deps.adminClient, "get_lifecycle_status");
+    const status = await rpc(deps.adminClient, "get_lifecycle_status", {
+      p_operator: operatorId,
+    });
     if (status.error) {
       return jsonResponse(500, { error: status.error.message });
     }
@@ -279,6 +281,7 @@ export async function handleAccountLifecycleRequest(
 
   const sessionCheck = await rpc(deps.adminClient, "assert_active_session", {
     p_session_id: sessionId,
+    p_operator: operatorId,
   });
   if (sessionCheck.error) {
     return jsonResponse(500, { error: sessionCheck.error.message });

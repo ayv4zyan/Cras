@@ -61,19 +61,34 @@ async function callLifecycleEndpoint(
     );
   }
 
-  const supabaseUrl =
-    (client as unknown as { supabaseUrl?: string }).supabaseUrl || "";
-  let response: Response;
-  try {
-    response = await fetch(`${supabaseUrl}/functions/v1/account-lifecycle`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ action }),
-    });
-  } catch {
+  const {
+    data: payload,
+    error,
+    response,
+  } = await client.functions.invoke<Record<string, unknown>>(
+    "account-lifecycle",
+    {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      body: { action },
+    },
+  );
+
+  if (error) {
+    if (response instanceof Response) {
+      let failureBody: Record<string, unknown> = {};
+      try {
+        failureBody = (await response.json()) as Record<string, unknown>;
+      } catch {
+        // Non-JSON error body falls through to a generic message below
+      }
+      throw new AccountLifecycleError(
+        typeof failureBody.error === "string" && failureBody.error
+          ? failureBody.error
+          : "Account service request failed.",
+        response.status,
+        typeof failureBody.code === "string" ? failureBody.code : undefined,
+      );
+    }
     throw new AccountLifecycleError(
       "Network error: unable to reach Cras account services.",
       0,
@@ -82,24 +97,7 @@ async function callLifecycleEndpoint(
     );
   }
 
-  let payload: Record<string, unknown> = {};
-  try {
-    payload = (await response.json()) as Record<string, unknown>;
-  } catch {
-    // Non-JSON body falls through to a generic error below
-  }
-
-  if (!response.ok) {
-    throw new AccountLifecycleError(
-      typeof payload.error === "string" && payload.error
-        ? payload.error
-        : "Account service request failed.",
-      response.status,
-      typeof payload.code === "string" ? payload.code : undefined,
-    );
-  }
-
-  return payload;
+  return payload ?? {};
 }
 
 function readString(value: unknown): string | null {

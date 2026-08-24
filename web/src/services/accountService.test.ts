@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { FunctionsFetchError, FunctionsHttpError } from "@supabase/supabase-js";
 import {
   fetchAccountStatus,
   requestAccountDeletion,
@@ -18,6 +19,7 @@ function createMockClient(overrides?: {
   session?: { access_token: string } | null;
 }) {
   const rpcMock = vi.fn();
+  const invokeMock = vi.fn();
   const mockClient = {
     auth: {
       getSession: vi.fn().mockResolvedValue({
@@ -30,53 +32,40 @@ function createMockClient(overrides?: {
         error: null,
       }),
     },
-    supabaseUrl: "https://test.supabase.co",
     schema: vi.fn().mockReturnValue({ rpc: rpcMock }),
+    functions: { invoke: invokeMock },
   };
-  return { mockClient: mockClient as unknown as SupabaseClient, rpcMock };
+  return {
+    mockClient: mockClient as unknown as SupabaseClient,
+    rpcMock,
+    invokeMock,
+  };
 }
 
 describe("account service seam", () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
-    fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
   });
 
   describe("fetchAccountStatus", () => {
     it("posts a status action to the lifecycle endpoint with the bearer token", async () => {
-      const { mockClient } = createMockClient();
-      fetchMock.mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            deletionState: "active",
-            deletionDeadline: null,
-            recoveryAvailable: false,
-          }),
-          { status: 200 },
-        ),
-      );
+      const { mockClient, invokeMock } = createMockClient();
+      invokeMock.mockResolvedValue({
+        data: {
+          deletionState: "active",
+          deletionDeadline: null,
+          recoveryAvailable: false,
+        },
+        error: null,
+      });
 
       const status = await fetchAccountStatus(mockClient);
 
-      expect(fetchMock).toHaveBeenCalledWith(
-        "https://test.supabase.co/functions/v1/account-lifecycle",
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.objectContaining({
-            Authorization: "Bearer session-token",
-          }),
-        }),
-      );
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      expect(body).toEqual({ action: "status" });
+      expect(invokeMock).toHaveBeenCalledWith("account-lifecycle", {
+        headers: { Authorization: "Bearer session-token" },
+        body: { action: "status" },
+      });
       expect(status).toEqual({
         deletionState: "active",
         deletionDeadline: null,
@@ -85,17 +74,15 @@ describe("account service seam", () => {
     });
 
     it("maps a frozen account with its deadline and recovery availability", async () => {
-      const { mockClient } = createMockClient();
-      fetchMock.mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            deletionState: "pending_deletion",
-            deletionDeadline: "2026-08-31T00:00:00Z",
-            recoveryAvailable: true,
-          }),
-          { status: 200 },
-        ),
-      );
+      const { mockClient, invokeMock } = createMockClient();
+      invokeMock.mockResolvedValue({
+        data: {
+          deletionState: "pending_deletion",
+          deletionDeadline: "2026-08-31T00:00:00Z",
+          recoveryAvailable: true,
+        },
+        error: null,
+      });
 
       const status = await fetchAccountStatus(mockClient);
 
@@ -105,57 +92,72 @@ describe("account service seam", () => {
     });
 
     it("throws an AccountLifecycleError carrying the server message on refusal", async () => {
-      const { mockClient } = createMockClient();
-      fetchMock.mockResolvedValue(
-        new Response(JSON.stringify({ error: "Unauthorized" }), {
-          status: 401,
-        }),
-      );
+      const { mockClient, invokeMock } = createMockClient();
+      const response = new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+      });
+      invokeMock.mockResolvedValue({
+        data: null,
+        error: new FunctionsHttpError(response),
+        response,
+      });
 
       await expect(fetchAccountStatus(mockClient)).rejects.toMatchObject({
         status: 401,
         message: "Unauthorized",
       });
     });
+
+    it("maps transport failures to a retryable network error", async () => {
+      const { mockClient, invokeMock } = createMockClient();
+      invokeMock.mockResolvedValue({
+        data: null,
+        error: new FunctionsFetchError(new Error("offline")),
+      });
+
+      await expect(fetchAccountStatus(mockClient)).rejects.toMatchObject({
+        status: 0,
+        code: "network_error",
+        isNetworkError: true,
+      });
+    });
   });
 
   describe("requestAccountDeletion", () => {
     it("posts a request-deletion action and returns the confirmation", async () => {
-      const { mockClient } = createMockClient();
-      fetchMock.mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            confirmed: true,
-            deletionState: "pending_deletion",
-            deletionDeadline: "2026-08-31T12:00:00Z",
-            sessionsRevoked: true,
-          }),
-          { status: 200 },
-        ),
-      );
+      const { mockClient, invokeMock } = createMockClient();
+      invokeMock.mockResolvedValue({
+        data: {
+          confirmed: true,
+          deletionState: "pending_deletion",
+          deletionDeadline: "2026-08-31T12:00:00Z",
+          sessionsRevoked: true,
+        },
+        error: null,
+      });
 
       const result = await requestAccountDeletion(mockClient);
 
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      expect(body).toEqual({ action: "request-deletion" });
+      expect(invokeMock).toHaveBeenCalledWith(
+        "account-lifecycle",
+        expect.objectContaining({ body: { action: "request-deletion" } }),
+      );
       expect(result.confirmed).toBe(true);
       expect(result.deletionDeadline).toBe("2026-08-31T12:00:00Z");
       expect(result.sessionsRevoked).toBe(true);
     });
 
     it("still reports a confirmed deletion when global revocation failed", async () => {
-      const { mockClient } = createMockClient();
-      fetchMock.mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            confirmed: true,
-            deletionState: "pending_deletion",
-            deletionDeadline: "2026-08-31T12:00:00Z",
-            sessionsRevoked: false,
-          }),
-          { status: 200 },
-        ),
-      );
+      const { mockClient, invokeMock } = createMockClient();
+      invokeMock.mockResolvedValue({
+        data: {
+          confirmed: true,
+          deletionState: "pending_deletion",
+          deletionDeadline: "2026-08-31T12:00:00Z",
+          sessionsRevoked: false,
+        },
+        error: null,
+      });
 
       const result = await requestAccountDeletion(mockClient);
 
@@ -166,28 +168,34 @@ describe("account service seam", () => {
 
   describe("recoverAccount", () => {
     it("posts a recover-account action and resolves on success", async () => {
-      const { mockClient } = createMockClient();
-      fetchMock.mockResolvedValue(
-        new Response(JSON.stringify({ recovered: true }), { status: 200 }),
-      );
+      const { mockClient, invokeMock } = createMockClient();
+      invokeMock.mockResolvedValue({
+        data: { recovered: true },
+        error: null,
+      });
 
       await expect(recoverAccount(mockClient)).resolves.toBeUndefined();
 
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      expect(body).toEqual({ action: "recover-account" });
+      expect(invokeMock).toHaveBeenCalledWith(
+        "account-lifecycle",
+        expect.objectContaining({ body: { action: "recover-account" } }),
+      );
     });
 
     it("surfaces the refusal reason when the Recovery window has closed", async () => {
-      const { mockClient } = createMockClient();
-      fetchMock.mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            error: "Recovery window has closed.",
-            code: "recovery_window_closed",
-          }),
-          { status: 403 },
-        ),
+      const { mockClient, invokeMock } = createMockClient();
+      const response = new Response(
+        JSON.stringify({
+          error: "Recovery window has closed.",
+          code: "recovery_window_closed",
+        }),
+        { status: 403 },
       );
+      invokeMock.mockResolvedValue({
+        data: null,
+        error: new FunctionsHttpError(response),
+        response,
+      });
 
       let caught: unknown = null;
       try {

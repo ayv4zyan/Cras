@@ -71,6 +71,7 @@ export function SettingsModal({
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   const status: InstallationStatus = deriveInstallationStatus({
     localEnabled,
@@ -119,7 +120,10 @@ export function SettingsModal({
   useEffect(() => {
     if (!isOpen) return;
 
-    const previouslyFocused = document.activeElement as HTMLElement | null;
+    if (!previouslyFocusedRef.current) {
+      previouslyFocusedRef.current =
+        document.activeElement as HTMLElement | null;
+    }
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -165,9 +169,14 @@ export function SettingsModal({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       clearTimeout(timeout);
-      previouslyFocused?.focus();
     };
   }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (isOpen) return;
+    previouslyFocusedRef.current?.focus();
+    previouslyFocusedRef.current = null;
+  }, [isOpen]);
 
   if (!isOpen) {
     return null;

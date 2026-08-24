@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS public.operator_account_state (
     deletion_deadline TIMESTAMPTZ,
     recovered_at TIMESTAMPTZ,
     purge_started_at TIMESTAMPTZ,
+    deactivated_installation_ids UUID[] NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT deletion_deadline_required_when_pending CHECK (
@@ -65,55 +66,55 @@ CREATE POLICY "Pending deletion blocks task access"
     AS RESTRICTIVE
     FOR ALL
     TO authenticated
-    USING ((select public.operator_deletion_state(operator_id)) = 'active')
-    WITH CHECK ((select public.operator_deletion_state(operator_id)) = 'active');
+    USING ((select public.operator_deletion_state((select auth.uid()))) = 'active')
+    WITH CHECK ((select public.operator_deletion_state((select auth.uid()))) = 'active');
 
 CREATE POLICY "Pending deletion blocks label access"
     ON public.labels
     AS RESTRICTIVE
     FOR ALL
     TO authenticated
-    USING ((select public.operator_deletion_state(operator_id)) = 'active')
-    WITH CHECK ((select public.operator_deletion_state(operator_id)) = 'active');
+    USING ((select public.operator_deletion_state((select auth.uid()))) = 'active')
+    WITH CHECK ((select public.operator_deletion_state((select auth.uid()))) = 'active');
 
 CREATE POLICY "Pending deletion blocks comment access"
     ON public.comments
     AS RESTRICTIVE
     FOR ALL
     TO authenticated
-    USING ((select public.operator_deletion_state(operator_id)) = 'active')
-    WITH CHECK ((select public.operator_deletion_state(operator_id)) = 'active');
+    USING ((select public.operator_deletion_state((select auth.uid()))) = 'active')
+    WITH CHECK ((select public.operator_deletion_state((select auth.uid()))) = 'active');
 
 CREATE POLICY "Pending deletion blocks settings access"
     ON public.settings
     AS RESTRICTIVE
     FOR ALL
     TO authenticated
-    USING ((select public.operator_deletion_state(operator_id)) = 'active')
-    WITH CHECK ((select public.operator_deletion_state(operator_id)) = 'active');
+    USING ((select public.operator_deletion_state((select auth.uid()))) = 'active')
+    WITH CHECK ((select public.operator_deletion_state((select auth.uid()))) = 'active');
 
 CREATE POLICY "Pending deletion blocks task-label access"
     ON public.task_labels
     AS RESTRICTIVE
     FOR ALL
     TO authenticated
-    USING ((select public.operator_deletion_state(operator_id)) = 'active')
-    WITH CHECK ((select public.operator_deletion_state(operator_id)) = 'active');
+    USING ((select public.operator_deletion_state((select auth.uid()))) = 'active')
+    WITH CHECK ((select public.operator_deletion_state((select auth.uid()))) = 'active');
 
 CREATE POLICY "Pending deletion blocks installation access"
     ON public.installations
     AS RESTRICTIVE
     FOR ALL
     TO authenticated
-    USING ((select public.operator_deletion_state(operator_id)) = 'active')
-    WITH CHECK ((select public.operator_deletion_state(operator_id)) = 'active');
+    USING ((select public.operator_deletion_state((select auth.uid()))) = 'active')
+    WITH CHECK ((select public.operator_deletion_state((select auth.uid()))) = 'active');
 
 CREATE POLICY "Pending deletion blocks notification job access"
     ON public.notification_jobs
     AS RESTRICTIVE
     FOR SELECT
     TO authenticated
-    USING ((select public.operator_deletion_state(operator_id)) = 'active');
+    USING ((select public.operator_deletion_state((select auth.uid()))) = 'active');
 
 DO $$
 BEGIN
@@ -128,9 +129,11 @@ BEGIN
 END;
 $$;
 
--- 4. Narrow status/recovery surface
+-- 4. Narrow status/recovery surface.
+-- Both functions take the subject explicitly so the service-role worker
+-- (whose claims carry no auth.uid()) can invoke them.
 
-CREATE OR REPLACE FUNCTION api.get_lifecycle_status()
+CREATE OR REPLACE FUNCTION api.get_lifecycle_status(p_operator UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
 STABLE
@@ -142,7 +145,7 @@ DECLARE
 BEGIN
     SELECT * INTO v_state
     FROM public.operator_account_state
-    WHERE operator_id = (SELECT auth.uid());
+    WHERE operator_id = p_operator;
 
     IF NOT FOUND THEN
         RETURN jsonb_build_object(
@@ -163,10 +166,10 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION api.get_lifecycle_status() FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION api.get_lifecycle_status() TO authenticated;
+REVOKE ALL ON FUNCTION api.get_lifecycle_status(UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION api.get_lifecycle_status(UUID) TO service_role;
 
-CREATE OR REPLACE FUNCTION api.assert_active_session(p_session_id UUID)
+CREATE OR REPLACE FUNCTION api.assert_active_session(p_session_id UUID, p_operator UUID)
 RETURNS BOOLEAN
 LANGUAGE sql
 STABLE
@@ -177,17 +180,18 @@ AS $$
         SELECT 1
         FROM auth.sessions s
         WHERE s.id = p_session_id
-          AND s.user_id = (SELECT auth.uid())
+          AND s.user_id = p_operator
     );
 $$;
 
-REVOKE ALL ON FUNCTION api.assert_active_session(UUID) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION api.assert_active_session(UUID) TO authenticated;
+REVOKE ALL ON FUNCTION api.assert_active_session(UUID, UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION api.assert_active_session(UUID, UUID) TO service_role;
 
 -- 5. Transactional entry into Pending deletion (service-role only).
 -- Records the immutable server-calculated 7-day deadline, cancels every pending
--- Notification job, disables every installation. Idempotent: repeating never
--- extends the deadline.
+-- Notification job, disables every installation — recording which ones so
+-- Recovery can restore exactly that set. Idempotent: repeating never extends
+-- the deadline nor widens the recorded set.
 
 CREATE OR REPLACE FUNCTION api.enter_pending_deletion(p_operator UUID)
 RETURNS JSONB
@@ -200,6 +204,7 @@ DECLARE
     v_existing public.operator_account_state;
     v_deadline TIMESTAMPTZ;
     v_already_pending BOOLEAN;
+    v_deactivated UUID[];
 BEGIN
     SELECT * INTO v_existing
     FROM public.operator_account_state
@@ -209,16 +214,22 @@ BEGIN
     v_already_pending := FOUND AND v_existing.deletion_state = 'pending_deletion';
 
     IF v_already_pending THEN
+        -- A repeated request keeps the original window and recorded set.
         v_deadline := v_existing.deletion_deadline;
+        v_deactivated := v_existing.deactivated_installation_ids;
     ELSE
         -- A fresh deletion episode (including after Recovery) starts a new window.
         v_deadline := now() + interval '7 days';
+        SELECT COALESCE(array_agg(i.id ORDER BY i.id), '{}'::uuid[])
+        INTO v_deactivated
+        FROM public.installations i
+        WHERE i.operator_id = p_operator AND i.is_active = true;
     END IF;
 
     INSERT INTO public.operator_account_state (
-        operator_id, deletion_state, deletion_deadline
+        operator_id, deletion_state, deletion_deadline, deactivated_installation_ids
     ) VALUES (
-        p_operator, 'pending_deletion', v_deadline
+        p_operator, 'pending_deletion', v_deadline, v_deactivated
     )
     ON CONFLICT (operator_id) DO UPDATE SET
         deletion_state = 'pending_deletion',
@@ -227,6 +238,7 @@ BEGIN
                 THEN public.operator_account_state.deletion_deadline
             ELSE EXCLUDED.deletion_deadline
         END,
+        deactivated_installation_ids = EXCLUDED.deactivated_installation_ids,
         recovered_at = NULL,
         updated_at = now();
 
@@ -329,6 +341,14 @@ BEGIN
         updated_at = now()
     WHERE operator_id = p_operator;
 
+    -- Restore only the installations this deletion episode disabled;
+    -- installations that were already inactive stay inactive.
+    UPDATE public.installations
+    SET is_active = true, updated_at = now()
+    WHERE operator_id = p_operator
+      AND is_active = false
+      AND id = ANY(v_state.deactivated_installation_ids);
+
     RETURN jsonb_build_object('recovered', true);
 END;
 $$;
@@ -339,7 +359,9 @@ GRANT EXECUTE ON FUNCTION api.recover_account(UUID) TO service_role;
 -- 8. Idempotent purge (service-role only).
 -- claim_due_purge_batch marks the work ledger; finalize deletes Storage-free
 -- identities so FK cascades remove all Operator-owned rows. Retries treat
--- already-absent resources as success.
+-- already-absent resources as success. A claimed batch whose Storage work
+-- failed is reclaimed once its claim exceeds the stale-work interval, so a
+-- transient failure can never strand an Operator between purge and Recovery.
 
 CREATE OR REPLACE FUNCTION api.claim_due_purge_batch(
     p_batch INTEGER DEFAULT 20
@@ -362,7 +384,10 @@ BEGIN
         FROM public.operator_account_state c
         WHERE c.deletion_state = 'pending_deletion'
           AND c.deletion_deadline <= now()
-          AND c.purge_started_at IS NULL
+          AND (
+              c.purge_started_at IS NULL
+              OR c.purge_started_at <= now() - interval '1 hour'
+          )
         ORDER BY c.deletion_deadline ASC
         LIMIT GREATEST(COALESCE(p_batch, 20), 1)
         FOR UPDATE SKIP LOCKED
@@ -479,6 +504,7 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION api.export_operator_data() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION api.export_operator_data() TO authenticated;
 
 -- 10. Suppressed Notifications are never replayed after recovery:

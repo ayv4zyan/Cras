@@ -28,8 +28,7 @@ if (typeof Deno !== "undefined" && typeof Deno.serve === "function") {
       anonClient,
       adminClient,
       storageApi,
-      lifecycleSecret:
-        Deno.env.get("ACCOUNT_LIFECYCLE_SECRET") || serviceKey,
+      lifecycleSecret: Deno.env.get("ACCOUNT_LIFECYCLE_SECRET"),
     });
   });
 }

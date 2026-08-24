@@ -17,7 +17,7 @@ describe("FrozenAccountScreen", () => {
     expect(
       screen.getByRole("heading", { name: /account scheduled for deletion/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/aug/i)).toBeInTheDocument();
+    expect(screen.getByText(/scheduled purge:/i)).toBeInTheDocument();
   });
 
   it("offers recovery while the Recovery window is open", () => {

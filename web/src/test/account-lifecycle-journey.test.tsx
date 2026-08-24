@@ -24,7 +24,10 @@ describe("Account deletion & recovery journey", () => {
   let mockFrom: ReturnType<typeof vi.fn>;
   let mockChannel: RealtimeChannel;
   let fetchMock: ReturnType<typeof vi.fn>;
-  let lifecycleResponse: () => { status: number; body: unknown };
+  let lifecycleResponse: (action: string) => {
+    status: number;
+    body: unknown;
+  };
   const mockUser: User = {
     id: OPERATOR_ID,
     email: "operator@example.com",
@@ -182,13 +185,32 @@ describe("Account deletion & recovery journey", () => {
       schema: vi.fn().mockReturnValue({ from: mockFrom, rpc: mockRpc }),
       channel: vi.fn().mockReturnValue(mockChannel),
       removeChannel: vi.fn(),
+      functions: {
+        invoke: async (
+          name: string,
+          options?: { headers?: Record<string, string>; body?: unknown },
+        ) => {
+          const response = await fetch(
+            `https://test.supabase.co/functions/v1/${name}`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(options?.headers ?? {}),
+              },
+              body: JSON.stringify(options?.body ?? {}),
+            },
+          );
+          const data = await response.json().catch(() => null);
+          return { data, error: null };
+        },
+      },
     } as unknown as SupabaseClient;
 
     lifecycleResponse = () => ({ status: 200, body: {} });
     fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
-      const action = JSON.parse(String(init?.body ?? "{}")).action;
-      const response = lifecycleResponse();
-      void action;
+      const action = JSON.parse(String(init?.body ?? "{}")).action as string;
+      const response = lifecycleResponse(action);
       return new Response(JSON.stringify(response.body), {
         status: response.status,
       });
@@ -200,14 +222,17 @@ describe("Account deletion & recovery journey", () => {
   });
 
   it("keeps working normally while the account is active", async () => {
-    lifecycleResponse = () => ({
-      status: 200,
-      body: {
-        deletionState: "active",
-        deletionDeadline: null,
-        recoveryAvailable: false,
-      },
-    });
+    lifecycleResponse = (action) =>
+      action === "status"
+        ? {
+            status: 200,
+            body: {
+              deletionState: "active",
+              deletionDeadline: null,
+              recoveryAvailable: false,
+            },
+          }
+        : { status: 400, body: { error: `unmocked action: ${action}` } };
 
     render(
       <AuthenticatedApp
@@ -229,14 +254,19 @@ describe("Account deletion & recovery journey", () => {
 
   it("wipes cache, Outbox, drafts, and recordings when it observes the frozen account", async () => {
     seedLocalData();
-    lifecycleResponse = () => ({
-      status: 200,
-      body: {
-        deletionState: "pending_deletion",
-        deletionDeadline: DEADLINE,
-        recoveryAvailable: true,
-      },
-    });
+    // Keep the Outbox flush from completing so it cannot race the wipe.
+    mockRpc.mockImplementation(() => new Promise(() => {}));
+    lifecycleResponse = (action) =>
+      action === "status"
+        ? {
+            status: 200,
+            body: {
+              deletionState: "pending_deletion",
+              deletionDeadline: DEADLINE,
+              recoveryAvailable: true,
+            },
+          }
+        : { status: 400, body: { error: `unmocked action: ${action}` } };
 
     render(
       <AuthenticatedApp
@@ -254,20 +284,25 @@ describe("Account deletion & recovery journey", () => {
       ).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/aug/i)).toBeInTheDocument();
+    expect(screen.getByText(/scheduled purge:/i)).toBeInTheDocument();
     expectLocalDataCleared();
     expect(screen.queryByText("Untimed Task in Inbox")).not.toBeInTheDocument();
   });
 
   it("recovers inside the window and hands control back to the app", async () => {
-    lifecycleResponse = () => ({
-      status: 200,
-      body: {
-        deletionState: "pending_deletion",
-        deletionDeadline: DEADLINE,
-        recoveryAvailable: true,
-      },
-    });
+    lifecycleResponse = (action) =>
+      action === "status"
+        ? {
+            status: 200,
+            body: {
+              deletionState: "pending_deletion",
+              deletionDeadline: DEADLINE,
+              recoveryAvailable: true,
+            },
+          }
+        : action === "recover-account"
+          ? { status: 200, body: { recovered: true } }
+          : { status: 400, body: { error: `unmocked action: ${action}` } };
     const onRecovered = vi.fn();
 
     render(
@@ -298,14 +333,17 @@ describe("Account deletion & recovery journey", () => {
   });
 
   it("refuses recovery once the Recovery window has closed", async () => {
-    lifecycleResponse = () => ({
-      status: 200,
-      body: {
-        deletionState: "pending_deletion",
-        deletionDeadline: DEADLINE,
-        recoveryAvailable: false,
-      },
-    });
+    lifecycleResponse = (action) =>
+      action === "status"
+        ? {
+            status: 200,
+            body: {
+              deletionState: "pending_deletion",
+              deletionDeadline: DEADLINE,
+              recoveryAvailable: false,
+            },
+          }
+        : { status: 400, body: { error: `unmocked action: ${action}` } };
 
     render(
       <AuthenticatedApp
@@ -352,14 +390,27 @@ describe("Account deletion & recovery journey", () => {
     }
 
     it("stays distinct from sign-out and demands fresh Google reauthentication", async () => {
-      lifecycleResponse = () => ({
-        status: 200,
-        body: {
-          deletionState: "active",
-          deletionDeadline: null,
-          recoveryAvailable: false,
-        },
-      });
+      lifecycleResponse = (action) =>
+        action === "status"
+          ? {
+              status: 200,
+              body: {
+                deletionState: "active",
+                deletionDeadline: null,
+                recoveryAvailable: false,
+              },
+            }
+          : action === "request-deletion"
+            ? {
+                status: 200,
+                body: {
+                  confirmed: true,
+                  deletionState: "pending_deletion",
+                  deletionDeadline: DEADLINE,
+                  sessionsRevoked: true,
+                },
+              }
+            : { status: 400, body: { error: `unmocked action: ${action}` } };
       const { onSignInWithGoogle } = renderWithHandlers();
 
       await openDeletionFlow();
@@ -388,14 +439,27 @@ describe("Account deletion & recovery journey", () => {
     });
 
     it("downloads the export before confirmation is reachable", async () => {
-      lifecycleResponse = () => ({
-        status: 200,
-        body: {
-          deletionState: "active",
-          deletionDeadline: null,
-          recoveryAvailable: false,
-        },
-      });
+      lifecycleResponse = (action) =>
+        action === "status"
+          ? {
+              status: 200,
+              body: {
+                deletionState: "active",
+                deletionDeadline: null,
+                recoveryAvailable: false,
+              },
+            }
+          : action === "request-deletion"
+            ? {
+                status: 200,
+                body: {
+                  confirmed: true,
+                  deletionState: "pending_deletion",
+                  deletionDeadline: DEADLINE,
+                  sessionsRevoked: true,
+                },
+              }
+            : { status: 400, body: { error: `unmocked action: ${action}` } };
       const exportSnapshot = JSON.stringify({
         exportedAt: "2026-08-24T10:00:00Z",
         tasks: [],
@@ -447,14 +511,27 @@ describe("Account deletion & recovery journey", () => {
 
     it("clears local data and signs out after explicit destructive confirmation", async () => {
       seedLocalData();
-      lifecycleResponse = () => ({
-        status: 200,
-        body: {
-          deletionState: "active",
-          deletionDeadline: null,
-          recoveryAvailable: false,
-        },
-      });
+      lifecycleResponse = (action) =>
+        action === "status"
+          ? {
+              status: 200,
+              body: {
+                deletionState: "active",
+                deletionDeadline: null,
+                recoveryAvailable: false,
+              },
+            }
+          : action === "request-deletion"
+            ? {
+                status: 200,
+                body: {
+                  confirmed: true,
+                  deletionState: "pending_deletion",
+                  deletionDeadline: DEADLINE,
+                  sessionsRevoked: true,
+                },
+              }
+            : { status: 400, body: { error: `unmocked action: ${action}` } };
       const { onSignInWithGoogle } = renderWithHandlers();
       await openDeletionFlow();
 
@@ -497,14 +574,27 @@ describe("Account deletion & recovery journey", () => {
     });
 
     it("discards the staged identity when the returning identity differs", async () => {
-      lifecycleResponse = () => ({
-        status: 200,
-        body: {
-          deletionState: "active",
-          deletionDeadline: null,
-          recoveryAvailable: false,
-        },
-      });
+      lifecycleResponse = (action) =>
+        action === "status"
+          ? {
+              status: 200,
+              body: {
+                deletionState: "active",
+                deletionDeadline: null,
+                recoveryAvailable: false,
+              },
+            }
+          : action === "request-deletion"
+            ? {
+                status: 200,
+                body: {
+                  confirmed: true,
+                  deletionState: "pending_deletion",
+                  deletionDeadline: DEADLINE,
+                  sessionsRevoked: true,
+                },
+              }
+            : { status: 400, body: { error: `unmocked action: ${action}` } };
       sessionStorage.setItem("cras_reauth_intent", "someone-else");
 
       renderWithHandlers();

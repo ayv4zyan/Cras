@@ -1,3 +1,4 @@
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
   render,
@@ -201,8 +202,15 @@ describe("Account deletion & recovery journey", () => {
               body: JSON.stringify(options?.body ?? {}),
             },
           );
+          if (!response.ok) {
+            return {
+              data: null,
+              error: new FunctionsHttpError(response),
+              response,
+            };
+          }
           const data = await response.json().catch(() => null);
-          return { data, error: null };
+          return { data, error: null, response };
         },
       },
     } as unknown as SupabaseClient;

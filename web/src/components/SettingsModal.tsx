@@ -357,7 +357,10 @@ export function SettingsModal({
         </div>
 
         {errorMessage && (
-          <div role="alert" className="rounded-md bg-destructive/10 p-3 text-xs text-destructive">
+          <div
+            role="alert"
+            className="rounded-md bg-destructive/10 p-3 text-xs text-destructive"
+          >
             {errorMessage}
           </div>
         )}

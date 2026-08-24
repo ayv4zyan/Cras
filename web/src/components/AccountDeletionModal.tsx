@@ -33,7 +33,8 @@ export function AccountDeletionModal({
 
   useEffect(() => {
     if (isOpen) {
-      previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+      previouslyFocusedRef.current =
+        document.activeElement as HTMLElement | null;
       setStep(initialStep);
       setAcknowledged(false);
       setIsExporting(false);
@@ -132,9 +133,7 @@ export function AccountDeletionModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="account-deletion-modal-title"
-      aria-describedby={
-        errorMessage ? "account-deletion-error" : undefined
-      }
+      aria-describedby={errorMessage ? "account-deletion-error" : undefined}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in-50"
     >
       <div className="relative w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl space-y-5 text-card-foreground">
@@ -251,7 +250,9 @@ export function AccountDeletionModal({
                 ) : (
                   <ShieldCheck className="h-3.5 w-3.5" />
                 )}
-                <span>{isReauthing ? "Redirecting…" : "Continue with Google"}</span>
+                <span>
+                  {isReauthing ? "Redirecting…" : "Continue with Google"}
+                </span>
               </button>
               <button
                 type="button"

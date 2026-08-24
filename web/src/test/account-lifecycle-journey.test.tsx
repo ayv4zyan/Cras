@@ -366,7 +366,9 @@ describe("Account deletion & recovery journey", () => {
 
       expect(screen.getByText(/seven days/i)).toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: /continue to verification/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /continue to verification/i }),
+      );
       fireEvent.click(
         screen.getByRole("button", { name: /continue with google/i }),
       );
@@ -456,7 +458,9 @@ describe("Account deletion & recovery journey", () => {
       const { onSignInWithGoogle } = renderWithHandlers();
       await openDeletionFlow();
 
-      fireEvent.click(screen.getByRole("button", { name: /continue to verification/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /continue to verification/i }),
+      );
       fireEvent.click(
         screen.getByRole("button", { name: /continue with google/i }),
       );

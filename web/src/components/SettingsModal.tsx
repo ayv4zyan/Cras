@@ -43,6 +43,7 @@ export interface SettingsModalProps {
   readonly client: SupabaseClient;
   readonly effectiveDefaultTimedPlanType: TimedPlanType;
   readonly onTimedPlanTypeChanged?: (type: TimedPlanType) => void;
+  readonly onDeleteAccount?: () => void;
 }
 
 export function SettingsModal({
@@ -51,6 +52,7 @@ export function SettingsModal({
   client,
   effectiveDefaultTimedPlanType,
   onTimedPlanTypeChanged,
+  onDeleteAccount,
 }: SettingsModalProps): React.JSX.Element | null {
   const [operatorSettings, setOperatorSettings] =
     useState<OperatorSettings | null>(null);
@@ -69,6 +71,7 @@ export function SettingsModal({
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   const status: InstallationStatus = deriveInstallationStatus({
     localEnabled,
@@ -117,6 +120,11 @@ export function SettingsModal({
   useEffect(() => {
     if (!isOpen) return;
 
+    if (!previouslyFocusedRef.current) {
+      previouslyFocusedRef.current =
+        document.activeElement as HTMLElement | null;
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         onClose();
@@ -125,7 +133,7 @@ export function SettingsModal({
 
       if (event.key === "Tab" && modalRef.current) {
         const focusable = modalRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
         );
         if (focusable.length === 0) return;
 
@@ -152,7 +160,7 @@ export function SettingsModal({
     const timeout = setTimeout(() => {
       if (modalRef.current) {
         const firstFocusable = modalRef.current.querySelector<HTMLElement>(
-          "button, input, select, [tabindex]:not([tabindex='-1'])",
+          "button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
         );
         firstFocusable?.focus();
       }
@@ -163,6 +171,12 @@ export function SettingsModal({
       clearTimeout(timeout);
     };
   }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (isOpen) return;
+    previouslyFocusedRef.current?.focus();
+    previouslyFocusedRef.current = null;
+  }, [isOpen]);
 
   if (!isOpen) {
     return null;
@@ -352,7 +366,10 @@ export function SettingsModal({
         </div>
 
         {errorMessage && (
-          <div className="rounded-md bg-destructive/10 p-3 text-xs text-destructive">
+          <div
+            role="alert"
+            className="rounded-md bg-destructive/10 p-3 text-xs text-destructive"
+          >
             {errorMessage}
           </div>
         )}
@@ -639,6 +656,30 @@ export function SettingsModal({
                 />
               </div>
             </div>
+
+            {/* Account Danger Zone */}
+            {onDeleteAccount && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-2.5">
+                <div className="flex items-center space-x-2">
+                  <AlertTriangle className="h-4 w-4 text-destructive" />
+                  <span className="text-sm font-medium text-foreground">
+                    Danger Zone
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Deleting your account revokes access immediately and erases
+                  all data after a seven-day Recovery window.
+                </p>
+                <button
+                  type="button"
+                  onClick={onDeleteAccount}
+                  aria-label="Delete account"
+                  className="px-3 py-1.5 rounded-md bg-destructive text-destructive-foreground text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  Delete account...
+                </button>
+              </div>
+            )}
 
             {/* Best Effort Reliability Copy */}
             <div className="rounded-lg bg-secondary/50 p-3 border border-border/60 flex items-start space-x-2.5">

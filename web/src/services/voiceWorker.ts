@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { isOperatorPendingDeletion } from "./accountLifecycleWorker";
 
 export interface AudioValidationResult {
   readonly valid: boolean;
@@ -581,6 +582,20 @@ export async function processVoiceCapture(
     readonly retryAfterSeconds?: number;
   };
 }> {
+  // Step 0: Current database state gate — a Pending deletion account must
+  // never reach accounting or provider calls, even with an unexpired JWT.
+  if (await isOperatorPendingDeletion(supabaseAdmin, operatorId)) {
+    return {
+      success: false,
+      error: {
+        status: 403,
+        code: "account_frozen",
+        message:
+          "This account is scheduled for deletion. Recover the account to use Voice capture.",
+      },
+    };
+  }
+
   // Step 1: Validate WAV audio before accounting
   const validation = validateWavAudio(audioData);
   if (!validation.valid || !validation.durationSeconds) {

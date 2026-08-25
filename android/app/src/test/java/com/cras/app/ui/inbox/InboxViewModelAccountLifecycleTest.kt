@@ -11,9 +11,14 @@ import com.cras.app.data.CommentService
 import com.cras.app.data.CreateTaskParams
 import com.cras.app.data.DeletionConfirmation
 import com.cras.app.data.InMemoryOutboxStore
+import com.cras.app.data.InstallationRecord
+import com.cras.app.data.InstallationService
+import com.cras.app.data.InvalidationPayload
 import com.cras.app.data.LabelService
 import com.cras.app.data.OutboxItem
 import com.cras.app.data.RealtimeService
+import com.cras.app.data.RealtimeSubscription
+import com.cras.app.data.RegisterInstallationParams
 import com.cras.app.data.SettingsService
 import com.cras.app.data.TaskService
 import com.cras.app.domain.TimedPlanType
@@ -183,11 +188,66 @@ class InboxViewModelAccountLifecycleTest {
         }
     }
 
+    private class FakeRealtimeService : RealtimeService {
+        var onInvalidateCallback: ((InvalidationPayload) -> Unit)? = null
+        var onReconnectCallback: (() -> Unit)? = null
+        var isSubscribed = false
+        var unsubscribeCount = 0
+
+        override fun subscribeToInvalidations(
+            session: OperatorSession,
+            onInvalidate: (InvalidationPayload) -> Unit,
+            onReconnect: (() -> Unit)?
+        ): RealtimeSubscription {
+            onInvalidateCallback = onInvalidate
+            onReconnectCallback = onReconnect
+            isSubscribed = true
+
+            return object : RealtimeSubscription {
+                override fun unsubscribe() {
+                    isSubscribed = false
+                    unsubscribeCount++
+                    onInvalidateCallback = null
+                    onReconnectCallback = null
+                }
+            }
+        }
+
+        fun emitInvalidate(payload: InvalidationPayload) {
+            onInvalidateCallback?.invoke(payload)
+        }
+    }
+
+    private class FakeInstallationService : InstallationService {
+        val deactivatedIds = mutableListOf<String>()
+
+        override suspend fun registerOrUpdate(
+            session: OperatorSession,
+            params: RegisterInstallationParams
+        ) = InstallationRecord(
+            id = params.id,
+            platform = "android",
+            localEnabled = params.localEnabled,
+            permissionState = params.permissionState,
+            endpoint = params.endpoint,
+            isActive = true
+        )
+
+        override suspend fun deactivate(session: OperatorSession, installationId: String): Boolean {
+            deactivatedIds.add(installationId)
+            return true
+        }
+    }
+
     private lateinit var authService: FakeAuthService
     private lateinit var accountService: FakeAccountService
     private lateinit var taskService: FakeTaskService
     private lateinit var outboxStore: InMemoryOutboxStore
     private lateinit var voiceRecordingStore: FakeVoiceRecordingStore
+    private lateinit var realtimeService: FakeRealtimeService
+    private lateinit var installationService: FakeInstallationService
+    private lateinit var installationPreferenceStore: InMemoryNotificationPreferenceStore
+    private lateinit var installationSync: NotificationInstallationSync
     private lateinit var viewModel: InboxViewModel
 
     private val session = OperatorSession(
@@ -204,6 +264,15 @@ class InboxViewModelAccountLifecycleTest {
         taskService = FakeTaskService()
         outboxStore = InMemoryOutboxStore()
         voiceRecordingStore = FakeVoiceRecordingStore()
+        realtimeService = FakeRealtimeService()
+        installationService = FakeInstallationService()
+        installationPreferenceStore = InMemoryNotificationPreferenceStore()
+        installationSync = NotificationInstallationSync(
+            installationService = installationService,
+            preferences = installationPreferenceStore,
+            permissionProvider = { PlatformPermissionState.GRANTED },
+            fcmTokenProvider = { "test-fcm-token" }
+        )
     }
 
     @After
@@ -218,6 +287,8 @@ class InboxViewModelAccountLifecycleTest {
             labelService = FakeLabelService(),
             commentService = FakeCommentService(),
             accountService = accountService,
+            realtimeService = realtimeService,
+            installationSync = installationSync,
             outboxStore = outboxStore,
             voiceRecordingStore = voiceRecordingStore,
             nowProvider = { Instant.parse("2026-08-25T10:00:00Z") },
@@ -270,6 +341,155 @@ class InboxViewModelAccountLifecycleTest {
         assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
         assertEquals(1, voiceRecordingStore.clearCount)
         assertTrue(viewModel.allTasks.value.isEmpty())
+        assertFalse(realtimeService.isSubscribed)
+        assertEquals(1, installationService.deactivatedIds.size)
+        assertEquals(AndroidNotificationStatus.EndpointUnavailable, installationSync.status.value)
+
+        // Emitting an invalidation while frozen must not repopulate the task cache
+        taskService.tasks.add(
+            Task(
+                id = "550e8400-e29b-41d4-a716-446655440088",
+                title = "Repopulate attempt",
+                description = null,
+                priority = 4,
+                plan = null,
+                labels = emptyList(),
+                parentId = null,
+                completedAt = null,
+                createdAt = "2026-08-25T09:00:00Z",
+                updatedAt = "2026-08-25T09:00:00Z",
+                version = 1
+            )
+        )
+        realtimeService.emitInvalidate(
+            InvalidationPayload(resource = "task", operation = "created", id = "550e8400-e29b-41d4-a716-446655440088")
+        )
+        advanceUntilIdle()
+        assertTrue(viewModel.allTasks.value.isEmpty())
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+    }
+
+    @Test
+    fun `manual fetchAccountStatus observing pending deletion clears local data, unsubscribes realtime, deactivates installation, and blocks invalidations`() = runTest {
+        accountService.statusToReturn = AccountStatus(
+            deletionState = AccountDeletionState.ACTIVE,
+            deletionDeadline = null,
+            recoveryAvailable = false
+        )
+        val initialTask = Task(
+            id = "550e8400-e29b-41d4-a716-446655440011",
+            title = "Active task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasks.add(initialTask)
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.allTasks.value.size)
+        assertTrue(realtimeService.isSubscribed)
+        assertEquals(0, installationService.deactivatedIds.size)
+        assertEquals(AndroidNotificationStatus.Enabled, installationSync.status.value)
+
+        accountService.statusToReturn = AccountStatus(
+            deletionState = AccountDeletionState.PENDING_DELETION,
+            deletionDeadline = "2026-08-31T12:00:00Z",
+            recoveryAvailable = true
+        )
+
+        var successStatus: AccountStatus? = null
+        viewModel.fetchAccountStatus(
+            onSuccess = { successStatus = it },
+            onError = {}
+        )
+        advanceUntilIdle()
+
+        assertEquals(AccountDeletionState.PENDING_DELETION, successStatus?.deletionState)
+        assertEquals(AccountDeletionState.PENDING_DELETION, viewModel.accountStatus.value?.deletionState)
+        assertTrue(viewModel.allTasks.value.isEmpty())
+        assertFalse(realtimeService.isSubscribed)
+        assertEquals(1, installationService.deactivatedIds.size)
+        assertEquals(AndroidNotificationStatus.EndpointUnavailable, installationSync.status.value)
+
+        // Invalidation and loadTasks must not repopulate tasks
+        taskService.tasks.add(
+            Task(
+                id = "550e8400-e29b-41d4-a716-446655440099",
+                title = "New task",
+                description = null,
+                priority = 4,
+                plan = null,
+                labels = emptyList(),
+                parentId = null,
+                completedAt = null,
+                createdAt = "2026-08-25T09:00:00Z",
+                updatedAt = "2026-08-25T09:00:00Z",
+                version = 1
+            )
+        )
+        realtimeService.emitInvalidate(
+            InvalidationPayload(resource = "task", operation = "created", id = "550e8400-e29b-41d4-a716-446655440099")
+        )
+        viewModel.loadTasks()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.allTasks.value.isEmpty())
+    }
+
+    @Test
+    fun `account and task mutations are blocked while account deletion is pending`() = runTest {
+        accountService.statusToReturn = AccountStatus(
+            deletionState = AccountDeletionState.PENDING_DELETION,
+            deletionDeadline = "2026-08-31T12:00:00Z",
+            recoveryAvailable = true
+        )
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        var createError: String? = null
+        viewModel.createTask(
+            title = "New Task",
+            onError = { createError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Account deletion is pending", createError)
+        assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
+
+        var completeError: String? = null
+        viewModel.completeTask(
+            taskId = "550e8400-e29b-41d4-a716-446655440011",
+            onError = { completeError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Account deletion is pending", completeError)
+
+        var labelError: String? = null
+        viewModel.createLabel(
+            name = "Work",
+            color = "#ff0000",
+            onError = { labelError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Account deletion is pending", labelError)
+
+        var commentError: String? = null
+        viewModel.createComment(
+            taskId = "550e8400-e29b-41d4-a716-446655440011",
+            content = "Comment",
+            onError = { commentError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Account deletion is pending", commentError)
     }
 
     @Test

@@ -1187,10 +1187,14 @@ class InboxViewModel(
         )
     }
 
+    private fun isSessionCurrent(session: OperatorSession): Boolean {
+        val auth = _authState.value
+        return auth is AuthUiState.Authenticated && auth.session == session && authService.currentSession.value == session
+    }
+
     private suspend fun checkAccountStatusInternal(session: OperatorSession) {
         if (accountService == null) {
-            val currentAuth = _authState.value
-            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session || authService.currentSession.value != session) return
+            if (!isSessionCurrent(session)) return
             startAuthenticatedSession(session)
             return
         }
@@ -1200,8 +1204,7 @@ class InboxViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            val currentAuth = _authState.value
-            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session || authService.currentSession.value != session) return
+            if (!isSessionCurrent(session)) return
             val errorMsg = e.message ?: "Failed to verify account status"
             _inboxState.value = InboxUiState.Error(errorMsg)
             _todayState.value = TodayUiState.Error(errorMsg)
@@ -1210,8 +1213,7 @@ class InboxViewModel(
             return
         }
 
-        val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session || authService.currentSession.value != session) return
+        if (!isSessionCurrent(session)) return
 
         _accountStatus.value = status
         if (status.deletionState == AccountDeletionState.PENDING_DELETION) {
@@ -1234,8 +1236,7 @@ class InboxViewModel(
             try {
                 val session = currentAuth.session
                 val status = accountService.fetchAccountStatus(session)
-                val activeAuth = _authState.value
-                if (activeAuth !is AuthUiState.Authenticated || activeAuth.session != session || authService.currentSession.value != session) {
+                if (!isSessionCurrent(session)) {
                     return@launch
                 }
                 _accountStatus.value = status
@@ -1246,8 +1247,7 @@ class InboxViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val activeAuth = _authState.value
-                if (activeAuth !is AuthUiState.Authenticated || activeAuth.session != currentAuth.session || authService.currentSession.value != currentAuth.session) {
+                if (!isSessionCurrent(currentAuth.session)) {
                     return@launch
                 }
                 onError(e.message ?: "Failed to fetch account status")
@@ -1269,8 +1269,7 @@ class InboxViewModel(
             try {
                 val session = currentAuth.session
                 val confirmation = accountService.requestAccountDeletion(session)
-                val activeAuth = _authState.value
-                if (activeAuth !is AuthUiState.Authenticated || activeAuth.session != session || authService.currentSession.value != session) {
+                if (!isSessionCurrent(session)) {
                     return@launch
                 }
                 if (!confirmation.confirmed) {
@@ -1286,8 +1285,7 @@ class InboxViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val activeAuth = _authState.value
-                if (activeAuth !is AuthUiState.Authenticated || activeAuth.session != currentAuth.session || authService.currentSession.value != currentAuth.session) {
+                if (!isSessionCurrent(currentAuth.session)) {
                     return@launch
                 }
                 onError(e.message ?: "Failed to request account deletion")
@@ -1309,8 +1307,7 @@ class InboxViewModel(
             try {
                 val session = currentAuth.session
                 accountService.recoverAccount(session)
-                val activeAuth = _authState.value
-                if (activeAuth !is AuthUiState.Authenticated || activeAuth.session != session || authService.currentSession.value != session) {
+                if (!isSessionCurrent(session)) {
                     return@launch
                 }
                 _accountStatus.value = AccountStatus(AccountDeletionState.ACTIVE, null, false)
@@ -1319,8 +1316,7 @@ class InboxViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val activeAuth = _authState.value
-                if (activeAuth !is AuthUiState.Authenticated || activeAuth.session != currentAuth.session || authService.currentSession.value != currentAuth.session) {
+                if (!isSessionCurrent(currentAuth.session)) {
                     return@launch
                 }
                 onError(e.message ?: "Failed to recover account")
@@ -1341,16 +1337,14 @@ class InboxViewModel(
         viewModelScope.launch {
             try {
                 val exportJson = accountService.exportOperatorData(currentAuth.session)
-                val activeAuth = _authState.value
-                if (activeAuth !is AuthUiState.Authenticated || activeAuth.session != currentAuth.session || authService.currentSession.value != currentAuth.session) {
+                if (!isSessionCurrent(currentAuth.session)) {
                     return@launch
                 }
                 onSuccess(exportJson)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val activeAuth = _authState.value
-                if (activeAuth !is AuthUiState.Authenticated || activeAuth.session != currentAuth.session || authService.currentSession.value != currentAuth.session) {
+                if (!isSessionCurrent(currentAuth.session)) {
                     return@launch
                 }
                 onError(e.message ?: "Failed to export data")

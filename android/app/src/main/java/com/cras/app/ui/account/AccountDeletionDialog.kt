@@ -27,6 +27,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,11 +62,13 @@ fun AccountDeletionDialog(
     var acknowledged by remember { mutableStateOf(false) }
     var isExporting by remember { mutableStateOf(false) }
     var isConfirming by remember { mutableStateOf(false) }
+    var confirmationText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var exportSuccessMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(initialStep) {
         step = initialStep
+        confirmationText = ""
     }
 
     AlertDialog(
@@ -301,6 +305,21 @@ fun AccountDeletionDialog(
                             )
                         }
 
+                        OutlinedTextField(
+                            value = confirmationText,
+                            onValueChange = { confirmationText = it },
+                            label = { Text("Type DELETE to confirm") },
+                            placeholder = { Text("DELETE") },
+                            singleLine = true,
+                            enabled = !isConfirming,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.error,
+                                focusedLabelColor = MaterialTheme.colorScheme.error,
+                                cursorColor = MaterialTheme.colorScheme.error
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End,
@@ -329,7 +348,7 @@ fun AccountDeletionDialog(
                                         }
                                     )
                                 },
-                                enabled = acknowledged && !isConfirming,
+                                enabled = acknowledged && confirmationText == "DELETE" && !isConfirming,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.error
                                 )

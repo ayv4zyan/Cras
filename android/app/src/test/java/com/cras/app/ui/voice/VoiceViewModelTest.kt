@@ -60,6 +60,11 @@ private class FakeAuthService(session: OperatorSession) : AuthService {
         authenticated
 
     override suspend fun restoreSession(): OperatorSession? = store.loadSession()
+    override suspend fun restoreSession(session: OperatorSession): OperatorSession {
+        store.saveSession(session)
+        flow.value = session
+        return session
+    }
     override suspend fun signOut() {
         flow.value = null
     }

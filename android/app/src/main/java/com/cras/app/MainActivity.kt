@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.cras.app.auth.GoogleAuthManager
@@ -215,10 +216,18 @@ class MainActivity : ComponentActivity() {
                         requestMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO)
                     },
                     onExportDataReady = { exportJson ->
+                        val exportFile = File(cacheDir, "cras-export.json")
+                        exportFile.writeText(exportJson)
+                        val uri = FileProvider.getUriForFile(
+                            this@MainActivity,
+                            "${applicationContext.packageName}.fileprovider",
+                            exportFile
+                        )
                         val sendIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "application/json"
-                            putExtra(Intent.EXTRA_TEXT, exportJson)
+                            putExtra(Intent.EXTRA_STREAM, uri)
                             putExtra(Intent.EXTRA_TITLE, "cras-export.json")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
                         startActivity(Intent.createChooser(sendIntent, "Export Cras Operator Data"))
                     },

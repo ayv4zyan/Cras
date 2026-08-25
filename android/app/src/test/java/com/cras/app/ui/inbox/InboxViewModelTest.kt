@@ -66,6 +66,11 @@ class InboxViewModelTest {
             return sessionFlow.value
         }
 
+        override suspend fun restoreSession(session: OperatorSession): OperatorSession {
+            sessionFlow.value = session
+            return session
+        }
+
         override suspend fun signOut() {
             sessionFlow.value = null
         }

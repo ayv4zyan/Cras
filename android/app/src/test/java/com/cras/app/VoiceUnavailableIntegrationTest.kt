@@ -88,6 +88,12 @@ class VoiceUnavailableIntegrationTest {
 
         override suspend fun restoreSession(): OperatorSession? = store.loadSession()
 
+        override suspend fun restoreSession(session: OperatorSession): OperatorSession {
+            store.saveSession(session)
+            sessionFlow.value = session
+            return session
+        }
+
         override suspend fun signOut() {
             store.clearSession()
             sessionFlow.value = null

@@ -101,6 +101,20 @@ class AuthServiceTest {
     }
 
     @Test
+    fun `restoreSession with session parameter updates currentSession and persists to store`() = runTest {
+        val targetSession = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440003",
+            email = "restored@cras.app",
+            accessToken = "restored-token-789",
+            refreshToken = "restored-refresh-789"
+        )
+        val restored = authService.restoreSession(targetSession)
+        assertEquals(targetSession, restored)
+        assertEquals(targetSession, sessionStore.loadSession())
+        assertEquals(targetSession, authService.currentSession.value)
+    }
+
+    @Test
     fun `restoreSession returns null if no session stored`() = runTest {
         val restored = authService.restoreSession()
         assertNull(restored)

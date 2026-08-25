@@ -78,9 +78,7 @@ interface AuthService {
     val currentSession: StateFlow<OperatorSession?>
     suspend fun signInWithGoogleIdToken(idToken: String, nonce: String? = null): OperatorSession
     suspend fun restoreSession(): OperatorSession?
-    suspend fun restoreSession(session: OperatorSession): OperatorSession {
-        return session
-    }
+    suspend fun restoreSession(session: OperatorSession): OperatorSession
     suspend fun signOut()
 }
 

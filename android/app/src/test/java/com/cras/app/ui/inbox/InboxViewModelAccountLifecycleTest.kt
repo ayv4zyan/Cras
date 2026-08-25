@@ -25,6 +25,7 @@ import com.cras.app.notification.InMemoryNotificationPreferenceStore
 import com.cras.app.notification.NotificationInstallationSync
 import com.cras.app.notification.PlatformPermissionState
 import com.cras.app.voice.VoiceRecordingStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,6 +56,10 @@ class InboxViewModelAccountLifecycleTest {
         private val _currentSession = MutableStateFlow<OperatorSession?>(initialSession)
         override val currentSession = _currentSession.asStateFlow()
 
+        fun setSession(session: OperatorSession?) {
+            _currentSession.value = session
+        }
+
         override suspend fun signInWithGoogleIdToken(idToken: String, nonce: String?): OperatorSession {
             val session = OperatorSession(
                 operatorId = "550e8400-e29b-41d4-a716-446655440001",
@@ -81,19 +86,31 @@ class InboxViewModelAccountLifecycleTest {
         var statusToReturn = AccountStatus(AccountDeletionState.ACTIVE, null, false)
         var deletionConfirmationToReturn = DeletionConfirmation(true, AccountDeletionState.PENDING_DELETION, "2026-08-31T12:00:00Z", true)
         var exportDataToReturn = """{"exportedAt":"2026-08-25T10:00:00Z","tasks":[]}"""
+        var fetchShouldFail = false
+        var fetchExceptionToThrow: Exception? = null
+        var fetchCalled = false
+        var onFetchCallback: (suspend () -> Unit)? = null
         var recoverShouldFail = false
         var recoverCalled = false
+        var onRecoverCallback: (suspend () -> Unit)? = null
         var deleteCalled = false
+        var onDeleteCallback: (suspend () -> Unit)? = null
         var exportCalled = false
 
-        override suspend fun fetchAccountStatus(session: OperatorSession): AccountStatus = statusToReturn
+        override suspend fun fetchAccountStatus(session: OperatorSession): AccountStatus {
+            fetchCalled = true
+            onFetchCallback?.invoke()
+            if (fetchShouldFail) {
+                throw fetchExceptionToThrow ?: RuntimeException("Network error fetching status")
+            }
+            return statusToReturn
+        }
 
         override suspend fun requestAccountDeletion(session: OperatorSession): DeletionConfirmation {
             deleteCalled = true
+            onDeleteCallback?.invoke()
             return deletionConfirmationToReturn
         }
-
-        var onRecoverCallback: (suspend () -> Unit)? = null
 
         override suspend fun recoverAccount(session: OperatorSession) {
             recoverCalled = true
@@ -112,7 +129,11 @@ class InboxViewModelAccountLifecycleTest {
 
     private class FakeTaskService : TaskService {
         val tasks = mutableListOf<Task>()
-        override suspend fun fetchTasks(session: OperatorSession): List<Task> = tasks.toList()
+        var fetchTasksCalled = false
+        override suspend fun fetchTasks(session: OperatorSession): List<Task> {
+            fetchTasksCalled = true
+            return tasks.toList()
+        }
         override suspend fun fetchTaskById(session: OperatorSession, id: String): Task? = tasks.find { it.id == id }
         override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
             val task = Task(
@@ -462,6 +483,246 @@ class InboxViewModelAccountLifecycleTest {
         assertTrue(accountService.recoverCalled)
         assertFalse(recoverySuccess)
         assertNull(errorReceived)
+        assertNull(viewModel.accountStatus.value)
+        assertTrue(viewModel.authState.value is AuthUiState.Unauthenticated)
+    }
+
+    @Test
+    fun `fetchAccountStatus ignores outcome and does not wipe local data if user signed out in flight`() = runTest {
+        accountService.statusToReturn = AccountStatus(
+            deletionState = AccountDeletionState.PENDING_DELETION,
+            deletionDeadline = "2026-08-31T12:00:00Z",
+            recoveryAvailable = true
+        )
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val taskId = "550e8400-e29b-41d4-a716-446655440055"
+        val testTask = Task(
+            id = taskId,
+            title = "Retained task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        outboxStore.enqueue(
+            session.operatorId,
+            OutboxItem.Create(
+                id = taskId,
+                task = testTask,
+                params = CreateTaskParams(id = taskId, title = "Retained task"),
+                createdAt = "2026-08-25T09:00:00Z"
+            )
+        )
+
+        accountService.onFetchCallback = {
+            authService.signOut()
+        }
+
+        var fetchSuccess = false
+        var errorReceived: String? = null
+        viewModel.fetchAccountStatus(
+            onSuccess = { fetchSuccess = true },
+            onError = { errorReceived = it }
+        )
+        advanceUntilIdle()
+
+        assertTrue(accountService.fetchCalled)
+        assertFalse(fetchSuccess)
+        assertNull(errorReceived)
+        assertNull(viewModel.accountStatus.value)
+        assertEquals(1, outboxStore.getOutbox(session.operatorId).size)
+    }
+
+    @Test
+    fun `fetchAccountStatus ignores outcome and does not overwrite new session if switched in flight`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        accountService.statusToReturn = AccountStatus(
+            deletionState = AccountDeletionState.PENDING_DELETION,
+            deletionDeadline = "2026-08-31T12:00:00Z",
+            recoveryAvailable = true
+        )
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        accountService.onFetchCallback = {
+            accountService.onFetchCallback = null
+            accountService.statusToReturn = AccountStatus(AccountDeletionState.ACTIVE, null, false)
+            authService.setSession(sessionB)
+        }
+
+        var fetchSuccessA = false
+        var errorReceivedA: String? = null
+        viewModel.fetchAccountStatus(
+            onSuccess = { fetchSuccessA = true },
+            onError = { errorReceivedA = it }
+        )
+        advanceUntilIdle()
+
+        assertTrue(accountService.fetchCalled)
+        assertFalse(fetchSuccessA)
+        assertNull(errorReceivedA)
+        assertEquals(AccountDeletionState.ACTIVE, viewModel.accountStatus.value?.deletionState)
+        assertEquals(sessionB, authService.currentSession.value)
+        assertEquals(sessionB, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
+    }
+
+    @Test
+    fun `requestAccountDeletion ignores outcome and does not wipe local data or sign out new session if user signed out in flight`() = runTest {
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val taskId = "550e8400-e29b-41d4-a716-446655440077"
+        val testTask = Task(
+            id = taskId,
+            title = "Task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        outboxStore.enqueue(
+            session.operatorId,
+            OutboxItem.Create(
+                id = taskId,
+                task = testTask,
+                params = CreateTaskParams(id = taskId, title = "Task"),
+                createdAt = "2026-08-25T09:00:00Z"
+            )
+        )
+
+        accountService.onDeleteCallback = {
+            authService.signOut()
+        }
+
+        var deleteSuccess = false
+        var errorReceived: String? = null
+        viewModel.requestAccountDeletion(
+            onSuccess = { deleteSuccess = true },
+            onError = { errorReceived = it }
+        )
+        advanceUntilIdle()
+
+        assertTrue(accountService.deleteCalled)
+        assertFalse(deleteSuccess)
+        assertNull(errorReceived)
+        assertEquals(1, outboxStore.getOutbox(session.operatorId).size)
+    }
+
+    @Test
+    fun `requestAccountDeletion does not wipe new session data or sign out new session if account switched in flight`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        accountService.onDeleteCallback = {
+            accountService.onDeleteCallback = null
+            authService.setSession(sessionB)
+        }
+
+        var deleteSuccess = false
+        var errorReceived: String? = null
+        viewModel.requestAccountDeletion(
+            onSuccess = { deleteSuccess = true },
+            onError = { errorReceived = it }
+        )
+        advanceUntilIdle()
+
+        assertTrue(accountService.deleteCalled)
+        assertFalse(deleteSuccess)
+        assertNull(errorReceived)
+        assertEquals(sessionB, authService.currentSession.value)
+        assertEquals(sessionB, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
+    }
+
+    @Test
+    fun `checkAccountStatusInternal status-fetch failure fails closed and sets error state without starting authenticated services`() = runTest {
+        accountService.fetchShouldFail = true
+        accountService.fetchExceptionToThrow = RuntimeException("503 Service Unavailable")
+
+        taskService.tasks.add(
+            Task(
+                id = "550e8400-e29b-41d4-a716-446655440099",
+                title = "Should Not Load",
+                description = null,
+                priority = 4,
+                plan = null,
+                labels = emptyList(),
+                parentId = null,
+                completedAt = null,
+                createdAt = "2026-08-25T09:00:00Z",
+                updatedAt = "2026-08-25T09:00:00Z",
+                version = 1
+            )
+        )
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertTrue(accountService.fetchCalled)
+        assertFalse(taskService.fetchTasksCalled)
+        assertTrue(viewModel.allTasks.value.isEmpty())
+        assertNull(viewModel.accountStatus.value)
+        assertTrue(viewModel.inboxState.value is InboxUiState.Error)
+        assertEquals("503 Service Unavailable", (viewModel.inboxState.value as InboxUiState.Error).message)
+        assertTrue(viewModel.todayState.value is TodayUiState.Error)
+        assertTrue(viewModel.upcomingState.value is UpcomingUiState.Error)
+        assertTrue(viewModel.completedState.value is CompletedUiState.Error)
+    }
+
+    @Test
+    fun `checkAccountStatusInternal does not apply status or start session if user signed out in flight`() = runTest {
+        accountService.onFetchCallback = {
+            authService.signOut()
+        }
+
+        taskService.tasks.add(
+            Task(
+                id = "550e8400-e29b-41d4-a716-446655440099",
+                title = "Should Not Load",
+                description = null,
+                priority = 4,
+                plan = null,
+                labels = emptyList(),
+                parentId = null,
+                completedAt = null,
+                createdAt = "2026-08-25T09:00:00Z",
+                updatedAt = "2026-08-25T09:00:00Z",
+                version = 1
+            )
+        )
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertTrue(accountService.fetchCalled)
+        assertFalse(taskService.fetchTasksCalled)
+        assertTrue(viewModel.allTasks.value.isEmpty())
         assertNull(viewModel.accountStatus.value)
         assertTrue(viewModel.authState.value is AuthUiState.Unauthenticated)
     }

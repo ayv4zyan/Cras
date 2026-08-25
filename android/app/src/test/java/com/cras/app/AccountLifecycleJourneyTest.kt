@@ -306,7 +306,7 @@ class AccountLifecycleJourneyTest {
         val labelService = SupabaseLabelService(config, httpClient)
         val commentService = SupabaseCommentService(config, httpClient)
         val settingsService = SupabaseSettingsService(config, httpClient)
-        val accountService = SupabaseAccountService(config, httpClient)
+        val accountService = SupabaseAccountService(config, httpClient, ioDispatcher = testDispatcher)
 
         val sync = NotificationInstallationSync(
             installationService = fakeInstallationService,

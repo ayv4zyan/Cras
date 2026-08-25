@@ -215,18 +215,21 @@ class MainActivity : ComponentActivity() {
                         requestMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO)
                     },
                     onExportDataReady = { exportJson ->
-                        runCatching {
-                            val exportFile = File(applicationContext.filesDir, "cras-export-${System.currentTimeMillis()}.json")
-                            exportFile.writeText(exportJson)
+                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "application/json"
+                            putExtra(Intent.EXTRA_TEXT, exportJson)
+                            putExtra(Intent.EXTRA_TITLE, "cras-export.json")
                         }
+                        startActivity(Intent.createChooser(sendIntent, "Export Cras Operator Data"))
                     },
                     onGoogleReauthRequested = { callback ->
                         lifecycleScope.launch {
                             when (val result = googleAuthManager.getGoogleIdToken()) {
                                 is GoogleSignInResult.Success -> {
                                     val currentAuth = inboxViewModel.authState.value
-                                    val currentEmail = (currentAuth as? AuthUiState.Authenticated)?.session?.email
-                                    val currentOperatorId = (currentAuth as? AuthUiState.Authenticated)?.session?.operatorId
+                                    val currentSession = (currentAuth as? AuthUiState.Authenticated)?.session
+                                    val currentEmail = currentSession?.email
+                                    val currentOperatorId = currentSession?.operatorId
 
                                     try {
                                         val newSession = authService.signInWithGoogleIdToken(result.idToken, result.nonce)
@@ -234,9 +237,17 @@ class MainActivity : ComponentActivity() {
                                             (currentEmail != null && newSession.email == currentEmail)) {
                                             callback(true, null)
                                         } else {
+                                            if (currentSession != null) {
+                                                authService.restoreSession(currentSession)
+                                            } else {
+                                                runCatching { authService.signOut() }
+                                            }
                                             callback(false, "Signed in with a different Google account. Please use the matching account.")
                                         }
                                     } catch (e: Exception) {
+                                        if (currentSession != null && (inboxViewModel.authState.value as? AuthUiState.Authenticated)?.session != currentSession) {
+                                            runCatching { authService.restoreSession(currentSession) }
+                                        }
                                         callback(false, e.message ?: "Reauthentication failed")
                                     }
                                 }

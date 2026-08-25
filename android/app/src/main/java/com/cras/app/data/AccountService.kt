@@ -2,6 +2,9 @@ package com.cras.app.data
 
 import com.cras.app.auth.OperatorSession
 import com.cras.app.config.PublicSupabaseConfig
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -82,65 +85,67 @@ private fun JsonElement?.readBoolean(defaultValue: Boolean = false): Boolean {
 class SupabaseAccountService(
     private val config: PublicSupabaseConfig,
     private val httpClient: OkHttpClient = OkHttpClient(),
-    private val json: Json = Json { ignoreUnknownKeys = true }
+    private val json: Json = Json { ignoreUnknownKeys = true },
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : AccountService {
 
-    private fun callLifecycleEndpoint(session: OperatorSession, action: String): JsonObject {
-        val endpoint = "${config.url}/functions/v1/account-lifecycle"
-        val requestBodyJson = buildJsonObject {
-            put("action", action)
-        }.toString()
+    private suspend fun callLifecycleEndpoint(session: OperatorSession, action: String): JsonObject =
+        withContext(ioDispatcher) {
+            val endpoint = "${config.url}/functions/v1/account-lifecycle"
+            val requestBodyJson = buildJsonObject {
+                put("action", action)
+            }.toString()
 
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("apikey", config.publishableKey)
-            .addHeader("Authorization", "Bearer ${session.accessToken}")
-            .addHeader("Content-Type", "application/json")
-            .post(requestBodyJson.toRequestBody("application/json".toMediaType()))
-            .build()
+            val request = Request.Builder()
+                .url(endpoint)
+                .addHeader("apikey", config.publishableKey)
+                .addHeader("Authorization", "Bearer ${session.accessToken}")
+                .addHeader("Content-Type", "application/json")
+                .post(requestBodyJson.toRequestBody("application/json".toMediaType()))
+                .build()
 
-        val response = try {
-            httpClient.newCall(request).execute()
-        } catch (e: IOException) {
-            throw AccountLifecycleException(
-                message = "Network error: unable to reach Cras account services.",
-                statusCode = 0,
-                code = "network_error",
-                isNetworkError = true,
-                cause = e
-            )
-        }
-
-        return response.use { resp ->
-            val responseBody = resp.body?.string() ?: ""
-            if (!resp.isSuccessful) {
-                var errorMessage = "Account service request failed."
-                var errorCode: String? = null
-                try {
-                    val parsed = json.parseToJsonElement(responseBody).jsonObject
-                    parsed["error"]?.readString()?.let { if (it.isNotBlank()) errorMessage = it }
-                    parsed["code"]?.readString()?.let { errorCode = it }
-                } catch (_: Exception) {
-                    // Fallback to default message
-                }
+            val response = try {
+                httpClient.newCall(request).execute()
+            } catch (e: IOException) {
                 throw AccountLifecycleException(
-                    message = errorMessage,
-                    statusCode = resp.code,
-                    code = errorCode
+                    message = "Network error: unable to reach Cras account services.",
+                    statusCode = 0,
+                    code = "network_error",
+                    isNetworkError = true,
+                    cause = e
                 )
             }
 
-            if (responseBody.trim().isEmpty() || responseBody.trim() == "null") {
-                JsonObject(emptyMap())
-            } else {
-                try {
-                    json.parseToJsonElement(responseBody).jsonObject
-                } catch (_: Exception) {
+            response.use { resp ->
+                val responseBody = resp.body?.string() ?: ""
+                if (!resp.isSuccessful) {
+                    var errorMessage = "Account service request failed."
+                    var errorCode: String? = null
+                    try {
+                        val parsed = json.parseToJsonElement(responseBody).jsonObject
+                        parsed["error"]?.readString()?.let { if (it.isNotBlank()) errorMessage = it }
+                        parsed["code"]?.readString()?.let { errorCode = it }
+                    } catch (_: Exception) {
+                        // Fallback to default message
+                    }
+                    throw AccountLifecycleException(
+                        message = errorMessage,
+                        statusCode = resp.code,
+                        code = errorCode
+                    )
+                }
+
+                if (responseBody.trim().isEmpty() || responseBody.trim() == "null") {
                     JsonObject(emptyMap())
+                } else {
+                    try {
+                        json.parseToJsonElement(responseBody).jsonObject
+                    } catch (_: Exception) {
+                        JsonObject(emptyMap())
+                    }
                 }
             }
         }
-    }
 
     override suspend fun fetchAccountStatus(session: OperatorSession): AccountStatus {
         val responseObj = callLifecycleEndpoint(session, "status")
@@ -182,45 +187,46 @@ class SupabaseAccountService(
         callLifecycleEndpoint(session, "recover-account")
     }
 
-    override suspend fun exportOperatorData(session: OperatorSession): String {
-        val endpoint = "${config.url}/rest/v1/rpc/export_operator_data"
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("apikey", config.publishableKey)
-            .addHeader("Authorization", "Bearer ${session.accessToken}")
-            .addHeader("Content-Type", "application/json")
-            .post("{}".toRequestBody("application/json".toMediaType()))
-            .build()
+    override suspend fun exportOperatorData(session: OperatorSession): String =
+        withContext(ioDispatcher) {
+            val endpoint = "${config.url}/rest/v1/rpc/export_operator_data"
+            val request = Request.Builder()
+                .url(endpoint)
+                .addHeader("apikey", config.publishableKey)
+                .addHeader("Authorization", "Bearer ${session.accessToken}")
+                .addHeader("Content-Type", "application/json")
+                .post("{}".toRequestBody("application/json".toMediaType()))
+                .build()
 
-        val response = try {
-            httpClient.newCall(request).execute()
-        } catch (e: IOException) {
-            throw AccountLifecycleException(
-                message = "Network error: unable to generate account export.",
-                statusCode = 0,
-                code = "network_error",
-                isNetworkError = true,
-                cause = e
-            )
-        }
-
-        return response.use { resp ->
-            val responseBody = resp.body?.string() ?: ""
-            if (!resp.isSuccessful) {
+            val response = try {
+                httpClient.newCall(request).execute()
+            } catch (e: IOException) {
                 throw AccountLifecycleException(
-                    message = "Failed to generate account export: ${resp.code} $responseBody",
-                    statusCode = resp.code
+                    message = "Network error: unable to generate account export.",
+                    statusCode = 0,
+                    code = "network_error",
+                    isNetworkError = true,
+                    cause = e
                 )
             }
-            if (responseBody.startsWith("\"") && responseBody.endsWith("\"") && responseBody.length >= 2) {
-                try {
-                    json.decodeFromString<String>(responseBody)
-                } catch (_: Exception) {
+
+            response.use { resp ->
+                val responseBody = resp.body?.string() ?: ""
+                if (!resp.isSuccessful) {
+                    throw AccountLifecycleException(
+                        message = "Failed to generate account export: ${resp.code} $responseBody",
+                        statusCode = resp.code
+                    )
+                }
+                if (responseBody.startsWith("\"") && responseBody.endsWith("\"") && responseBody.length >= 2) {
+                    try {
+                        json.decodeFromString<String>(responseBody)
+                    } catch (_: Exception) {
+                        responseBody
+                    }
+                } else {
                     responseBody
                 }
-            } else {
-                responseBody
             }
         }
-    }
 }

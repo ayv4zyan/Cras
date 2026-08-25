@@ -96,6 +96,7 @@ fun CrasApp(
     val todayState by viewModel.todayState.collectAsState()
     val upcomingState by viewModel.upcomingState.collectAsState()
     val completedState by viewModel.completedState.collectAsState()
+    val operatorTimedPlanType by viewModel.operatorTimedPlanType.collectAsState()
     val effectiveTimedPlanType by viewModel.effectiveTimedPlanType.collectAsState()
     val labels by viewModel.labels.collectAsState()
     val comments by viewModel.comments.collectAsState()
@@ -341,6 +342,7 @@ fun CrasApp(
                     if (isSettingsOpen) {
                         SettingsDialog(
                             userEmail = state.session.email,
+                            operatorTimedPlanType = operatorTimedPlanType,
                             effectiveDefaultTimedPlanType = effectiveTimedPlanType,
                             onDismiss = { isSettingsOpen = false },
                             onTimedPlanTypeChanged = { type ->
@@ -362,8 +364,12 @@ fun CrasApp(
                             onDownloadExport = { onSuccess, onError ->
                                 viewModel.exportOperatorData(
                                     onSuccess = { json ->
-                                        onExportDataReady?.invoke(json)
-                                        onSuccess()
+                                        try {
+                                            onExportDataReady?.invoke(json)
+                                            onSuccess()
+                                        } catch (e: Exception) {
+                                            onError(e.message ?: "Failed to export or save data")
+                                        }
                                     },
                                     onError = { error ->
                                         onError(error)

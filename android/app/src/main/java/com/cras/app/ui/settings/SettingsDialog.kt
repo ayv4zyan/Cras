@@ -43,13 +43,14 @@ import com.cras.app.domain.TimedPlanType
 @Composable
 fun SettingsDialog(
     userEmail: String? = null,
+    operatorTimedPlanType: TimedPlanType? = null,
     effectiveDefaultTimedPlanType: TimedPlanType = TimedPlanType.INSTANT,
     onDismiss: () -> Unit,
     onTimedPlanTypeChanged: (TimedPlanType?) -> Unit = {},
     onDeleteAccountRequested: () -> Unit = {}
 ) {
     var expandedPlanType by remember { mutableStateOf(false) }
-    var selectedPlanType by remember { mutableStateOf<TimedPlanType?>(effectiveDefaultTimedPlanType) }
+    var selectedPlanType by remember(operatorTimedPlanType) { mutableStateOf(operatorTimedPlanType) }
 
     AlertDialog(
         onDismissRequest = onDismiss,

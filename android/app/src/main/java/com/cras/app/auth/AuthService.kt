@@ -78,6 +78,9 @@ interface AuthService {
     val currentSession: StateFlow<OperatorSession?>
     suspend fun signInWithGoogleIdToken(idToken: String, nonce: String? = null): OperatorSession
     suspend fun restoreSession(): OperatorSession?
+    suspend fun restoreSession(session: OperatorSession): OperatorSession {
+        return session
+    }
     suspend fun signOut()
 }
 
@@ -147,6 +150,12 @@ class SupabaseAuthService(
         val saved = sessionStore.loadSession()
         _currentSession.value = saved
         return saved
+    }
+
+    override suspend fun restoreSession(session: OperatorSession): OperatorSession {
+        sessionStore.saveSession(session)
+        _currentSession.value = session
+        return session
     }
 
     override suspend fun signOut() {

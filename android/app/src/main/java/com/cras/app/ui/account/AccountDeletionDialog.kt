@@ -1,6 +1,8 @@
 package com.cras.app.ui.account
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -100,6 +102,7 @@ fun AccountDeletionDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -175,7 +178,7 @@ fun AccountDeletionDialog(
                                         onDownloadExport(
                                             {
                                                 isExporting = false
-                                                exportSuccessMessage = "Data export generated and saved."
+                                                exportSuccessMessage = "Data export generated."
                                             },
                                             { error ->
                                                 isExporting = false

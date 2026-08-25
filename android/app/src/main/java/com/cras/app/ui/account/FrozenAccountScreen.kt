@@ -50,7 +50,11 @@ fun FrozenAccountScreen(
     val formattedDeadline = remember(deletionDeadline) {
         if (deletionDeadline == null) null else {
             try {
-                val instant = Instant.parse(deletionDeadline)
+                val instant = try {
+                    Instant.parse(deletionDeadline)
+                } catch (_: Exception) {
+                    java.time.OffsetDateTime.parse(deletionDeadline).toInstant()
+                }
                 DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
                     .withLocale(Locale.getDefault())
                     .withZone(ZoneId.systemDefault())

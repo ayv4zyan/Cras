@@ -67,6 +67,11 @@ class InboxViewModelAccountLifecycleTest {
 
         override suspend fun restoreSession(): OperatorSession? = _currentSession.value
 
+        override suspend fun restoreSession(session: OperatorSession): OperatorSession {
+            _currentSession.value = session
+            return session
+        }
+
         override suspend fun signOut() {
             _currentSession.value = null
         }
@@ -146,7 +151,9 @@ class InboxViewModelAccountLifecycleTest {
         override fun list() = emptyList<com.cras.app.voice.RetainedRecording>()
         override fun latest() = null
         override fun readBytes(id: String) = null
-        override fun delete(id: String) {}
+        override fun delete(id: String) {
+            // No retained recordings in this fake; deletion is a no-op.
+        }
         override fun clearAll() {
             clearCount++
         }
@@ -284,6 +291,60 @@ class InboxViewModelAccountLifecycleTest {
         assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
         assertTrue(voiceRecordingStore.clearCount >= 1)
         assertNull(authService.currentSession.value)
+    }
+
+    @Test
+    fun `requestAccountDeletion with unconfirmed response leaves local data intact and reports error`() = runTest {
+        accountService.deletionConfirmationToReturn = DeletionConfirmation(
+            confirmed = false,
+            deletionState = AccountDeletionState.ACTIVE,
+            deletionDeadline = null,
+            sessionsRevoked = false
+        )
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val taskId = "550e8400-e29b-41d4-a716-446655440022"
+        val testTask = Task(
+            id = taskId,
+            title = "Active task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        outboxStore.enqueue(
+            session.operatorId,
+            OutboxItem.Create(
+                id = taskId,
+                task = testTask,
+                params = CreateTaskParams(id = taskId, title = "Active task"),
+                createdAt = "2026-08-25T09:00:00Z"
+            )
+        )
+
+        var confirmedResult: DeletionConfirmation? = null
+        var errorMessage: String? = null
+        viewModel.requestAccountDeletion(
+            onSuccess = { confirmedResult = it },
+            onError = { errorMessage = it }
+        )
+        advanceUntilIdle()
+
+        assertTrue(accountService.deleteCalled)
+        assertNull(confirmedResult)
+        assertNotNull(errorMessage)
+        assertTrue(errorMessage!!.contains("Account deletion was not confirmed"))
+        assertEquals(1, outboxStore.getOutbox(session.operatorId).size)
+        assertEquals(0, voiceRecordingStore.clearCount)
+        assertNotNull(authService.currentSession.value)
     }
 
     @Test

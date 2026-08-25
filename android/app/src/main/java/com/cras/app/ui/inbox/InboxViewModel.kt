@@ -137,6 +137,9 @@ class InboxViewModel(
     private val _completedState = MutableStateFlow<CompletedUiState>(CompletedUiState.Loading)
     val completedState: StateFlow<CompletedUiState> = _completedState.asStateFlow()
 
+    private val _operatorTimedPlanType = MutableStateFlow<TimedPlanType?>(null)
+    val operatorTimedPlanType: StateFlow<TimedPlanType?> = _operatorTimedPlanType.asStateFlow()
+
     private val _effectiveTimedPlanType = MutableStateFlow<TimedPlanType>(TimedPlanType.INSTANT)
     val effectiveTimedPlanType: StateFlow<TimedPlanType> = _effectiveTimedPlanType.asStateFlow()
 
@@ -594,9 +597,11 @@ class InboxViewModel(
     private suspend fun loadSettingsInternal(session: OperatorSession) {
         if (settingsService == null) return
         try {
+            val settings = settingsService.fetchOperatorSettings(session)
             val effective = settingsService.fetchEffectiveTimedPlanType(session)
             val currentAuth = _authState.value
             if (currentAuth is AuthUiState.Authenticated && currentAuth.session == session) {
+                _operatorTimedPlanType.value = settings?.defaultTimedPlanType
                 _effectiveTimedPlanType.value = effective
             }
         } catch (e: CancellationException) {
@@ -1143,6 +1148,7 @@ class InboxViewModel(
             try {
                 settingsService.updateOperatorTimedPlanType(currentAuth.session, type)
                 val effective = settingsService.fetchEffectiveTimedPlanType(currentAuth.session)
+                _operatorTimedPlanType.value = type
                 _effectiveTimedPlanType.value = effective
                 onSuccess()
             } catch (e: CancellationException) {
@@ -1151,6 +1157,34 @@ class InboxViewModel(
                 onError(e.message ?: "Failed to update default timed plan type")
             }
         }
+    }
+
+    private fun startAuthenticatedSession(session: OperatorSession) {
+        triggerLoadTasks(session)
+        viewModelScope.launch {
+            loadSettingsInternal(session)
+        }
+        installationSync?.let { sync ->
+            viewModelScope.launch {
+                runCatching { sync.reconcile(session) }
+            }
+        }
+
+        realtimeSubscription?.unsubscribe()
+        realtimeSubscription = realtimeService?.subscribeToInvalidations(
+            session = session,
+            onInvalidate = { payload ->
+                handleInvalidationEvent(session, payload)
+            },
+            onReconnect = {
+                viewModelScope.launch {
+                    val auth = _authState.value
+                    if (auth is AuthUiState.Authenticated && auth.session == session) {
+                        triggerLoadTasks(session)
+                    }
+                }
+            }
+        )
     }
 
     private suspend fun checkAccountStatusInternal(session: OperatorSession) {
@@ -1175,30 +1209,7 @@ class InboxViewModel(
             }
         }
 
-        triggerLoadTasks(session)
-        viewModelScope.launch {
-            loadSettingsInternal(session)
-        }
-        installationSync?.let { sync ->
-            viewModelScope.launch {
-                runCatching { sync.reconcile(session) }
-            }
-        }
-
-        realtimeSubscription = realtimeService?.subscribeToInvalidations(
-            session = session,
-            onInvalidate = { payload ->
-                handleInvalidationEvent(session, payload)
-            },
-            onReconnect = {
-                viewModelScope.launch {
-                    val auth = _authState.value
-                    if (auth is AuthUiState.Authenticated && auth.session == session) {
-                        triggerLoadTasks(session)
-                    }
-                }
-            }
-        )
+        startAuthenticatedSession(session)
     }
 
     fun fetchAccountStatus(
@@ -1239,11 +1250,10 @@ class InboxViewModel(
             try {
                 val session = currentAuth.session
                 val confirmation = accountService.requestAccountDeletion(session)
-                _accountStatus.value = AccountStatus(
-                    deletionState = confirmation.deletionState,
-                    deletionDeadline = confirmation.deletionDeadline,
-                    recoveryAvailable = true
-                )
+                if (!confirmation.confirmed) {
+                    onError("Account deletion was not confirmed. Please try again.")
+                    return@launch
+                }
                 clearLocalData(session.operatorId)
                 if (installationSync != null) {
                     runCatching { installationSync.deactivateForSignOut(session) }
@@ -1273,29 +1283,7 @@ class InboxViewModel(
                 val session = currentAuth.session
                 accountService.recoverAccount(session)
                 _accountStatus.value = AccountStatus(AccountDeletionState.ACTIVE, null, false)
-                triggerLoadTasks(session)
-                viewModelScope.launch {
-                    loadSettingsInternal(session)
-                }
-                installationSync?.let { sync ->
-                    viewModelScope.launch {
-                        runCatching { sync.reconcile(session) }
-                    }
-                }
-                realtimeSubscription = realtimeService?.subscribeToInvalidations(
-                    session = session,
-                    onInvalidate = { payload ->
-                        handleInvalidationEvent(session, payload)
-                    },
-                    onReconnect = {
-                        viewModelScope.launch {
-                            val auth = _authState.value
-                            if (auth is AuthUiState.Authenticated && auth.session == session) {
-                                triggerLoadTasks(session)
-                            }
-                        }
-                    }
-                )
+                startAuthenticatedSession(session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
@@ -1339,6 +1327,7 @@ class InboxViewModel(
         _todayState.value = TodayUiState.Empty
         _upcomingState.value = UpcomingUiState.Empty
         _completedState.value = CompletedUiState.Empty
+        _operatorTimedPlanType.value = null
         _effectiveTimedPlanType.value = TimedPlanType.INSTANT
         _labels.value = emptyList()
         _comments.value = emptyList()

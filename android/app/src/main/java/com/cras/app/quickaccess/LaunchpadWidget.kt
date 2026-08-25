@@ -73,7 +73,7 @@ internal fun LaunchpadContent() {
         modifier = GlanceModifier
             .fillMaxSize()
             .background(GlanceTheme.colors.surface)
-            .padding(horizontal = 4, vertical = 4),
+            .padding(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         LaunchpadButton(
@@ -107,7 +107,7 @@ internal fun LaunchpadButton(
 ) {
     Box(
         modifier = modifier
-            .padding(horizontal = 4, vertical = 2)
+            .padding(horizontal = 4.dp, vertical = 2.dp)
             .cornerRadius(12)
             .background(GlanceTheme.colors.primaryContainer)
             .clickable(
@@ -123,7 +123,7 @@ internal fun LaunchpadButton(
                 color = GlanceTheme.colors.onPrimaryContainer,
                 fontWeight = FontWeight.Medium
             ),
-            modifier = GlanceModifier.padding(horizontal = 8, vertical = 10)
+            modifier = GlanceModifier.padding(horizontal = 8.dp, vertical = 10.dp)
         )
     }
 }

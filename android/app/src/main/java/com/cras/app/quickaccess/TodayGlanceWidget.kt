@@ -34,6 +34,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import androidx.compose.ui.unit.dp
 
 /** Glance Preferences key holding the JSON-serialised list of [TodayGlanceRow]s. */
 val KEY_TODAY_ROWS = stringPreferencesKey("cras_today_rows")
@@ -163,7 +164,7 @@ internal fun TodayGlanceContent(
         Row(
             modifier = GlanceModifier
                 .fillMaxWidth()
-                .padding(horizontal = 16, vertical = 10)
+                .padding(horizontal = 16.dp, vertical = 10.dp)
                 .clickable(actionRunCallback<TodayGlanceOpenTodayCallback>()),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -182,7 +183,7 @@ internal fun TodayGlanceContent(
                     fontWeight = FontWeight.Bold
                 ),
                 modifier = GlanceModifier
-                    .padding(start = 8)
+                    .padding(start = 8.dp)
                     .clickable(actionRunCallback<TodayGlanceCreateTaskCallback>())
             )
         }
@@ -191,7 +192,7 @@ internal fun TodayGlanceContent(
             Row(
                 modifier = GlanceModifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16, vertical = 8)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
                     text = "No tasks for today",
@@ -211,7 +212,7 @@ private fun TodayGlanceRowItem(row: TodayGlanceRow) {
     Row(
         modifier = GlanceModifier
             .fillMaxWidth()
-            .padding(horizontal = 12, vertical = 4)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
             .clickable(
                 actionRunCallback<TodayGlanceOpenTaskCallback>(
                     actionParametersOf(KEY_TASK_ID to row.taskId)

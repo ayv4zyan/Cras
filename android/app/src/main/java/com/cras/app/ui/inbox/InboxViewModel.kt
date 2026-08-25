@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.cras.app.auth.AuthService
 import com.cras.app.auth.OperatorSession
 import com.cras.app.data.AccountDeletionState
+import com.cras.app.data.AccountLifecycleException
 import com.cras.app.data.AccountService
 import com.cras.app.data.AccountStatus
 import com.cras.app.data.CommentService
@@ -53,6 +54,12 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
+
+private enum class VerificationState {
+    UNVERIFIED,
+    VERIFIED,
+    NETWORK_ERROR
+}
 
 private sealed interface QueueItem {
     val session: OperatorSession
@@ -157,6 +164,7 @@ class InboxViewModel(
 
     private var routedTaskId: String? = null
     private var pendingCompletionTaskId: String? = null
+    private var verificationState: VerificationState = if (accountService == null) VerificationState.VERIFIED else VerificationState.UNVERIFIED
 
     private val _isCreatingTask = MutableStateFlow(false)
     val isCreatingTask: StateFlow<Boolean> = _isCreatingTask.asStateFlow()
@@ -209,6 +217,7 @@ class InboxViewModel(
                 realtimeSubscription?.unsubscribe()
                 realtimeSubscription = null
                 _accountStatus.value = null
+                verificationState = if (accountService == null) VerificationState.VERIFIED else VerificationState.UNVERIFIED
                 clearLocalDataInMemory()
 
                 if (session != null) {
@@ -248,7 +257,11 @@ class InboxViewModel(
      * reconciliation.
      */
     fun focusRoutedTask(taskId: String) {
-        if (!isAccountOperationAllowed()) return
+        if (isAccountPendingDeletion()) return
+        if (!isAccountStatusVerified()) {
+            routedTaskId = taskId
+            return
+        }
         val match = _allTasks.value.firstOrNull { it.id == taskId }
         if (match != null) {
             routedTaskId = null
@@ -271,7 +284,11 @@ class InboxViewModel(
      * retained and executed once authenticated and the matching task is loaded.
      */
     fun completeRoutedTask(taskId: String) {
-        if (!isAccountOperationAllowed()) return
+        if (isAccountPendingDeletion()) return
+        if (!isAccountStatusVerified()) {
+            pendingCompletionTaskId = taskId
+            return
+        }
         val currentAuth = _authState.value
         val match = _allTasks.value.firstOrNull { it.id == taskId }
         if (currentAuth is AuthUiState.Authenticated && match != null) {
@@ -930,7 +947,7 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
-        if (!isAccountStatusVerified()) {
+        if (verificationState == VerificationState.UNVERIFIED && accountService != null) {
             onError("Account verification in progress")
             return
         }
@@ -1009,7 +1026,7 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
-        if (!isAccountStatusVerified()) {
+        if (verificationState == VerificationState.UNVERIFIED && accountService != null) {
             onError("Account verification in progress")
             return
         }
@@ -1149,7 +1166,7 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
-        if (!isAccountStatusVerified()) {
+        if (verificationState == VerificationState.UNVERIFIED && accountService != null) {
             onError("Account verification in progress")
             return
         }
@@ -1304,14 +1321,16 @@ class InboxViewModel(
     }
 
     private fun isAccountStatusVerified(): Boolean {
-        return accountService == null || _accountStatus.value != null
+        return accountService == null || verificationState == VerificationState.VERIFIED
     }
 
     private fun isAccountOperationAllowed(): Boolean {
-        return isAccountStatusVerified() && !isAccountPendingDeletion()
+        return verificationState != VerificationState.UNVERIFIED && !isAccountPendingDeletion()
     }
 
     private suspend fun handlePendingDeletion(session: OperatorSession) {
+        routedTaskId = null
+        pendingCompletionTaskId = null
         synchronized(queue) {
             queue.clear()
         }
@@ -1326,6 +1345,7 @@ class InboxViewModel(
     private suspend fun checkAccountStatusInternal(session: OperatorSession) {
         if (accountService == null) {
             if (!isSessionCurrent(session)) return
+            verificationState = VerificationState.VERIFIED
             startAuthenticatedSession(session)
             return
         }
@@ -1336,6 +1356,9 @@ class InboxViewModel(
             throw e
         } catch (e: Exception) {
             if (!isSessionCurrent(session)) return
+            if ((e is AccountLifecycleException && e.isNetworkError) || isNetworkError(e)) {
+                verificationState = VerificationState.NETWORK_ERROR
+            }
             val errorMsg = e.message ?: "Failed to verify account status"
             _inboxState.value = InboxUiState.Error(errorMsg)
             _todayState.value = TodayUiState.Error(errorMsg)
@@ -1346,6 +1369,7 @@ class InboxViewModel(
 
         if (!isSessionCurrent(session)) return
 
+        verificationState = VerificationState.VERIFIED
         _accountStatus.value = status
         if (status.deletionState == AccountDeletionState.PENDING_DELETION) {
             handlePendingDeletion(session)
@@ -1370,6 +1394,7 @@ class InboxViewModel(
                 if (!isSessionCurrent(session)) {
                     return@launch
                 }
+                verificationState = VerificationState.VERIFIED
                 _accountStatus.value = status
                 if (status.deletionState == AccountDeletionState.PENDING_DELETION) {
                     handlePendingDeletion(session)
@@ -1383,6 +1408,9 @@ class InboxViewModel(
             } catch (e: Exception) {
                 if (!isSessionCurrent(currentAuth.session)) {
                     return@launch
+                }
+                if ((e is AccountLifecycleException && e.isNetworkError) || isNetworkError(e)) {
+                    verificationState = VerificationState.NETWORK_ERROR
                 }
                 onError(e.message ?: "Failed to fetch account status")
             }
@@ -1418,6 +1446,7 @@ class InboxViewModel(
                     onError("Account deletion was not confirmed. Please try again.")
                     return@launch
                 }
+                verificationState = VerificationState.VERIFIED
                 _accountStatus.value = AccountStatus(
                     deletionState = AccountDeletionState.PENDING_DELETION,
                     deletionDeadline = confirmation.deletionDeadline,
@@ -1465,6 +1494,7 @@ class InboxViewModel(
                 if (!isSessionCurrent(session)) {
                     return@launch
                 }
+                verificationState = VerificationState.VERIFIED
                 _accountStatus.value = AccountStatus(AccountDeletionState.ACTIVE, null, false)
                 startAuthenticatedSession(session)
                 onSuccess()

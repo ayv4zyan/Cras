@@ -15,6 +15,7 @@ import com.cras.app.data.InstallationRecord
 import com.cras.app.data.InstallationService
 import com.cras.app.data.InvalidationPayload
 import com.cras.app.data.LabelService
+import com.cras.app.data.OperatorSettings
 import com.cras.app.data.OutboxItem
 import com.cras.app.data.RealtimeService
 import com.cras.app.data.RealtimeSubscription
@@ -135,19 +136,22 @@ class InboxViewModelAccountLifecycleTest {
 
     private class FakeTaskService : TaskService {
         val tasks = mutableListOf<Task>()
+        val tasksByOperator = mutableMapOf<String, MutableList<Task>>()
         var fetchTasksCalled = false
         var onFetchTasksCallback: (suspend () -> Unit)? = null
         var onFetchTaskByIdCallback: (suspend (String) -> Unit)? = null
         override suspend fun fetchTasks(session: OperatorSession): List<Task> {
             fetchTasksCalled = true
             onFetchTasksCallback?.invoke()
-            return tasks.toList()
+            return tasksByOperator[session.operatorId]?.toList() ?: tasks.toList()
         }
         override suspend fun fetchTaskById(session: OperatorSession, id: String): Task? {
             onFetchTaskByIdCallback?.invoke(id)
-            return tasks.find { it.id == id }
+            return tasksByOperator[session.operatorId]?.find { it.id == id } ?: tasks.find { it.id == id }
         }
+        var shouldFailWithNetworkError = false
         override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
+            if (shouldFailWithNetworkError) throw java.io.IOException("Network error")
             val task = Task(
                 id = params.id ?: UUID.randomUUID().toString(),
                 title = params.title,
@@ -162,60 +166,101 @@ class InboxViewModelAccountLifecycleTest {
                 version = 1
             )
             tasks.add(task)
+            tasksByOperator.getOrPut(session.operatorId) { mutableListOf() }.add(task)
             return task
         }
         var onUpdateCallback: (suspend () -> Unit)? = null
         override suspend fun updateTask(session: OperatorSession, params: com.cras.app.data.UpdateTaskParams): Task {
+            if (shouldFailWithNetworkError) throw java.io.IOException("Network error")
             onUpdateCallback?.invoke()
-            val existing = tasks.first { it.id == params.id }
+            val list = tasksByOperator[session.operatorId] ?: tasks
+            val existing = list.first { it.id == params.id }
             val updated = existing.copy(
                 title = params.title ?: existing.title,
                 description = if (params.description != null) params.description else existing.description,
                 priority = params.priority ?: existing.priority,
                 version = existing.version + 1
             )
-            val index = tasks.indexOfFirst { it.id == params.id }
-            tasks[index] = updated
+            val index = list.indexOfFirst { it.id == params.id }
+            if (index != -1) list[index] = updated
+            val globalIndex = tasks.indexOfFirst { it.id == params.id }
+            if (globalIndex != -1) tasks[globalIndex] = updated
             return updated
         }
-        override suspend fun completeTask(session: OperatorSession, taskId: String, expectedVersion: Int, completedAt: String?): Task = tasks.first()
-        override suspend fun uncompleteTask(session: OperatorSession, taskId: String, expectedVersion: Int): Task = tasks.first()
+        override suspend fun completeTask(session: OperatorSession, taskId: String, expectedVersion: Int, completedAt: String?): Task {
+            if (shouldFailWithNetworkError) throw java.io.IOException("Network error")
+            val list = tasksByOperator[session.operatorId] ?: tasks
+            val existing = list.firstOrNull { it.id == taskId } ?: tasks.first { it.id == taskId }
+            val completed = existing.copy(
+                completedAt = completedAt ?: "2026-08-25T10:00:00Z",
+                updatedAt = "2026-08-25T10:00:00Z",
+                version = existing.version + 1
+            )
+            val index = list.indexOfFirst { it.id == taskId }
+            if (index != -1) list[index] = completed
+            val globalIndex = tasks.indexOfFirst { it.id == taskId }
+            if (globalIndex != -1) tasks[globalIndex] = completed
+            return completed
+        }
+        override suspend fun uncompleteTask(session: OperatorSession, taskId: String, expectedVersion: Int): Task {
+            if (shouldFailWithNetworkError) throw java.io.IOException("Network error")
+            val list = tasksByOperator[session.operatorId] ?: tasks
+            val existing = list.firstOrNull { it.id == taskId } ?: tasks.first { it.id == taskId }
+            val uncompleted = existing.copy(
+                completedAt = null,
+                updatedAt = "2026-08-25T10:00:00Z",
+                version = existing.version + 1
+            )
+            val index = list.indexOfFirst { it.id == taskId }
+            if (index != -1) list[index] = uncompleted
+            val globalIndex = tasks.indexOfFirst { it.id == taskId }
+            if (globalIndex != -1) tasks[globalIndex] = uncompleted
+            return uncompleted
+        }
     }
 
     private class FakeLabelService : LabelService {
         val labels = mutableListOf<Label>()
+        val labelsByOperator = mutableMapOf<String, MutableList<Label>>()
         var onActionCallback: (suspend () -> Unit)? = null
         var onFetchCallback: (suspend () -> Unit)? = null
         override suspend fun fetchLabels(session: OperatorSession): List<Label> {
             onFetchCallback?.invoke()
-            return labels.toList()
+            return labelsByOperator[session.operatorId]?.toList() ?: labels.toList()
         }
         override suspend fun createLabel(session: OperatorSession, params: com.cras.app.data.CreateLabelParams): Label {
             onActionCallback?.invoke()
             val label = Label(id = UUID.randomUUID().toString(), name = params.name, color = params.color)
             labels.add(label)
+            labelsByOperator.getOrPut(session.operatorId) { mutableListOf() }.add(label)
             return label
         }
         override suspend fun updateLabel(session: OperatorSession, params: com.cras.app.data.UpdateLabelParams): Label {
             onActionCallback?.invoke()
             val label = Label(id = params.id, name = params.name ?: "Updated", color = params.color ?: "#000000")
-            val index = labels.indexOfFirst { it.id == params.id }
-            if (index != -1) labels[index] = label else labels.add(label)
+            val list = labelsByOperator[session.operatorId] ?: labels
+            val index = list.indexOfFirst { it.id == params.id }
+            if (index != -1) list[index] = label else list.add(label)
+            val globalIndex = labels.indexOfFirst { it.id == params.id }
+            if (globalIndex != -1) labels[globalIndex] = label else labels.add(label)
             return label
         }
         override suspend fun deleteLabel(session: OperatorSession, id: String) {
             onActionCallback?.invoke()
             labels.removeAll { it.id == id }
+            labelsByOperator[session.operatorId]?.removeAll { it.id == id }
         }
     }
 
     private class FakeCommentService : CommentService {
         val comments = mutableListOf<Comment>()
+        val commentsByOperator = mutableMapOf<String, MutableList<Comment>>()
         var onActionCallback: (suspend () -> Unit)? = null
         var onFetchCallback: (suspend () -> Unit)? = null
         override suspend fun fetchComments(session: OperatorSession, taskId: String?): List<Comment> {
             onFetchCallback?.invoke()
-            return if (taskId != null) comments.filter { it.taskId == taskId } else comments.toList()
+            val list = commentsByOperator[session.operatorId]?.toList() ?: comments.toList()
+            return if (taskId != null) list.filter { it.taskId == taskId } else list
         }
         override suspend fun createComment(session: OperatorSession, params: com.cras.app.data.CreateCommentParams): Comment {
             onActionCallback?.invoke()
@@ -226,21 +271,31 @@ class InboxViewModelAccountLifecycleTest {
                 createdAt = "2026-08-25T10:00:00Z"
             )
             comments.add(comment)
+            commentsByOperator.getOrPut(session.operatorId) { mutableListOf() }.add(comment)
             return comment
         }
     }
 
     private class FakeSettingsService : SettingsService {
         var timedPlanType: TimedPlanType? = null
+        val timedPlanTypeByOperator = mutableMapOf<String, TimedPlanType?>()
         var onActionCallback: (suspend () -> Unit)? = null
-        override suspend fun fetchOperatorSettings(session: OperatorSession) = null
+        override suspend fun fetchOperatorSettings(session: OperatorSession): OperatorSettings? {
+            val type = if (timedPlanTypeByOperator.containsKey(session.operatorId)) timedPlanTypeByOperator[session.operatorId] else timedPlanType
+            return type?.let { OperatorSettings(session.operatorId, defaultTimedPlanType = it) }
+        }
         override suspend fun fetchDeploymentConfig(session: OperatorSession) = null
         override suspend fun fetchEffectiveTimedPlanType(session: OperatorSession): TimedPlanType {
-            return timedPlanType ?: TimedPlanType.INSTANT
+            val type = if (timedPlanTypeByOperator.containsKey(session.operatorId)) timedPlanTypeByOperator[session.operatorId] else timedPlanType
+            return type ?: TimedPlanType.INSTANT
         }
         override suspend fun updateOperatorTimedPlanType(session: OperatorSession, type: TimedPlanType?) {
             onActionCallback?.invoke()
-            timedPlanType = type
+            if (timedPlanTypeByOperator.isNotEmpty()) {
+                timedPlanTypeByOperator[session.operatorId] = type
+            } else {
+                timedPlanType = type
+            }
         }
     }
 
@@ -1028,12 +1083,22 @@ class InboxViewModelAccountLifecycleTest {
 
     @Test
     fun `createLabel ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        val sessionBLabel = Label(id = "550e8400-e29b-41d4-a716-446655440088", name = "Operator B Label", color = "#00ff00")
+        labelService.labelsByOperator[session.operatorId] = mutableListOf()
+        labelService.labelsByOperator[sessionB.operatorId] = mutableListOf(sessionBLabel)
+
         authService = FakeAuthService(session)
         viewModel = createViewModel()
         advanceUntilIdle()
 
         labelService.onActionCallback = {
-            authService.signOut()
+            labelService.onActionCallback = null
+            authService.setSession(sessionB)
         }
 
         var labelCreated: Label? = null
@@ -1048,19 +1113,29 @@ class InboxViewModelAccountLifecycleTest {
 
         assertNull(labelCreated)
         assertNull(labelError)
-        assertTrue(viewModel.labels.value.isEmpty())
+        assertEquals(listOf(sessionBLabel), viewModel.labels.value)
     }
 
     @Test
     fun `updateLabel ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        val sessionBLabel = Label(id = "550e8400-e29b-41d4-a716-446655440088", name = "Operator B Label", color = "#00ff00")
         val labelId = "550e8400-e29b-41d4-a716-446655440091"
-        labelService.labels.add(Label(id = labelId, name = "Initial", color = "#000000"))
+        val initialLabel = Label(id = labelId, name = "Initial", color = "#000000")
+        labelService.labelsByOperator[session.operatorId] = mutableListOf(initialLabel)
+        labelService.labelsByOperator[sessionB.operatorId] = mutableListOf(sessionBLabel)
+
         authService = FakeAuthService(session)
         viewModel = createViewModel()
         advanceUntilIdle()
 
         labelService.onActionCallback = {
-            authService.signOut()
+            labelService.onActionCallback = null
+            authService.setSession(sessionB)
         }
 
         var labelUpdated: Label? = null
@@ -1075,19 +1150,29 @@ class InboxViewModelAccountLifecycleTest {
 
         assertNull(labelUpdated)
         assertNull(updateError)
-        assertTrue(viewModel.labels.value.isEmpty())
+        assertEquals(listOf(sessionBLabel), viewModel.labels.value)
     }
 
     @Test
     fun `deleteLabel ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        val sessionBLabel = Label(id = "550e8400-e29b-41d4-a716-446655440088", name = "Operator B Label", color = "#00ff00")
         val labelId = "550e8400-e29b-41d4-a716-446655440092"
-        labelService.labels.add(Label(id = labelId, name = "ToDelete", color = "#000000"))
+        val toDelete = Label(id = labelId, name = "ToDelete", color = "#000000")
+        labelService.labelsByOperator[session.operatorId] = mutableListOf(toDelete)
+        labelService.labelsByOperator[sessionB.operatorId] = mutableListOf(sessionBLabel)
+
         authService = FakeAuthService(session)
         viewModel = createViewModel()
         advanceUntilIdle()
 
         labelService.onActionCallback = {
-            authService.signOut()
+            labelService.onActionCallback = null
+            authService.setSession(sessionB)
         }
 
         var deleteSuccess = false
@@ -1101,17 +1186,32 @@ class InboxViewModelAccountLifecycleTest {
 
         assertFalse(deleteSuccess)
         assertNull(deleteError)
-        assertTrue(viewModel.labels.value.isEmpty())
+        assertEquals(listOf(sessionBLabel), viewModel.labels.value)
     }
 
     @Test
     fun `createComment ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        val sessionBComment = Comment(
+            id = "550e8400-e29b-41d4-a716-446655440089",
+            taskId = "550e8400-e29b-41d4-a716-446655440093",
+            content = "Operator B Comment",
+            createdAt = "2026-08-25T10:00:00Z"
+        )
+        commentService.commentsByOperator[session.operatorId] = mutableListOf()
+        commentService.commentsByOperator[sessionB.operatorId] = mutableListOf(sessionBComment)
+
         authService = FakeAuthService(session)
         viewModel = createViewModel()
         advanceUntilIdle()
 
         commentService.onActionCallback = {
-            authService.signOut()
+            commentService.onActionCallback = null
+            authService.setSession(sessionB)
         }
 
         val taskId = "550e8400-e29b-41d4-a716-446655440093"
@@ -1127,17 +1227,26 @@ class InboxViewModelAccountLifecycleTest {
 
         assertNull(commentCreated)
         assertNull(commentError)
-        assertTrue(viewModel.comments.value.isEmpty())
+        assertEquals(listOf(sessionBComment), viewModel.comments.value)
     }
 
     @Test
     fun `updateOperatorTimedPlanType ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        settingsService.timedPlanTypeByOperator[session.operatorId] = null
+        settingsService.timedPlanTypeByOperator[sessionB.operatorId] = TimedPlanType.INSTANT
+
         authService = FakeAuthService(session)
         viewModel = createViewModel()
         advanceUntilIdle()
 
         settingsService.onActionCallback = {
-            authService.signOut()
+            settingsService.onActionCallback = null
+            authService.setSession(sessionB)
         }
 
         var updateSuccess = false
@@ -1151,11 +1260,16 @@ class InboxViewModelAccountLifecycleTest {
 
         assertFalse(updateSuccess)
         assertNull(updateError)
-        assertNull(viewModel.operatorTimedPlanType.value)
+        assertEquals(TimedPlanType.INSTANT, viewModel.operatorTimedPlanType.value)
     }
 
     @Test
     fun `updateTask ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
         val task = Task(
             id = "550e8400-e29b-41d4-a716-446655440055",
             title = "Initial Title",
@@ -1169,7 +1283,22 @@ class InboxViewModelAccountLifecycleTest {
             updatedAt = "2026-08-25T09:00:00Z",
             version = 1
         )
-        taskService.tasks.add(task)
+        val taskB = Task(
+            id = "550e8400-e29b-41d4-a716-446655440056",
+            title = "Session B Task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasksByOperator[session.operatorId] = mutableListOf(task)
+        taskService.tasksByOperator[sessionB.operatorId] = mutableListOf(taskB)
+
         authService = FakeAuthService(session)
         viewModel = createViewModel()
         advanceUntilIdle()
@@ -1177,7 +1306,8 @@ class InboxViewModelAccountLifecycleTest {
         assertEquals(1, viewModel.allTasks.value.size)
 
         taskService.onUpdateCallback = {
-            authService.signOut()
+            taskService.onUpdateCallback = null
+            authService.setSession(sessionB)
         }
 
         var updateSuccess = false
@@ -1195,7 +1325,7 @@ class InboxViewModelAccountLifecycleTest {
 
         assertFalse(updateSuccess)
         assertNull(updateError)
-        assertTrue(viewModel.allTasks.value.isEmpty())
+        assertEquals(listOf(taskB), viewModel.allTasks.value)
     }
 
     @Test
@@ -1411,11 +1541,11 @@ class InboxViewModelAccountLifecycleTest {
             updatedAt = "2026-08-25T09:00:00Z",
             version = 1
         )
-        taskService.tasks.add(staleTask)
+        taskService.tasksByOperator[session.operatorId] = mutableListOf(staleTask)
+        taskService.tasksByOperator[sessionB.operatorId] = mutableListOf()
 
         taskService.onFetchTaskByIdCallback = {
             taskService.onFetchTaskByIdCallback = null
-            taskService.tasks.clear()
             authService.setSession(sessionB)
         }
 
@@ -1442,11 +1572,11 @@ class InboxViewModelAccountLifecycleTest {
 
         val staleLabelId = "550e8400-e29b-41d4-a716-446655440091"
         val staleLabel = Label(id = staleLabelId, name = "Label A", color = "#ff0000")
-        labelService.labels.add(staleLabel)
+        labelService.labelsByOperator[session.operatorId] = mutableListOf(staleLabel)
+        labelService.labelsByOperator[sessionB.operatorId] = mutableListOf()
 
         labelService.onFetchCallback = {
             labelService.onFetchCallback = null
-            labelService.labels.clear()
             authService.setSession(sessionB)
         }
 
@@ -1479,7 +1609,8 @@ class InboxViewModelAccountLifecycleTest {
             updatedAt = "2026-08-25T09:00:00Z",
             version = 1
         )
-        taskService.tasks.add(selectedTask)
+        taskService.tasksByOperator[session.operatorId] = mutableListOf(selectedTask)
+        taskService.tasksByOperator[sessionB.operatorId] = mutableListOf()
         authService = FakeAuthService(session)
         viewModel = createViewModel()
         advanceUntilIdle()
@@ -1488,11 +1619,11 @@ class InboxViewModelAccountLifecycleTest {
 
         val staleCommentId = "550e8400-e29b-41d4-a716-446655440092"
         val staleComment = Comment(id = staleCommentId, taskId = selectedTask.id, content = "Stale comment", createdAt = "2026-08-25T09:00:00Z")
-        commentService.comments.add(staleComment)
+        commentService.commentsByOperator[session.operatorId] = mutableListOf(staleComment)
+        commentService.commentsByOperator[sessionB.operatorId] = mutableListOf()
 
         commentService.onFetchCallback = {
             commentService.onFetchCallback = null
-            commentService.comments.clear()
             authService.setSession(sessionB)
         }
 
@@ -1607,5 +1738,266 @@ class InboxViewModelAccountLifecycleTest {
         assertTrue(createSuccess)
         assertEquals(1, viewModel.allTasks.value.size)
         assertEquals("Verified Task", viewModel.allTasks.value.first().title)
+    }
+
+    @Test
+    fun `focusRoutedTask retains taskId while account status verification is in-flight and resolves upon status verification`() = runTest {
+        val targetTaskId = "550e8400-e29b-41d4-a716-446655440077"
+        val routedTask = Task(
+            id = targetTaskId,
+            title = "Routed Task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasks.add(routedTask)
+
+        val fetchGate = CompletableDeferred<Unit>()
+        accountService.onFetchCallback = {
+            fetchGate.await()
+        }
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        testDispatcher.scheduler.runCurrent()
+
+        // Account status is not verified yet
+        assertNull(viewModel.accountStatus.value)
+
+        // Call focusRoutedTask while status verification is gated
+        viewModel.focusRoutedTask(targetTaskId)
+        assertNull(viewModel.selectedTask.value)
+
+        // Release the gate
+        fetchGate.complete(Unit)
+        advanceUntilIdle()
+
+        // Once account status is verified and tasks are loaded, selectedTask resolves
+        assertNotNull(viewModel.selectedTask.value)
+        assertEquals(targetTaskId, viewModel.selectedTask.value?.id)
+        assertEquals("Routed Task", viewModel.selectedTask.value?.title)
+    }
+
+    @Test
+    fun `completeRoutedTask retains taskId while account status verification is in-flight and completes upon status verification`() = runTest {
+        val targetTaskId = "550e8400-e29b-41d4-a716-446655440078"
+        val routedTask = Task(
+            id = targetTaskId,
+            title = "Routed Task To Complete",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasks.add(routedTask)
+
+        val fetchGate = CompletableDeferred<Unit>()
+        accountService.onFetchCallback = {
+            fetchGate.await()
+        }
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        testDispatcher.scheduler.runCurrent()
+
+        // Account status is not verified yet
+        assertNull(viewModel.accountStatus.value)
+
+        // Call completeRoutedTask while status verification is gated
+        viewModel.completeRoutedTask(targetTaskId)
+        assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
+
+        // Release the gate
+        fetchGate.complete(Unit)
+        advanceUntilIdle()
+
+        // Once account status is verified and tasks are loaded, pending completion is executed
+        val completedState = viewModel.completedState.value
+        assertTrue(completedState is CompletedUiState.Success)
+        assertEquals(1, (completedState as CompletedUiState.Success).tasks.size)
+        assertEquals(targetTaskId, (completedState as CompletedUiState.Success).tasks.first().id)
+    }
+
+    @Test
+    fun `focusRoutedTask and completeRoutedTask discard intent when account is pending deletion`() = runTest {
+        val targetTaskId = "550e8400-e29b-41d4-a716-446655440079"
+        val routedTask = Task(
+            id = targetTaskId,
+            title = "Frozen Account Task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasks.add(routedTask)
+        accountService.statusToReturn = AccountStatus(AccountDeletionState.PENDING_DELETION, "2026-08-31T12:00:00Z", true)
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertEquals(AccountDeletionState.PENDING_DELETION, viewModel.accountStatus.value?.deletionState)
+
+        viewModel.focusRoutedTask(targetTaskId)
+        viewModel.completeRoutedTask(targetTaskId)
+        advanceUntilIdle()
+
+        assertNull(viewModel.selectedTask.value)
+        assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
+    }
+
+    @Test
+    fun `offline-first task mutations can enqueue locally to outbox when account status verification fails with network error`() = runTest {
+        accountService.fetchShouldFail = true
+        accountService.fetchExceptionToThrow = AccountLifecycleException(
+            message = "Network error: unable to reach Cras account services.",
+            statusCode = 0,
+            code = "network_error",
+            isNetworkError = true
+        )
+
+        taskService.shouldFailWithNetworkError = true
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        // Account status remains null due to transport failure (non-authoritative)
+        assertNull(viewModel.accountStatus.value)
+        assertTrue(viewModel.inboxState.value is InboxUiState.Error)
+
+        // 1. createTask succeeds locally into Outbox
+        var createSuccess = false
+        viewModel.createTask(
+            title = "Offline Created Task",
+            onSuccess = { createSuccess = true }
+        )
+        testDispatcher.scheduler.runCurrent()
+
+        assertTrue(createSuccess)
+        val outbox = outboxStore.getOutbox(session.operatorId)
+        assertTrue(outbox.any { it is OutboxItem.Create && it.task.title == "Offline Created Task" })
+        assertEquals(1, viewModel.allTasks.value.size)
+        assertEquals("Offline Created Task", viewModel.allTasks.value.first().title)
+
+        advanceUntilIdle()
+
+        // 2. createSubtask succeeds locally into Outbox
+        val parentId = viewModel.allTasks.value.first().id
+        var subtaskCreated: Task? = null
+        viewModel.createSubtask(
+            parentId = parentId,
+            title = "Offline Subtask",
+            onSuccess = { subtaskCreated = it }
+        )
+        testDispatcher.scheduler.runCurrent()
+
+        assertNotNull(subtaskCreated)
+        val updatedOutbox = outboxStore.getOutbox(session.operatorId)
+        assertTrue(updatedOutbox.any { it is OutboxItem.Create && it.task.parentId == parentId })
+
+        advanceUntilIdle()
+
+        // 3. completeTask succeeds locally into Outbox
+        var completeSuccess = false
+        viewModel.completeTask(
+            taskId = parentId,
+            expectedVersion = 1,
+            onSuccess = { completeSuccess = true }
+        )
+        testDispatcher.scheduler.runCurrent()
+
+        assertTrue(completeSuccess)
+        val finalOutbox = outboxStore.getOutbox(session.operatorId)
+        assertTrue(finalOutbox.any { it is OutboxItem.Complete && it.taskId == parentId })
+
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `non-offline mutations fail when account status verification fails with network error`() = runTest {
+        accountService.fetchShouldFail = true
+        accountService.fetchExceptionToThrow = AccountLifecycleException(
+            message = "Network error: unable to reach Cras account services.",
+            statusCode = 0,
+            code = "network_error",
+            isNetworkError = true
+        )
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        var labelError: String? = null
+        viewModel.createLabel(
+            name = "Label",
+            color = "#ff0000",
+            onError = { labelError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Account verification in progress", labelError)
+
+        var commentError: String? = null
+        viewModel.createComment(
+            taskId = "task-id",
+            content = "Comment",
+            onError = { commentError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Account verification in progress", commentError)
+
+        var deleteError: String? = null
+        viewModel.requestAccountDeletion(
+            onError = { deleteError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("Account verification in progress", deleteError)
+    }
+
+    @Test
+    fun `pending deletion account remains blocked from enqueueing work even when status verification throws network error`() = runTest {
+        // First verify status as PENDING_DELETION
+        accountService.statusToReturn = AccountStatus(AccountDeletionState.PENDING_DELETION, "2026-08-31T12:00:00Z", true)
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertEquals(AccountDeletionState.PENDING_DELETION, viewModel.accountStatus.value?.deletionState)
+
+        // Trigger a fetchAccountStatus that fails with network error
+        accountService.fetchShouldFail = true
+        accountService.fetchExceptionToThrow = AccountLifecycleException(
+            message = "Network error",
+            isNetworkError = true
+        )
+
+        viewModel.fetchAccountStatus(onError = {})
+        advanceUntilIdle()
+
+        // Account is still recognized as pending deletion; createTask is blocked
+        var createError: String? = null
+        viewModel.createTask(
+            title = "Task On Frozen Account",
+            onError = { createError = it }
+        )
+        advanceUntilIdle()
+
+        assertEquals("Account deletion is pending", createError)
+        assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
     }
 }

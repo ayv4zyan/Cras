@@ -108,7 +108,7 @@ internal fun LaunchpadButton(
     Box(
         modifier = modifier
             .padding(horizontal = 4.dp, vertical = 2.dp)
-            .cornerRadius(12)
+            .cornerRadius(12.dp)
             .background(GlanceTheme.colors.primaryContainer)
             .clickable(
                 actionRunCallback<LaunchpadActionCallback>(

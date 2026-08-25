@@ -51,6 +51,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
@@ -179,6 +181,7 @@ class InboxViewModel(
     val createLabelError: StateFlow<String?> = _createLabelError.asStateFlow()
 
     private val outboxDrainer by lazy { OutboxDrainer(taskService, outboxStore) }
+    private val sessionMutex = Mutex()
 
     private var realtimeSubscription: RealtimeSubscription? = null
     private val queue = ArrayDeque<QueueItem>()
@@ -211,21 +214,39 @@ class InboxViewModel(
 
         viewModelScope.launch {
             authService.currentSession.collect { session ->
-                synchronized(queue) {
-                    queue.clear()
-                }
-                realtimeSubscription?.unsubscribe()
-                realtimeSubscription = null
-                _accountStatus.value = null
-                verificationState = if (accountService == null) VerificationState.VERIFIED else VerificationState.UNVERIFIED
-                clearLocalDataInMemory()
+                val previousAuth = _authState.value
+                val previousSession = (previousAuth as? AuthUiState.Authenticated)?.session
 
                 if (session != null) {
-                    _authState.value = AuthUiState.Authenticated(session)
-                    viewModelScope.launch {
-                        checkAccountStatusInternal(session)
+                    if (previousSession != null && isSameOperator(previousSession, session)) {
+                        // Token refresh for the same operator: preserve cached state, subscriptions, and queue.
+                        _authState.value = AuthUiState.Authenticated(session)
+                    } else {
+                        // Initial login or operator switch
+                        synchronized(queue) {
+                            queue.clear()
+                        }
+                        realtimeSubscription?.unsubscribe()
+                        realtimeSubscription = null
+                        _accountStatus.value = null
+                        verificationState = if (accountService == null) VerificationState.VERIFIED else VerificationState.UNVERIFIED
+                        clearLocalDataInMemory()
+
+                        _authState.value = AuthUiState.Authenticated(session)
+                        viewModelScope.launch {
+                            checkAccountStatusInternal(session)
+                        }
                     }
                 } else {
+                    // Sign out
+                    synchronized(queue) {
+                        queue.clear()
+                    }
+                    realtimeSubscription?.unsubscribe()
+                    realtimeSubscription = null
+                    _accountStatus.value = null
+                    verificationState = if (accountService == null) VerificationState.VERIFIED else VerificationState.UNVERIFIED
+                    clearLocalDataInMemory()
                     _authState.value = AuthUiState.Unauthenticated()
                 }
             }
@@ -328,13 +349,15 @@ class InboxViewModel(
         realtimeSubscription?.unsubscribe()
         realtimeSubscription = null
         viewModelScope.launch {
-            val currentAuth = _authState.value
-            // Sign-out immediately disables the Operator-bound installation and
-            // cancels its jobs before the session itself is cleared.
-            if (currentAuth is AuthUiState.Authenticated && installationSync != null) {
-                runCatching { installationSync.deactivateForSignOut(currentAuth.session) }
+            sessionMutex.withLock {
+                val currentAuth = _authState.value
+                // Sign-out immediately disables the Operator-bound installation and
+                // cancels its jobs before the session itself is cleared.
+                if (currentAuth is AuthUiState.Authenticated && installationSync != null) {
+                    runCatching { installationSync.deactivateForSignOut(currentAuth.session) }
+                }
+                authService.signOut()
             }
-            authService.signOut()
         }
     }
 
@@ -360,9 +383,13 @@ class InboxViewModel(
         if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
         if (currentAuth is AuthUiState.Authenticated) {
+            val session = currentAuth.session
             installationSync?.let { sync ->
                 viewModelScope.launch {
-                    runCatching { sync.reconcile(currentAuth.session) }
+                    sessionMutex.withLock {
+                        if (!isSessionActive(session)) return@withLock
+                        runCatching { sync.reconcile(session) }
+                    }
                 }
             }
         }
@@ -370,14 +397,16 @@ class InboxViewModel(
 
     fun setNotificationsEnabled(enabled: Boolean) {
         if (!isAccountOperationAllowed()) return
-        installationSync ?: return
+        val sync = installationSync ?: return
         val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated) return
+        val session = currentAuth.session
         viewModelScope.launch {
-            runCatching {
-                installationSync.setLocalEnabled(
-                    enabled,
-                    (currentAuth as? AuthUiState.Authenticated)?.session
-                )
+            sessionMutex.withLock {
+                if (!isSessionActive(session)) return@withLock
+                runCatching {
+                    sync.setLocalEnabled(enabled, session)
+                }
             }
         }
     }
@@ -500,7 +529,7 @@ class InboxViewModel(
     private suspend fun processQueueItem(item: QueueItem) {
         if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != item.session) {
+        if (currentAuth !is AuthUiState.Authenticated || !isSameOperator(currentAuth.session, item.session)) {
             return
         }
 
@@ -517,14 +546,14 @@ class InboxViewModel(
     private fun enqueueInvalidation(session: OperatorSession, payload: InvalidationPayload) {
         if (!isAccountOperationAllowed()) return
         synchronized(queue) {
-            val hasPendingReload = queue.any { it is QueueItem.Reload && it.session == session }
+            val hasPendingReload = queue.any { it is QueueItem.Reload && isSameOperator(it.session, session) }
             if (hasPendingReload) {
                 return
             }
 
             val existingIndex = queue.indexOfFirst { item ->
                 item is QueueItem.Invalidation &&
-                    item.session == session &&
+                    isSameOperator(item.session, session) &&
                     item.payload.resource == payload.resource &&
                     (item.payload.resource == "label" || item.payload.id == payload.id)
             }
@@ -533,7 +562,7 @@ class InboxViewModel(
                 queue[existingIndex] = QueueItem.Invalidation(session, payload)
             } else {
                 if (queue.size >= MAX_QUEUE_CAPACITY) {
-                    queue.removeAll { it.session == session }
+                    queue.removeAll { isSameOperator(it.session, session) }
                     queue.addLast(QueueItem.Reload(session))
                 } else {
                     queue.addLast(QueueItem.Invalidation(session, payload))
@@ -546,10 +575,10 @@ class InboxViewModel(
     private fun enqueueReload(session: OperatorSession) {
         if (!isAccountOperationAllowed()) return
         synchronized(queue) {
-            val alreadyHasReload = queue.any { it is QueueItem.Reload && it.session == session }
+            val alreadyHasReload = queue.any { it is QueueItem.Reload && isSameOperator(it.session, session) }
             if (!alreadyHasReload) {
                 if (queue.size >= MAX_QUEUE_CAPACITY) {
-                    queue.removeAll { it.session == session }
+                    queue.removeAll { isSameOperator(it.session, session) }
                 }
                 queue.addLast(QueueItem.Reload(session))
             }
@@ -792,6 +821,7 @@ class InboxViewModel(
             _isCreatingLabel.value = true
             _createLabelError.value = null
             try {
+                if (!isSessionActive(session)) return@launch
                 val created = labelService.createLabel(
                     session = session,
                     params = CreateLabelParams(name = name, color = color)
@@ -836,6 +866,7 @@ class InboxViewModel(
 
         viewModelScope.launch {
             try {
+                if (!isSessionActive(session)) return@launch
                 val updated = labelService.updateLabel(
                     session = session,
                     params = UpdateLabelParams(id = id, name = name, color = color)
@@ -876,6 +907,7 @@ class InboxViewModel(
 
         viewModelScope.launch {
             try {
+                if (!isSessionActive(session)) return@launch
                 labelService.deleteLabel(session, id)
                 if (!isSessionActive(session)) return@launch
                 _labels.value = _labels.value.filterNot { it.id == id }
@@ -920,6 +952,7 @@ class InboxViewModel(
 
         viewModelScope.launch {
             try {
+                if (!isSessionActive(session)) return@launch
                 val created = commentService.createComment(
                     session = session,
                     params = CreateCommentParams(taskId = taskId, content = trimmedContent)
@@ -1118,6 +1151,7 @@ class InboxViewModel(
 
         viewModelScope.launch {
             try {
+                if (!isSessionActive(session)) return@launch
                 val updatedTask = mutation(session)
                 if (!isSessionActive(session)) return@launch
                 applyTaskUpdate(updatedTask)
@@ -1265,7 +1299,9 @@ class InboxViewModel(
 
         viewModelScope.launch {
             try {
+                if (!isSessionActive(session)) return@launch
                 settingsService.updateOperatorTimedPlanType(session, type)
+                if (!isSessionActive(session)) return@launch
                 val effective = settingsService.fetchEffectiveTimedPlanType(session)
                 if (!isSessionActive(session)) return@launch
                 _operatorTimedPlanType.value = type
@@ -1287,7 +1323,10 @@ class InboxViewModel(
         }
         installationSync?.let { sync ->
             viewModelScope.launch {
-                runCatching { sync.reconcile(session) }
+                sessionMutex.withLock {
+                    if (!isSessionActive(session)) return@withLock
+                    runCatching { sync.reconcile(session) }
+                }
             }
         }
 
@@ -1300,12 +1339,16 @@ class InboxViewModel(
             onReconnect = {
                 viewModelScope.launch {
                     val auth = _authState.value
-                    if (auth is AuthUiState.Authenticated && auth.session == session) {
-                        triggerLoadTasks(session)
+                    if (auth is AuthUiState.Authenticated && isSameOperator(auth.session, session)) {
+                        triggerLoadTasks(auth.session)
                     }
                 }
             }
         )
+    }
+
+    private fun isSameOperator(a: OperatorSession?, b: OperatorSession?): Boolean {
+        return a != null && b != null && a.operatorId == b.operatorId
     }
 
     private fun isSessionActive(session: OperatorSession): Boolean =
@@ -1313,7 +1356,9 @@ class InboxViewModel(
 
     private fun isSessionCurrent(session: OperatorSession): Boolean {
         val auth = _authState.value
-        return auth is AuthUiState.Authenticated && auth.session == session && authService.currentSession.value == session
+        val currentAuthSession = (auth as? AuthUiState.Authenticated)?.session
+        val authServiceSession = authService.currentSession.value
+        return isSameOperator(currentAuthSession, session) && isSameOperator(authServiceSession, session)
     }
 
     private fun isAccountPendingDeletion(): Boolean {
@@ -1355,6 +1400,7 @@ class InboxViewModel(
         }
 
         val status = try {
+            if (!isSessionCurrent(session)) return
             accountService.fetchAccountStatus(session)
         } catch (e: CancellationException) {
             throw e
@@ -1362,6 +1408,8 @@ class InboxViewModel(
             if (!isSessionCurrent(session)) return
             if ((e is AccountLifecycleException && e.isNetworkError) || isNetworkError(e)) {
                 verificationState = VerificationState.NETWORK_ERROR
+            } else {
+                verificationState = VerificationState.UNVERIFIED
             }
             val errorMsg = e.message ?: "Failed to verify account status"
             _inboxState.value = InboxUiState.Error(errorMsg)
@@ -1391,9 +1439,12 @@ class InboxViewModel(
         if (currentAuth !is AuthUiState.Authenticated || accountService == null) {
             return
         }
+        val session = currentAuth.session
         viewModelScope.launch {
             try {
-                val session = currentAuth.session
+                if (!isSessionCurrent(session)) {
+                    return@launch
+                }
                 val status = accountService.fetchAccountStatus(session)
                 if (!isSessionCurrent(session)) {
                     return@launch
@@ -1410,11 +1461,13 @@ class InboxViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!isSessionCurrent(currentAuth.session)) {
+                if (!isSessionCurrent(session)) {
                     return@launch
                 }
                 if ((e is AccountLifecycleException && e.isNetworkError) || isNetworkError(e)) {
                     verificationState = VerificationState.NETWORK_ERROR
+                } else {
+                    verificationState = VerificationState.UNVERIFIED
                 }
                 onError(e.message ?: "Failed to fetch account status")
             }
@@ -1438,45 +1491,50 @@ class InboxViewModel(
             onError("Not authenticated or account service unavailable")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
-            try {
-                val session = currentAuth.session
-                val confirmation = accountService.requestAccountDeletion(session)
-                if (!isSessionCurrent(session)) {
-                    return@launch
+            sessionMutex.withLock {
+                if (!isSessionActive(session)) {
+                    return@withLock
                 }
-                if (!confirmation.confirmed) {
-                    onError("Account deletion was not confirmed. Please try again.")
-                    return@launch
+                try {
+                    val confirmation = accountService.requestAccountDeletion(session)
+                    if (!isSessionActive(session)) {
+                        return@withLock
+                    }
+                    if (!confirmation.confirmed) {
+                        onError("Account deletion was not confirmed. Please try again.")
+                        return@withLock
+                    }
+                    verificationState = VerificationState.VERIFIED
+                    _accountStatus.value = AccountStatus(
+                        deletionState = AccountDeletionState.PENDING_DELETION,
+                        deletionDeadline = confirmation.deletionDeadline,
+                        recoveryAvailable = true
+                    )
+                    synchronized(queue) {
+                        queue.clear()
+                    }
+                    realtimeSubscription?.unsubscribe()
+                    realtimeSubscription = null
+                    clearLocalData(session.operatorId)
+                    if (installationSync != null) {
+                        runCatching { installationSync.deactivateForSignOut(session) }
+                    }
+                    if (!isSessionCurrent(session)) {
+                        return@withLock
+                    }
+                    authService.signOut()
+                    onSuccess(confirmation)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (!isSessionCurrent(session)) {
+                        return@withLock
+                    }
+                    onError(e.message ?: "Failed to request account deletion")
                 }
-                verificationState = VerificationState.VERIFIED
-                _accountStatus.value = AccountStatus(
-                    deletionState = AccountDeletionState.PENDING_DELETION,
-                    deletionDeadline = confirmation.deletionDeadline,
-                    recoveryAvailable = true
-                )
-                synchronized(queue) {
-                    queue.clear()
-                }
-                realtimeSubscription?.unsubscribe()
-                realtimeSubscription = null
-                clearLocalData(session.operatorId)
-                if (installationSync != null) {
-                    runCatching { installationSync.deactivateForSignOut(session) }
-                }
-                if (!isSessionCurrent(session)) {
-                    return@launch
-                }
-                authService.signOut()
-                onSuccess(confirmation)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                if (!isSessionCurrent(currentAuth.session)) {
-                    return@launch
-                }
-                onError(e.message ?: "Failed to request account deletion")
             }
         }
     }
@@ -1490,10 +1548,13 @@ class InboxViewModel(
             onError("Not authenticated or account service unavailable")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
-                val session = currentAuth.session
+                if (!isSessionCurrent(session)) {
+                    return@launch
+                }
                 accountService.recoverAccount(session)
                 if (!isSessionCurrent(session)) {
                     return@launch
@@ -1505,7 +1566,7 @@ class InboxViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!isSessionCurrent(currentAuth.session)) {
+                if (!isSessionCurrent(session)) {
                     return@launch
                 }
                 onError(e.message ?: "Failed to recover account")
@@ -1522,18 +1583,22 @@ class InboxViewModel(
             onError("Not authenticated or account service unavailable")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
-                val exportJson = accountService.exportOperatorData(currentAuth.session)
-                if (!isSessionCurrent(currentAuth.session)) {
+                if (!isSessionCurrent(session)) {
+                    return@launch
+                }
+                val exportJson = accountService.exportOperatorData(session)
+                if (!isSessionCurrent(session)) {
                     return@launch
                 }
                 onSuccess(exportJson)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!isSessionCurrent(currentAuth.session)) {
+                if (!isSessionCurrent(session)) {
                     return@launch
                 }
                 onError(e.message ?: "Failed to export data")

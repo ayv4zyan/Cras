@@ -2000,4 +2000,201 @@ class InboxViewModelAccountLifecycleTest {
         assertEquals("Account deletion is pending", createError)
         assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
     }
+
+    @Test
+    fun `NETWORK_ERROR then non-network failure resets verification state and disallows mutations`() = runTest {
+        accountService.fetchShouldFail = true
+        accountService.fetchExceptionToThrow = AccountLifecycleException(
+            message = "Network error: unable to reach Cras account services.",
+            statusCode = 0,
+            code = "network_error",
+            isNetworkError = true
+        )
+
+        taskService.shouldFailWithNetworkError = true
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        // Account status verification failed with network error -> offline mutations allowed
+        var createSuccess = false
+        viewModel.createTask(
+            title = "Task Allowed During Network Error",
+            onSuccess = { createSuccess = true }
+        )
+        testDispatcher.scheduler.runCurrent()
+        assertTrue(createSuccess)
+        assertTrue(outboxStore.getOutbox(session.operatorId).any { it is OutboxItem.Create && it.task.title == "Task Allowed During Network Error" })
+
+        // Now fetchAccountStatus fails with a non-network error
+        accountService.fetchShouldFail = true
+        accountService.fetchExceptionToThrow = RuntimeException("500 Internal Server Error")
+
+        var fetchError: String? = null
+        viewModel.fetchAccountStatus(
+            onError = { fetchError = it }
+        )
+        advanceUntilIdle()
+        assertEquals("500 Internal Server Error", fetchError)
+
+        // After non-network failure, verificationState is reset to UNVERIFIED -> mutations disallowed
+        var blockedCreateError: String? = null
+        viewModel.createTask(
+            title = "Task Blocked After Non-Network Failure",
+            onError = { blockedCreateError = it }
+        )
+        testDispatcher.scheduler.runCurrent()
+
+        assertEquals("Account verification in progress", blockedCreateError)
+        assertFalse(outboxStore.getOutbox(session.operatorId).any { it is OutboxItem.Create && it.task.title == "Task Blocked After Non-Network Failure" })
+
+        var blockedSubtaskError: String? = null
+        viewModel.createSubtask(
+            parentId = "some-parent-id",
+            title = "Blocked Subtask",
+            onError = { blockedSubtaskError = it }
+        )
+        testDispatcher.scheduler.runCurrent()
+        assertEquals("Account verification in progress", blockedSubtaskError)
+
+        var blockedCompleteError: String? = null
+        viewModel.completeTask(
+            taskId = "some-task-id",
+            expectedVersion = 1,
+            onError = { blockedCompleteError = it }
+        )
+        testDispatcher.scheduler.runCurrent()
+        assertEquals("Account verification in progress", blockedCompleteError)
+    }
+
+    @Test
+    fun `requestAccountDeletion does not invoke account deletion after sign-out`() = runTest {
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        // Sign out then attempt deletion with captured auth/session
+        viewModel.signOut()
+        var deleteError: String? = null
+        viewModel.requestAccountDeletion(
+            onError = { deleteError = it }
+        )
+        advanceUntilIdle()
+
+        assertFalse(accountService.deleteCalled)
+    }
+
+    @Test
+    fun `token refresh for the same operator preserves cached state and subscriptions`() = runTest {
+        val taskId = "550e8400-e29b-41d4-a716-446655440081"
+        val labelId = "550e8400-e29b-41d4-a716-446655440082"
+        val task = Task(
+            id = taskId,
+            title = "Persisted Task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasks.add(task)
+        val label = Label(id = labelId, name = "Urgent", color = "#ff0000")
+        labelService.labels.add(label)
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.allTasks.value.size)
+        assertEquals("Persisted Task", viewModel.allTasks.value.first().title)
+        assertEquals(1, viewModel.labels.value.size)
+        assertTrue(realtimeService.isSubscribed)
+        val initialUnsubscribeCount = realtimeService.unsubscribeCount
+
+        // Token refresh: same operatorId, different accessToken
+        val refreshedSession = OperatorSession(
+            operatorId = session.operatorId,
+            email = session.email,
+            accessToken = "refreshed-jwt-token",
+            refreshToken = "new-refresh-token"
+        )
+        authService.setSession(refreshedSession)
+        advanceUntilIdle()
+
+        // Cached tasks, labels, and realtime subscriptions are preserved
+        assertEquals(1, viewModel.allTasks.value.size)
+        assertEquals("Persisted Task", viewModel.allTasks.value.first().title)
+        assertEquals(1, viewModel.labels.value.size)
+        assertEquals(initialUnsubscribeCount, realtimeService.unsubscribeCount)
+        assertTrue(realtimeService.isSubscribed)
+        assertEquals(AuthUiState.Authenticated(refreshedSession), viewModel.authState.value)
+
+        // In-flight / subsequent mutations continue to succeed
+        var updateSuccess = false
+        viewModel.updateTask(
+            params = com.cras.app.data.UpdateTaskParams(id = taskId, title = "Refreshed Title"),
+            onSuccess = { updateSuccess = true }
+        )
+        advanceUntilIdle()
+        assertTrue(updateSuccess)
+    }
+
+    @Test
+    fun `operator switch to a different operatorId clears cached state and resets subscriptions`() = runTest {
+        val taskOp1Id = "550e8400-e29b-41d4-a716-446655440083"
+        val taskOp2Id = "550e8400-e29b-41d4-a716-446655440084"
+        val taskOp1 = Task(
+            id = taskOp1Id,
+            title = "Op 1 Task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasksByOperator[session.operatorId] = mutableListOf(taskOp1)
+
+        val session2 = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator2@cras.app",
+            accessToken = "op2-token"
+        )
+        val taskOp2 = Task(
+            id = taskOp2Id,
+            title = "Op 2 Task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasksByOperator[session2.operatorId] = mutableListOf(taskOp2)
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.allTasks.value.size)
+        assertEquals("Op 1 Task", viewModel.allTasks.value.first().title)
+
+        // Switch operator
+        authService.setSession(session2)
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.allTasks.value.size)
+        assertEquals("Op 2 Task", viewModel.allTasks.value.first().title)
+        assertEquals(AuthUiState.Authenticated(session2), viewModel.authState.value)
+    }
 }

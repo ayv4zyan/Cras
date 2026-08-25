@@ -225,7 +225,7 @@ private fun TodayGlanceRowItem(row: TodayGlanceRow) {
             text = "○",
             style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant),
             modifier = GlanceModifier
-                .padding(end = 8)
+                .padding(end = 8.dp)
                 .clickable(
                     actionRunCallback<TodayGlanceCompleteTaskCallback>(
                         actionParametersOf(KEY_TASK_ID to row.taskId)

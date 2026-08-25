@@ -1282,6 +1282,10 @@ class InboxViewModel(
             try {
                 val session = currentAuth.session
                 accountService.recoverAccount(session)
+                val activeAuth = _authState.value
+                if (activeAuth !is AuthUiState.Authenticated || activeAuth.session != session || authService.currentSession.value != session) {
+                    return@launch
+                }
                 _accountStatus.value = AccountStatus(AccountDeletionState.ACTIVE, null, false)
                 startAuthenticatedSession(session)
                 onSuccess()

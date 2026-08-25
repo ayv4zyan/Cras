@@ -93,8 +93,11 @@ class InboxViewModelAccountLifecycleTest {
             return deletionConfirmationToReturn
         }
 
+        var onRecoverCallback: (suspend () -> Unit)? = null
+
         override suspend fun recoverAccount(session: OperatorSession) {
             recoverCalled = true
+            onRecoverCallback?.invoke()
             if (recoverShouldFail) {
                 throw AccountLifecycleException("Recovery window has closed", 403, "recovery_window_closed")
             }
@@ -431,5 +434,35 @@ class InboxViewModelAccountLifecycleTest {
         assertNotNull(errorReceived)
         assertTrue(errorReceived!!.contains("Recovery window has closed"))
         assertEquals(AccountDeletionState.PENDING_DELETION, viewModel.accountStatus.value?.deletionState)
+    }
+
+    @Test
+    fun `recoverAccount ignores outcome and does not activate session if user signed out in flight`() = runTest {
+        accountService.statusToReturn = AccountStatus(
+            deletionState = AccountDeletionState.PENDING_DELETION,
+            deletionDeadline = "2026-08-31T12:00:00Z",
+            recoveryAvailable = true
+        )
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        accountService.onRecoverCallback = {
+            authService.signOut()
+        }
+
+        var recoverySuccess = false
+        var errorReceived: String? = null
+        viewModel.recoverAccount(
+            onSuccess = { recoverySuccess = true },
+            onError = { errorReceived = it }
+        )
+        advanceUntilIdle()
+
+        assertTrue(accountService.recoverCalled)
+        assertFalse(recoverySuccess)
+        assertNull(errorReceived)
+        assertNull(viewModel.accountStatus.value)
+        assertTrue(viewModel.authState.value is AuthUiState.Unauthenticated)
     }
 }

@@ -31,6 +31,7 @@ import com.cras.app.notification.NotificationInstallationSync
 import com.cras.app.notification.PlatformPermissionState
 import com.cras.app.voice.VoiceRecordingStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -135,11 +136,17 @@ class InboxViewModelAccountLifecycleTest {
     private class FakeTaskService : TaskService {
         val tasks = mutableListOf<Task>()
         var fetchTasksCalled = false
+        var onFetchTasksCallback: (suspend () -> Unit)? = null
+        var onFetchTaskByIdCallback: (suspend (String) -> Unit)? = null
         override suspend fun fetchTasks(session: OperatorSession): List<Task> {
             fetchTasksCalled = true
+            onFetchTasksCallback?.invoke()
             return tasks.toList()
         }
-        override suspend fun fetchTaskById(session: OperatorSession, id: String): Task? = tasks.find { it.id == id }
+        override suspend fun fetchTaskById(session: OperatorSession, id: String): Task? {
+            onFetchTaskByIdCallback?.invoke(id)
+            return tasks.find { it.id == id }
+        }
         override suspend fun createTask(session: OperatorSession, params: CreateTaskParams): Task {
             val task = Task(
                 id = params.id ?: UUID.randomUUID().toString(),
@@ -178,7 +185,11 @@ class InboxViewModelAccountLifecycleTest {
     private class FakeLabelService : LabelService {
         val labels = mutableListOf<Label>()
         var onActionCallback: (suspend () -> Unit)? = null
-        override suspend fun fetchLabels(session: OperatorSession) = labels.toList()
+        var onFetchCallback: (suspend () -> Unit)? = null
+        override suspend fun fetchLabels(session: OperatorSession): List<Label> {
+            onFetchCallback?.invoke()
+            return labels.toList()
+        }
         override suspend fun createLabel(session: OperatorSession, params: com.cras.app.data.CreateLabelParams): Label {
             onActionCallback?.invoke()
             val label = Label(id = UUID.randomUUID().toString(), name = params.name, color = params.color)
@@ -201,7 +212,11 @@ class InboxViewModelAccountLifecycleTest {
     private class FakeCommentService : CommentService {
         val comments = mutableListOf<Comment>()
         var onActionCallback: (suspend () -> Unit)? = null
-        override suspend fun fetchComments(session: OperatorSession, taskId: String?) = comments.toList()
+        var onFetchCallback: (suspend () -> Unit)? = null
+        override suspend fun fetchComments(session: OperatorSession, taskId: String?): List<Comment> {
+            onFetchCallback?.invoke()
+            return if (taskId != null) comments.filter { it.taskId == taskId } else comments.toList()
+        }
         override suspend fun createComment(session: OperatorSession, params: com.cras.app.data.CreateCommentParams): Comment {
             onActionCallback?.invoke()
             val comment = Comment(
@@ -1302,5 +1317,295 @@ class InboxViewModelAccountLifecycleTest {
         assertEquals("Account deletion is pending", createTaskError)
         assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
         assertNull(authService.currentSession.value)
+    }
+
+    @Test
+    fun `fetchAccountStatus ignores outcome and does not invoke onSuccess if session switched during handlePendingDeletion`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        accountService.statusToReturn = AccountStatus(
+            deletionState = AccountDeletionState.PENDING_DELETION,
+            deletionDeadline = "2026-08-31T12:00:00Z",
+            recoveryAvailable = true
+        )
+
+        installationService.onDeactivateCallback = {
+            installationService.onDeactivateCallback = null
+            authService.setSession(sessionB)
+        }
+
+        var fetchSuccess = false
+        var errorReceived: String? = null
+        viewModel.fetchAccountStatus(
+            onSuccess = { fetchSuccess = true },
+            onError = { errorReceived = it }
+        )
+        advanceUntilIdle()
+
+        assertFalse(fetchSuccess)
+        assertNull(errorReceived)
+        assertEquals(sessionB, authService.currentSession.value)
+        assertEquals(sessionB, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
+    }
+
+    @Test
+    fun `requestAccountDeletion does not sign out replacement session or invoke onSuccess if session switched during deactivation`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        installationService.onDeactivateCallback = {
+            installationService.onDeactivateCallback = null
+            authService.setSession(sessionB)
+        }
+
+        var deleteSuccess = false
+        var errorReceived: String? = null
+        viewModel.requestAccountDeletion(
+            onSuccess = { deleteSuccess = true },
+            onError = { errorReceived = it }
+        )
+        advanceUntilIdle()
+
+        assertTrue(accountService.deleteCalled)
+        assertFalse(deleteSuccess)
+        assertNull(errorReceived)
+        assertEquals(sessionB, authService.currentSession.value)
+        assertEquals(sessionB, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
+    }
+
+    @Test
+    fun `handleInvalidationEvent task created or updated does not apply freshTask to new session if session switched during fetchTaskById`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val staleTaskId = "550e8400-e29b-41d4-a716-446655440099"
+        val staleTask = Task(
+            id = staleTaskId,
+            title = "Stale Task Session A",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasks.add(staleTask)
+
+        taskService.onFetchTaskByIdCallback = {
+            taskService.onFetchTaskByIdCallback = null
+            taskService.tasks.clear()
+            authService.setSession(sessionB)
+        }
+
+        realtimeService.emitInvalidate(
+            InvalidationPayload(resource = "task", operation = "created", id = staleTaskId)
+        )
+        advanceUntilIdle()
+
+        val taskIds = viewModel.allTasks.value.map { it.id }
+        assertFalse(taskIds.contains(staleTaskId))
+        assertEquals(sessionB, authService.currentSession.value)
+    }
+
+    @Test
+    fun `handleInvalidationEvent label does not overwrite labels if session switched during fetchLabels`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val staleLabelId = "550e8400-e29b-41d4-a716-446655440091"
+        val staleLabel = Label(id = staleLabelId, name = "Label A", color = "#ff0000")
+        labelService.labels.add(staleLabel)
+
+        labelService.onFetchCallback = {
+            labelService.onFetchCallback = null
+            labelService.labels.clear()
+            authService.setSession(sessionB)
+        }
+
+        realtimeService.emitInvalidate(
+            InvalidationPayload(resource = "label", operation = "created", id = staleLabelId)
+        )
+        advanceUntilIdle()
+
+        assertFalse(viewModel.labels.value.any { it.id == staleLabelId })
+        assertEquals(sessionB, authService.currentSession.value)
+    }
+
+    @Test
+    fun `handleInvalidationEvent comment does not overwrite comments if session switched during fetchComments`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        val selectedTask = Task(
+            id = "550e8400-e29b-41d4-a716-446655440011",
+            title = "Selected Task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasks.add(selectedTask)
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.selectTask(selectedTask)
+
+        val staleCommentId = "550e8400-e29b-41d4-a716-446655440092"
+        val staleComment = Comment(id = staleCommentId, taskId = selectedTask.id, content = "Stale comment", createdAt = "2026-08-25T09:00:00Z")
+        commentService.comments.add(staleComment)
+
+        commentService.onFetchCallback = {
+            commentService.onFetchCallback = null
+            commentService.comments.clear()
+            authService.setSession(sessionB)
+        }
+
+        realtimeService.emitInvalidate(
+            InvalidationPayload(resource = "comment", operation = "created", id = staleCommentId, taskId = selectedTask.id)
+        )
+        advanceUntilIdle()
+
+        assertFalse(viewModel.comments.value.any { it.id == staleCommentId })
+        assertEquals(sessionB, authService.currentSession.value)
+    }
+
+    @Test
+    fun `task operations and mutations fail closed while account status verification is suspended and in-flight`() = runTest {
+        val fetchGate = CompletableDeferred<Unit>()
+        accountService.onFetchCallback = {
+            fetchGate.await()
+        }
+
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+
+        // Give coroutines time to start checkAccountStatusInternal and suspend at fetchGate
+        testDispatcher.scheduler.runCurrent()
+
+        // Session is published as Authenticated, but accountStatus is still null (verification in-flight)
+        assertEquals(session, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
+        assertNull(viewModel.accountStatus.value)
+
+        // 1. loadTasks does not fetch tasks while account status is unverified
+        viewModel.loadTasks()
+        testDispatcher.scheduler.runCurrent()
+        assertFalse(taskService.fetchTasksCalled)
+
+        // 2. createTask rejects operation and does not write to outbox
+        var createError: String? = null
+        viewModel.createTask(
+            title = "Task During Verification",
+            onError = { createError = it }
+        )
+        testDispatcher.scheduler.runCurrent()
+        assertEquals("Account verification in progress", createError)
+        assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
+
+        // 3. createSubtask rejects operation
+        var subtaskError: String? = null
+        viewModel.createSubtask(
+            parentId = "parent-id",
+            title = "Subtask During Verification",
+            onError = { subtaskError = it }
+        )
+        testDispatcher.scheduler.runCurrent()
+        assertEquals("Account verification in progress", subtaskError)
+        assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
+
+        // 4. completeTask rejects operation
+        var completeError: String? = null
+        viewModel.completeTask(
+            taskId = "task-id",
+            expectedVersion = 1,
+            onError = { completeError = it }
+        )
+        testDispatcher.scheduler.runCurrent()
+        assertEquals("Account verification in progress", completeError)
+        assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
+
+        // 5. createLabel rejects operation
+        var labelError: String? = null
+        viewModel.createLabel(
+            name = "Label During Verification",
+            color = "#ff0000",
+            onError = { labelError = it }
+        )
+        testDispatcher.scheduler.runCurrent()
+        assertEquals("Account verification in progress", labelError)
+        assertTrue(labelService.labels.isEmpty())
+
+        // 6. createComment rejects operation
+        var commentError: String? = null
+        viewModel.createComment(
+            taskId = "task-id",
+            content = "Comment During Verification",
+            onError = { commentError = it }
+        )
+        testDispatcher.scheduler.runCurrent()
+        assertEquals("Account verification in progress", commentError)
+        assertTrue(commentService.comments.isEmpty())
+
+        // 7. requestAccountDeletion rejects operation
+        var deleteError: String? = null
+        viewModel.requestAccountDeletion(
+            onError = { deleteError = it }
+        )
+        testDispatcher.scheduler.runCurrent()
+        assertEquals("Account verification in progress", deleteError)
+
+        // Now resume fetchAccountStatus
+        fetchGate.complete(Unit)
+        advanceUntilIdle()
+
+        // Account status verified as ACTIVE, authenticated session now started
+        assertEquals(AccountDeletionState.ACTIVE, viewModel.accountStatus.value?.deletionState)
+        assertTrue(taskService.fetchTasksCalled)
+
+        // Task operations now operate normally
+        var createSuccess = false
+        viewModel.createTask(
+            title = "Verified Task",
+            onSuccess = { createSuccess = true }
+        )
+        advanceUntilIdle()
+        assertTrue(createSuccess)
+        assertEquals(1, viewModel.allTasks.value.size)
+        assertEquals("Verified Task", viewModel.allTasks.value.first().title)
     }
 }

@@ -248,7 +248,7 @@ class InboxViewModel(
      * reconciliation.
      */
     fun focusRoutedTask(taskId: String) {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         val match = _allTasks.value.firstOrNull { it.id == taskId }
         if (match != null) {
             routedTaskId = null
@@ -271,7 +271,7 @@ class InboxViewModel(
      * retained and executed once authenticated and the matching task is loaded.
      */
     fun completeRoutedTask(taskId: String) {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
         val match = _allTasks.value.firstOrNull { it.id == taskId }
         if (currentAuth is AuthUiState.Authenticated && match != null) {
@@ -322,7 +322,7 @@ class InboxViewModel(
     }
 
     fun loadTasks() {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
         if (currentAuth is AuthUiState.Authenticated) {
             triggerLoadTasks(currentAuth.session)
@@ -340,7 +340,7 @@ class InboxViewModel(
      * session is active, per the shared installation lifecycle.
      */
     fun reconcileInstallation() {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
         if (currentAuth is AuthUiState.Authenticated) {
             installationSync?.let { sync ->
@@ -352,7 +352,7 @@ class InboxViewModel(
     }
 
     fun setNotificationsEnabled(enabled: Boolean) {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         installationSync ?: return
         val currentAuth = _authState.value
         viewModelScope.launch {
@@ -366,7 +366,7 @@ class InboxViewModel(
     }
 
     private fun triggerLoadTasks(session: OperatorSession) {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         enqueueReload(session)
     }
 
@@ -405,7 +405,7 @@ class InboxViewModel(
     }
 
     fun applyTaskUpdate(updated: Task) {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         _allTasks.update { current ->
             val exists = current.any { it.id == updated.id }
             if (!exists) {
@@ -436,7 +436,7 @@ class InboxViewModel(
     }
 
     fun reconcileFreshTasks(freshTasks: List<Task>) {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
         val outbox = if (currentAuth is AuthUiState.Authenticated) {
             outboxStore.getOutbox(currentAuth.session.operatorId)
@@ -476,12 +476,12 @@ class InboxViewModel(
     }
 
     private fun handleInvalidationEvent(session: OperatorSession, event: InvalidationPayload) {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         enqueueInvalidation(session, event)
     }
 
     private suspend fun processQueueItem(item: QueueItem) {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != item.session) {
             return
@@ -498,7 +498,7 @@ class InboxViewModel(
     }
 
     private fun enqueueInvalidation(session: OperatorSession, payload: InvalidationPayload) {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         synchronized(queue) {
             val hasPendingReload = queue.any { it is QueueItem.Reload && it.session == session }
             if (hasPendingReload) {
@@ -527,7 +527,7 @@ class InboxViewModel(
     }
 
     private fun enqueueReload(session: OperatorSession) {
-        if (isAccountPendingDeletion()) return
+        if (!isAccountOperationAllowed()) return
         synchronized(queue) {
             val alreadyHasReload = queue.any { it is QueueItem.Reload && it.session == session }
             if (!alreadyHasReload) {
@@ -541,8 +541,7 @@ class InboxViewModel(
     }
 
     private suspend fun handleInvalidationEventInternal(session: OperatorSession, event: InvalidationPayload) {
-        val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session || isAccountPendingDeletion()) return
+        if (!isSessionActive(session)) return
 
         when (event.resource) {
             "task" -> {
@@ -550,10 +549,12 @@ class InboxViewModel(
                     "updated", "created" -> {
                         try {
                             val freshTask = taskService.fetchTaskById(session, event.id)
+                            if (!isSessionActive(session)) return
                             if (freshTask != null) {
                                 applyTaskUpdate(freshTask)
                             } else {
                                 val freshTasks = taskService.fetchTasks(session)
+                                if (!isSessionActive(session)) return
                                 reconcileFreshTasks(freshTasks)
                             }
                         } catch (e: CancellationException) {
@@ -562,12 +563,14 @@ class InboxViewModel(
                             val freshTasks = runCatching { taskService.fetchTasks(session) }
                                 .onFailure { if (it is CancellationException) throw it }
                                 .getOrNull()
+                            if (!isSessionActive(session)) return
                             if (freshTasks != null) {
                                 reconcileFreshTasks(freshTasks)
                             }
                         }
                     }
                     "deleted" -> {
+                        if (!isSessionActive(session)) return
                         _allTasks.update { current ->
                             current.filterNot { it.id == event.id }
                         }
@@ -587,6 +590,7 @@ class InboxViewModel(
                 val freshLabels = runCatching { labelService.fetchLabels(session) }
                     .onFailure { if (it is CancellationException) throw it }
                     .getOrNull()
+                if (!isSessionActive(session)) return
                 if (freshLabels != null) {
                     _labels.value = freshLabels
                 }
@@ -597,6 +601,7 @@ class InboxViewModel(
                     val freshComments = runCatching { commentService.fetchComments(session) }
                         .onFailure { if (it is CancellationException) throw it }
                         .getOrNull()
+                    if (!isSessionActive(session)) return
                     if (freshComments != null) {
                         _comments.value = freshComments
                         _commentsError.value = null
@@ -607,15 +612,15 @@ class InboxViewModel(
     }
 
     private suspend fun loadSettingsInternal(session: OperatorSession) {
-        if (settingsService == null || isAccountPendingDeletion()) return
+        if (settingsService == null || !isSessionActive(session)) return
         try {
             val settings = settingsService.fetchOperatorSettings(session)
             val effective = settingsService.fetchEffectiveTimedPlanType(session)
-            val currentAuth = _authState.value
-            if (currentAuth is AuthUiState.Authenticated && currentAuth.session == session && !isAccountPendingDeletion()) {
-                _operatorTimedPlanType.value = settings?.defaultTimedPlanType
-                _effectiveTimedPlanType.value = effective
+            if (!isSessionActive(session)) {
+                return
             }
+            _operatorTimedPlanType.value = settings?.defaultTimedPlanType
+            _effectiveTimedPlanType.value = effective
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -688,7 +693,7 @@ class InboxViewModel(
     }
 
     private suspend fun loadTasksInternal(session: OperatorSession) {
-        if (isAccountPendingDeletion()) return
+        if (!isSessionActive(session)) return
         if (_inboxState.value !is InboxUiState.Success) {
             _inboxState.value = InboxUiState.Loading
         }
@@ -708,8 +713,7 @@ class InboxViewModel(
             val commentsResult = runCatching { commentService.fetchComments(session) }
                 .onFailure { if (it is CancellationException) throw it }
 
-            val currentAuth = _authState.value
-            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session || isAccountPendingDeletion()) {
+            if (!isSessionActive(session)) {
                 return
             }
 
@@ -726,8 +730,7 @@ class InboxViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            val currentAuth = _authState.value
-            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session || isAccountPendingDeletion()) {
+            if (!isSessionActive(session)) {
                 return
             }
             if (isNetworkError(e)) {
@@ -755,6 +758,10 @@ class InboxViewModel(
     ) {
         if (isAccountPendingDeletion()) {
             onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
             return
         }
         val currentAuth = _authState.value
@@ -799,6 +806,10 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) {
             onError("Not authenticated")
@@ -835,6 +846,10 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) {
             onError("Not authenticated")
@@ -867,6 +882,10 @@ class InboxViewModel(
     ) {
         if (isAccountPendingDeletion()) {
             onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
             return
         }
         val trimmedContent = content.trim()
@@ -909,6 +928,10 @@ class InboxViewModel(
     ) {
         if (isAccountPendingDeletion()) {
             onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
             return
         }
         val trimmedTitle = title.trim()
@@ -986,6 +1009,10 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
 
@@ -1061,6 +1088,10 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) {
             onError("Not authenticated")
@@ -1116,6 +1147,10 @@ class InboxViewModel(
     ) {
         if (isAccountPendingDeletion()) {
             onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
             return
         }
         val currentAuth = _authState.value
@@ -1200,6 +1235,10 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated || settingsService == null) {
             onError("Not authenticated or settings unavailable")
@@ -1253,7 +1292,7 @@ class InboxViewModel(
     }
 
     private fun isSessionActive(session: OperatorSession): Boolean =
-        isSessionCurrent(session) && !isAccountPendingDeletion()
+        isSessionCurrent(session) && isAccountOperationAllowed()
 
     private fun isSessionCurrent(session: OperatorSession): Boolean {
         val auth = _authState.value
@@ -1262,6 +1301,14 @@ class InboxViewModel(
 
     private fun isAccountPendingDeletion(): Boolean {
         return _accountStatus.value?.deletionState == AccountDeletionState.PENDING_DELETION
+    }
+
+    private fun isAccountStatusVerified(): Boolean {
+        return accountService == null || _accountStatus.value != null
+    }
+
+    private fun isAccountOperationAllowed(): Boolean {
+        return isAccountStatusVerified() && !isAccountPendingDeletion()
     }
 
     private suspend fun handlePendingDeletion(session: OperatorSession) {
@@ -1326,6 +1373,9 @@ class InboxViewModel(
                 _accountStatus.value = status
                 if (status.deletionState == AccountDeletionState.PENDING_DELETION) {
                     handlePendingDeletion(session)
+                    if (!isSessionCurrent(session)) {
+                        return@launch
+                    }
                 }
                 onSuccess(status)
             } catch (e: CancellationException) {
@@ -1345,6 +1395,10 @@ class InboxViewModel(
     ) {
         if (isAccountPendingDeletion()) {
             onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
             return
         }
         val currentAuth = _authState.value
@@ -1377,6 +1431,9 @@ class InboxViewModel(
                 clearLocalData(session.operatorId)
                 if (installationSync != null) {
                     runCatching { installationSync.deactivateForSignOut(session) }
+                }
+                if (!isSessionCurrent(session)) {
+                    return@launch
                 }
                 authService.signOut()
                 onSuccess(confirmation)

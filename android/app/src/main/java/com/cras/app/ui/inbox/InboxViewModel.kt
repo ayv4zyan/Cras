@@ -208,6 +208,8 @@ class InboxViewModel(
                 }
                 realtimeSubscription?.unsubscribe()
                 realtimeSubscription = null
+                _accountStatus.value = null
+                clearLocalDataInMemory()
 
                 if (session != null) {
                     _authState.value = AuthUiState.Authenticated(session)
@@ -216,8 +218,6 @@ class InboxViewModel(
                     }
                 } else {
                     _authState.value = AuthUiState.Unauthenticated()
-                    _accountStatus.value = null
-                    clearLocalDataInMemory()
                 }
             }
         }
@@ -629,8 +629,7 @@ class InboxViewModel(
         onGeneralError: ((String) -> Unit)? = null,
         onNetworkError: ((String) -> Unit)? = null
     ) {
-        val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session || isAccountPendingDeletion()) {
+        if (!isSessionCurrent(session) || isAccountPendingDeletion()) {
             return
         }
 
@@ -638,8 +637,7 @@ class InboxViewModel(
             session = session,
             callbacks = object : OutboxDrainCallbacks {
                 private fun isSessionValid(): Boolean {
-                    val current = _authState.value
-                    return current is AuthUiState.Authenticated && current.session == session && !isAccountPendingDeletion()
+                    return isSessionCurrent(session) && !isAccountPendingDeletion()
                 }
 
                 override suspend fun onTaskCreated(task: Task) {
@@ -764,20 +762,23 @@ class InboxViewModel(
             onError("Not authenticated")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             _isCreatingLabel.value = true
             _createLabelError.value = null
             try {
                 val created = labelService.createLabel(
-                    session = currentAuth.session,
+                    session = session,
                     params = CreateLabelParams(name = name, color = color)
                 )
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 _labels.value = _labels.value + created
                 onSuccess(created)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 val errorMsg = e.message ?: "Failed to create label"
                 _createLabelError.value = errorMsg
                 onError(errorMsg)
@@ -803,19 +804,22 @@ class InboxViewModel(
             onError("Not authenticated")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
                 val updated = labelService.updateLabel(
-                    session = currentAuth.session,
+                    session = session,
                     params = UpdateLabelParams(id = id, name = name, color = color)
                 )
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 _labels.value = _labels.value.map { if (it.id == id) updated else it }
-                triggerLoadTasks(currentAuth.session)
+                triggerLoadTasks(session)
                 onSuccess(updated)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 val errorMsg = e.message ?: "Failed to update label"
                 onError(errorMsg)
             }
@@ -836,16 +840,19 @@ class InboxViewModel(
             onError("Not authenticated")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
-                labelService.deleteLabel(currentAuth.session, id)
+                labelService.deleteLabel(session, id)
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 _labels.value = _labels.value.filterNot { it.id == id }
-                triggerLoadTasks(currentAuth.session)
+                triggerLoadTasks(session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 val errorMsg = e.message ?: "Failed to delete label"
                 onError(errorMsg)
             }
@@ -873,18 +880,21 @@ class InboxViewModel(
             onError("Not authenticated")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
                 val created = commentService.createComment(
-                    session = currentAuth.session,
+                    session = session,
                     params = CreateCommentParams(taskId = taskId, content = trimmedContent)
                 )
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 _comments.value = _comments.value + created
                 onSuccess(created)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 val errorMsg = e.message ?: "Failed to create comment"
                 onError(errorMsg)
             }
@@ -1056,19 +1066,22 @@ class InboxViewModel(
             onError("Not authenticated")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
-                val updatedTask = mutation(currentAuth.session)
+                val updatedTask = mutation(session)
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 applyTaskUpdate(updatedTask)
-                triggerLoadTasks(currentAuth.session)
+                triggerLoadTasks(session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 val errorMsg = e.message ?: defaultError
                 // Reload canonical state after a conflict or error to avoid stale overwrites
-                triggerLoadTasks(currentAuth.session)
+                triggerLoadTasks(session)
                 onError(errorMsg)
             }
         }
@@ -1192,17 +1205,20 @@ class InboxViewModel(
             onError("Not authenticated or settings unavailable")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
-                settingsService.updateOperatorTimedPlanType(currentAuth.session, type)
-                val effective = settingsService.fetchEffectiveTimedPlanType(currentAuth.session)
+                settingsService.updateOperatorTimedPlanType(session, type)
+                val effective = settingsService.fetchEffectiveTimedPlanType(session)
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 _operatorTimedPlanType.value = type
                 _effectiveTimedPlanType.value = effective
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
                 onError(e.message ?: "Failed to update default timed plan type")
             }
         }
@@ -1324,6 +1340,10 @@ class InboxViewModel(
         onSuccess: (DeletionConfirmation) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated || accountService == null) {
             onError("Not authenticated or account service unavailable")
@@ -1341,6 +1361,16 @@ class InboxViewModel(
                     onError("Account deletion was not confirmed. Please try again.")
                     return@launch
                 }
+                _accountStatus.value = AccountStatus(
+                    deletionState = AccountDeletionState.PENDING_DELETION,
+                    deletionDeadline = confirmation.deletionDeadline,
+                    recoveryAvailable = true
+                )
+                synchronized(queue) {
+                    queue.clear()
+                }
+                realtimeSubscription?.unsubscribe()
+                realtimeSubscription = null
                 clearLocalData(session.operatorId)
                 if (installationSync != null) {
                     runCatching { installationSync.deactivateForSignOut(session) }
@@ -1424,8 +1454,6 @@ class InboxViewModel(
     }
 
     private fun clearLocalDataInMemory() {
-        routedTaskId = null
-        pendingCompletionTaskId = null
         _allTasks.value = emptyList()
         _inboxState.value = InboxUiState.Empty
         _todayState.value = TodayUiState.Empty

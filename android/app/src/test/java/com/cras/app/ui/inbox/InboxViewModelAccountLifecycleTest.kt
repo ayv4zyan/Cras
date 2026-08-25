@@ -157,21 +157,76 @@ class InboxViewModelAccountLifecycleTest {
             tasks.add(task)
             return task
         }
-        override suspend fun updateTask(session: OperatorSession, params: com.cras.app.data.UpdateTaskParams): Task = tasks.first()
+        var onUpdateCallback: (suspend () -> Unit)? = null
+        override suspend fun updateTask(session: OperatorSession, params: com.cras.app.data.UpdateTaskParams): Task {
+            onUpdateCallback?.invoke()
+            val existing = tasks.first { it.id == params.id }
+            val updated = existing.copy(
+                title = params.title ?: existing.title,
+                description = if (params.description != null) params.description else existing.description,
+                priority = params.priority ?: existing.priority,
+                version = existing.version + 1
+            )
+            val index = tasks.indexOfFirst { it.id == params.id }
+            tasks[index] = updated
+            return updated
+        }
         override suspend fun completeTask(session: OperatorSession, taskId: String, expectedVersion: Int, completedAt: String?): Task = tasks.first()
         override suspend fun uncompleteTask(session: OperatorSession, taskId: String, expectedVersion: Int): Task = tasks.first()
     }
 
     private class FakeLabelService : LabelService {
-        override suspend fun fetchLabels(session: OperatorSession) = emptyList<Label>()
-        override suspend fun createLabel(session: OperatorSession, params: com.cras.app.data.CreateLabelParams) = throw NotImplementedError()
-        override suspend fun updateLabel(session: OperatorSession, params: com.cras.app.data.UpdateLabelParams) = throw NotImplementedError()
-        override suspend fun deleteLabel(session: OperatorSession, id: String) = throw NotImplementedError()
+        val labels = mutableListOf<Label>()
+        var onActionCallback: (suspend () -> Unit)? = null
+        override suspend fun fetchLabels(session: OperatorSession) = labels.toList()
+        override suspend fun createLabel(session: OperatorSession, params: com.cras.app.data.CreateLabelParams): Label {
+            onActionCallback?.invoke()
+            val label = Label(id = UUID.randomUUID().toString(), name = params.name, color = params.color)
+            labels.add(label)
+            return label
+        }
+        override suspend fun updateLabel(session: OperatorSession, params: com.cras.app.data.UpdateLabelParams): Label {
+            onActionCallback?.invoke()
+            val label = Label(id = params.id, name = params.name ?: "Updated", color = params.color ?: "#000000")
+            val index = labels.indexOfFirst { it.id == params.id }
+            if (index != -1) labels[index] = label else labels.add(label)
+            return label
+        }
+        override suspend fun deleteLabel(session: OperatorSession, id: String) {
+            onActionCallback?.invoke()
+            labels.removeAll { it.id == id }
+        }
     }
 
     private class FakeCommentService : CommentService {
-        override suspend fun fetchComments(session: OperatorSession, taskId: String?) = emptyList<Comment>()
-        override suspend fun createComment(session: OperatorSession, params: com.cras.app.data.CreateCommentParams) = throw NotImplementedError()
+        val comments = mutableListOf<Comment>()
+        var onActionCallback: (suspend () -> Unit)? = null
+        override suspend fun fetchComments(session: OperatorSession, taskId: String?) = comments.toList()
+        override suspend fun createComment(session: OperatorSession, params: com.cras.app.data.CreateCommentParams): Comment {
+            onActionCallback?.invoke()
+            val comment = Comment(
+                id = UUID.randomUUID().toString(),
+                taskId = params.taskId,
+                content = params.content,
+                createdAt = "2026-08-25T10:00:00Z"
+            )
+            comments.add(comment)
+            return comment
+        }
+    }
+
+    private class FakeSettingsService : SettingsService {
+        var timedPlanType: TimedPlanType? = null
+        var onActionCallback: (suspend () -> Unit)? = null
+        override suspend fun fetchOperatorSettings(session: OperatorSession) = null
+        override suspend fun fetchDeploymentConfig(session: OperatorSession) = null
+        override suspend fun fetchEffectiveTimedPlanType(session: OperatorSession): TimedPlanType {
+            return timedPlanType ?: TimedPlanType.INSTANT
+        }
+        override suspend fun updateOperatorTimedPlanType(session: OperatorSession, type: TimedPlanType?) {
+            onActionCallback?.invoke()
+            timedPlanType = type
+        }
     }
 
     private class FakeVoiceRecordingStore : VoiceRecordingStore {
@@ -220,6 +275,7 @@ class InboxViewModelAccountLifecycleTest {
 
     private class FakeInstallationService : InstallationService {
         val deactivatedIds = mutableListOf<String>()
+        var onDeactivateCallback: (() -> Unit)? = null
 
         override suspend fun registerOrUpdate(
             session: OperatorSession,
@@ -235,6 +291,7 @@ class InboxViewModelAccountLifecycleTest {
 
         override suspend fun deactivate(session: OperatorSession, installationId: String): Boolean {
             deactivatedIds.add(installationId)
+            onDeactivateCallback?.invoke()
             return true
         }
     }
@@ -242,6 +299,9 @@ class InboxViewModelAccountLifecycleTest {
     private lateinit var authService: FakeAuthService
     private lateinit var accountService: FakeAccountService
     private lateinit var taskService: FakeTaskService
+    private lateinit var labelService: FakeLabelService
+    private lateinit var commentService: FakeCommentService
+    private lateinit var settingsService: FakeSettingsService
     private lateinit var outboxStore: InMemoryOutboxStore
     private lateinit var voiceRecordingStore: FakeVoiceRecordingStore
     private lateinit var realtimeService: FakeRealtimeService
@@ -262,6 +322,9 @@ class InboxViewModelAccountLifecycleTest {
         authService = FakeAuthService()
         accountService = FakeAccountService()
         taskService = FakeTaskService()
+        labelService = FakeLabelService()
+        commentService = FakeCommentService()
+        settingsService = FakeSettingsService()
         outboxStore = InMemoryOutboxStore()
         voiceRecordingStore = FakeVoiceRecordingStore()
         realtimeService = FakeRealtimeService()
@@ -284,8 +347,9 @@ class InboxViewModelAccountLifecycleTest {
         return InboxViewModel(
             authService = authService,
             taskService = taskService,
-            labelService = FakeLabelService(),
-            commentService = FakeCommentService(),
+            labelService = labelService,
+            commentService = commentService,
+            settingsService = settingsService,
             accountService = accountService,
             realtimeService = realtimeService,
             installationSync = installationSync,
@@ -945,5 +1009,296 @@ class InboxViewModelAccountLifecycleTest {
         assertTrue(viewModel.allTasks.value.isEmpty())
         assertNull(viewModel.accountStatus.value)
         assertTrue(viewModel.authState.value is AuthUiState.Unauthenticated)
+    }
+
+    @Test
+    fun `createLabel ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        labelService.onActionCallback = {
+            authService.signOut()
+        }
+
+        var labelCreated: Label? = null
+        var labelError: String? = null
+        viewModel.createLabel(
+            name = "Urgent",
+            color = "#ff0000",
+            onSuccess = { labelCreated = it },
+            onError = { labelError = it }
+        )
+        advanceUntilIdle()
+
+        assertNull(labelCreated)
+        assertNull(labelError)
+        assertTrue(viewModel.labels.value.isEmpty())
+    }
+
+    @Test
+    fun `updateLabel ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        val labelId = "550e8400-e29b-41d4-a716-446655440091"
+        labelService.labels.add(Label(id = labelId, name = "Initial", color = "#000000"))
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        labelService.onActionCallback = {
+            authService.signOut()
+        }
+
+        var labelUpdated: Label? = null
+        var updateError: String? = null
+        viewModel.updateLabel(
+            id = labelId,
+            name = "Renamed",
+            onSuccess = { labelUpdated = it },
+            onError = { updateError = it }
+        )
+        advanceUntilIdle()
+
+        assertNull(labelUpdated)
+        assertNull(updateError)
+    }
+
+    @Test
+    fun `deleteLabel ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        val labelId = "550e8400-e29b-41d4-a716-446655440092"
+        labelService.labels.add(Label(id = labelId, name = "ToDelete", color = "#000000"))
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        labelService.onActionCallback = {
+            authService.signOut()
+        }
+
+        var deleteSuccess = false
+        var deleteError: String? = null
+        viewModel.deleteLabel(
+            id = labelId,
+            onSuccess = { deleteSuccess = true },
+            onError = { deleteError = it }
+        )
+        advanceUntilIdle()
+
+        assertFalse(deleteSuccess)
+        assertNull(deleteError)
+    }
+
+    @Test
+    fun `createComment ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        commentService.onActionCallback = {
+            authService.signOut()
+        }
+
+        val taskId = "550e8400-e29b-41d4-a716-446655440093"
+        var commentCreated: Comment? = null
+        var commentError: String? = null
+        viewModel.createComment(
+            taskId = taskId,
+            content = "New comment",
+            onSuccess = { commentCreated = it },
+            onError = { commentError = it }
+        )
+        advanceUntilIdle()
+
+        assertNull(commentCreated)
+        assertNull(commentError)
+        assertTrue(viewModel.comments.value.isEmpty())
+    }
+
+    @Test
+    fun `updateOperatorTimedPlanType ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        settingsService.onActionCallback = {
+            authService.signOut()
+        }
+
+        var updateSuccess = false
+        var updateError: String? = null
+        viewModel.updateOperatorTimedPlanType(
+            type = TimedPlanType.FLOATING,
+            onSuccess = { updateSuccess = true },
+            onError = { updateError = it }
+        )
+        advanceUntilIdle()
+
+        assertFalse(updateSuccess)
+        assertNull(updateError)
+        assertNull(viewModel.operatorTimedPlanType.value)
+    }
+
+    @Test
+    fun `updateTask ignores outcome and does not write state or invoke success if session changed or deleted in flight`() = runTest {
+        val task = Task(
+            id = "550e8400-e29b-41d4-a716-446655440055",
+            title = "Initial Title",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-25T09:00:00Z",
+            updatedAt = "2026-08-25T09:00:00Z",
+            version = 1
+        )
+        taskService.tasks.add(task)
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.allTasks.value.size)
+
+        taskService.onUpdateCallback = {
+            authService.signOut()
+        }
+
+        var updateSuccess = false
+        var updateError: String? = null
+        viewModel.updateTask(
+            params = com.cras.app.data.UpdateTaskParams(
+                id = task.id,
+                title = "Changed Title",
+                expectedVersion = 1
+            ),
+            onSuccess = { updateSuccess = true },
+            onError = { updateError = it }
+        )
+        advanceUntilIdle()
+
+        assertFalse(updateSuccess)
+        assertNull(updateError)
+        assertTrue(viewModel.allTasks.value.isEmpty())
+    }
+
+    @Test
+    fun `direct operator switch from Operator A to Operator B clears in-memory tasks and resets account status before publishing authenticated state while keeping persisted outbox`() = runTest {
+        val sessionA = session
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+
+        val taskAId = "550e8400-e29b-41d4-a716-446655440094"
+        val serverAId = "550e8400-e29b-41d4-a716-446655440096"
+        val serverBId = "550e8400-e29b-41d4-a716-446655440097"
+
+        taskService.tasks.add(
+            Task(
+                id = serverAId,
+                title = "Task Server A",
+                description = null,
+                priority = 4,
+                plan = null,
+                labels = emptyList(),
+                parentId = null,
+                completedAt = null,
+                createdAt = "2026-08-25T09:00:00Z",
+                updatedAt = "2026-08-25T09:00:00Z",
+                version = 1
+            )
+        )
+
+        authService = FakeAuthService(sessionA)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.allTasks.value.size)
+        assertEquals(sessionA, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
+
+        // Queue an outbox item for Operator A after initial drain
+        val outboxA = OutboxItem.Create(
+            id = taskAId,
+            task = Task(
+                id = taskAId,
+                title = "Outbox Task A",
+                description = null,
+                priority = 4,
+                plan = null,
+                labels = emptyList(),
+                parentId = null,
+                completedAt = null,
+                createdAt = "2026-08-25T09:00:00Z",
+                updatedAt = "2026-08-25T09:00:00Z",
+                version = 1
+            ),
+            params = CreateTaskParams(id = taskAId, title = "Outbox Task A"),
+            createdAt = "2026-08-25T09:00:00Z"
+        )
+        outboxStore.enqueue(sessionA.operatorId, outboxA)
+
+        // Prepare server tasks for Operator B
+        taskService.tasks.clear()
+        taskService.tasks.add(
+            Task(
+                id = serverBId,
+                title = "Task Server B",
+                description = null,
+                priority = 4,
+                plan = null,
+                labels = emptyList(),
+                parentId = null,
+                completedAt = null,
+                createdAt = "2026-08-25T09:00:00Z",
+                updatedAt = "2026-08-25T09:00:00Z",
+                version = 1
+            )
+        )
+
+        // Switch directly from Operator A to Operator B
+        authService.setSession(sessionB)
+        advanceUntilIdle()
+
+        assertEquals(sessionB, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
+        // Operator A's persisted outbox is preserved in store
+        assertEquals(1, outboxStore.getOutbox(sessionA.operatorId).size)
+        assertEquals(taskAId, outboxStore.getOutbox(sessionA.operatorId).first().id)
+        // Memory has only Operator B's reconciled tasks
+        val taskIds = viewModel.allTasks.value.map { it.id }
+        assertTrue(taskIds.contains(serverBId))
+        assertFalse(taskIds.contains(serverAId))
+        assertFalse(taskIds.contains(taskAId))
+    }
+
+    @Test
+    fun `requestAccountDeletion immediately sets PENDING_DELETION and clears outbox so task actions during suspended deactivation cannot write outbox items`() = runTest {
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        installationService.deactivatedIds.clear()
+
+        var createTaskError: String? = null
+        installationService.onDeactivateCallback = {
+            // Attempt to create a task while requestAccountDeletion is suspended in network deactivation
+            viewModel.createTask(
+                title = "Task During Deletion",
+                onError = { createTaskError = it }
+            )
+        }
+
+        var deletionConfirmation: DeletionConfirmation? = null
+        viewModel.requestAccountDeletion(
+            onSuccess = { deletionConfirmation = it },
+            onError = {}
+        )
+        advanceUntilIdle()
+
+        assertNotNull(deletionConfirmation)
+        assertTrue(deletionConfirmation!!.confirmed)
+        assertEquals("Account deletion is pending", createTaskError)
+        assertTrue(outboxStore.getOutbox(session.operatorId).isEmpty())
+        assertNull(authService.currentSession.value)
     }
 }

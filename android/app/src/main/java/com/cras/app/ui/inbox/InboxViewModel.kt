@@ -4,10 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.cras.app.auth.AuthService
 import com.cras.app.auth.OperatorSession
+import com.cras.app.data.AccountDeletionState
+import com.cras.app.data.AccountService
+import com.cras.app.data.AccountStatus
 import com.cras.app.data.CommentService
 import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
+import com.cras.app.data.DeletionConfirmation
 import com.cras.app.data.InMemoryOutboxStore
 import com.cras.app.data.InvalidationPayload
 import com.cras.app.data.LabelService
@@ -35,6 +39,7 @@ import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import com.cras.app.notification.AndroidNotificationStatus
 import com.cras.app.notification.NotificationInstallationSync
+import com.cras.app.voice.VoiceRecordingStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -103,7 +108,9 @@ class InboxViewModel(
     private val commentService: CommentService,
     private val settingsService: SettingsService? = null,
     private val realtimeService: RealtimeService? = null,
+    private val accountService: AccountService? = null,
     private val outboxStore: OutboxStore = InMemoryOutboxStore(),
+    private val voiceRecordingStore: VoiceRecordingStore? = null,
     private val installationSync: NotificationInstallationSync? = null,
     private val nowProvider: () -> Instant = { Instant.now() },
     private val zoneIdProvider: () -> ZoneId = { ZoneId.systemDefault() }
@@ -111,6 +118,9 @@ class InboxViewModel(
 
     private val _authState = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
     val authState: StateFlow<AuthUiState> = _authState.asStateFlow()
+
+    private val _accountStatus = MutableStateFlow<AccountStatus?>(null)
+    val accountStatus: StateFlow<AccountStatus?> = _accountStatus.asStateFlow()
 
     private val _allTasks = MutableStateFlow<List<Task>>(emptyList())
     val allTasks: StateFlow<List<Task>> = _allTasks.asStateFlow()
@@ -198,42 +208,13 @@ class InboxViewModel(
 
                 if (session != null) {
                     _authState.value = AuthUiState.Authenticated(session)
-                    triggerLoadTasks(session)
                     viewModelScope.launch {
-                        loadSettingsInternal(session)
+                        checkAccountStatusInternal(session)
                     }
-                    installationSync?.let { sync ->
-                        viewModelScope.launch {
-                            runCatching { sync.reconcile(session) }
-                        }
-                    }
-
-                    realtimeSubscription = realtimeService?.subscribeToInvalidations(
-                        session = session,
-                        onInvalidate = { payload ->
-                            handleInvalidationEvent(session, payload)
-                        },
-                        onReconnect = {
-                            viewModelScope.launch {
-                                val currentAuth = _authState.value
-                                if (currentAuth is AuthUiState.Authenticated && currentAuth.session == session) {
-                                    triggerLoadTasks(session)
-                                }
-                            }
-                        }
-                    )
                 } else {
                     _authState.value = AuthUiState.Unauthenticated()
-                    _allTasks.value = emptyList()
-                    _inboxState.value = InboxUiState.Empty
-                    _todayState.value = TodayUiState.Empty
-                    _upcomingState.value = UpcomingUiState.Empty
-                    _completedState.value = CompletedUiState.Empty
-                    _effectiveTimedPlanType.value = TimedPlanType.INSTANT
-                    _labels.value = emptyList()
-                    _comments.value = emptyList()
-                    _commentsError.value = null
-                    _selectedTask.value = null
+                    _accountStatus.value = null
+                    clearLocalDataInMemory()
                 }
             }
         }
@@ -1170,6 +1151,201 @@ class InboxViewModel(
                 onError(e.message ?: "Failed to update default timed plan type")
             }
         }
+    }
+
+    private suspend fun checkAccountStatusInternal(session: OperatorSession) {
+        val status = if (accountService != null) {
+            try {
+                accountService.fetchAccountStatus(session)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) return
+
+        if (status != null) {
+            _accountStatus.value = status
+            if (status.deletionState == AccountDeletionState.PENDING_DELETION) {
+                clearLocalData(session.operatorId)
+                return
+            }
+        }
+
+        triggerLoadTasks(session)
+        viewModelScope.launch {
+            loadSettingsInternal(session)
+        }
+        installationSync?.let { sync ->
+            viewModelScope.launch {
+                runCatching { sync.reconcile(session) }
+            }
+        }
+
+        realtimeSubscription = realtimeService?.subscribeToInvalidations(
+            session = session,
+            onInvalidate = { payload ->
+                handleInvalidationEvent(session, payload)
+            },
+            onReconnect = {
+                viewModelScope.launch {
+                    val auth = _authState.value
+                    if (auth is AuthUiState.Authenticated && auth.session == session) {
+                        triggerLoadTasks(session)
+                    }
+                }
+            }
+        )
+    }
+
+    fun fetchAccountStatus(
+        onSuccess: (AccountStatus) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || accountService == null) {
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val status = accountService.fetchAccountStatus(currentAuth.session)
+                _accountStatus.value = status
+                if (status.deletionState == AccountDeletionState.PENDING_DELETION) {
+                    clearLocalData(currentAuth.session.operatorId)
+                }
+                onSuccess(status)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to fetch account status")
+            }
+        }
+    }
+
+    fun requestAccountDeletion(
+        onSuccess: (DeletionConfirmation) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || accountService == null) {
+            onError("Not authenticated or account service unavailable")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val session = currentAuth.session
+                val confirmation = accountService.requestAccountDeletion(session)
+                _accountStatus.value = AccountStatus(
+                    deletionState = confirmation.deletionState,
+                    deletionDeadline = confirmation.deletionDeadline,
+                    recoveryAvailable = true
+                )
+                clearLocalData(session.operatorId)
+                if (installationSync != null) {
+                    runCatching { installationSync.deactivateForSignOut(session) }
+                }
+                authService.signOut()
+                onSuccess(confirmation)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to request account deletion")
+            }
+        }
+    }
+
+    fun recoverAccount(
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || accountService == null) {
+            onError("Not authenticated or account service unavailable")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val session = currentAuth.session
+                accountService.recoverAccount(session)
+                _accountStatus.value = AccountStatus(AccountDeletionState.ACTIVE, null, false)
+                triggerLoadTasks(session)
+                viewModelScope.launch {
+                    loadSettingsInternal(session)
+                }
+                installationSync?.let { sync ->
+                    viewModelScope.launch {
+                        runCatching { sync.reconcile(session) }
+                    }
+                }
+                realtimeSubscription = realtimeService?.subscribeToInvalidations(
+                    session = session,
+                    onInvalidate = { payload ->
+                        handleInvalidationEvent(session, payload)
+                    },
+                    onReconnect = {
+                        viewModelScope.launch {
+                            val auth = _authState.value
+                            if (auth is AuthUiState.Authenticated && auth.session == session) {
+                                triggerLoadTasks(session)
+                            }
+                        }
+                    }
+                )
+                onSuccess()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to recover account")
+            }
+        }
+    }
+
+    fun exportOperatorData(
+        onSuccess: (String) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || accountService == null) {
+            onError("Not authenticated or account service unavailable")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val exportJson = accountService.exportOperatorData(currentAuth.session)
+                onSuccess(exportJson)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to export data")
+            }
+        }
+    }
+
+    fun clearLocalData(operatorId: String) {
+        outboxStore.clear(operatorId)
+        voiceRecordingStore?.clearAll()
+        clearLocalDataInMemory()
+    }
+
+    private fun clearLocalDataInMemory() {
+        _allTasks.value = emptyList()
+        _inboxState.value = InboxUiState.Empty
+        _todayState.value = TodayUiState.Empty
+        _upcomingState.value = UpcomingUiState.Empty
+        _completedState.value = CompletedUiState.Empty
+        _effectiveTimedPlanType.value = TimedPlanType.INSTANT
+        _labels.value = emptyList()
+        _comments.value = emptyList()
+        _commentsError.value = null
+        _selectedTask.value = null
+        _createTaskError.value = null
+        _createLabelError.value = null
     }
 
     companion object {

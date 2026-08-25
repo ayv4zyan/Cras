@@ -116,6 +116,11 @@ class MainActivity : ComponentActivity() {
             .build()
         val realtimeService = SupabaseRealtimeService(config, realtimeHttpClient)
 
+        val accountService = com.cras.app.data.SupabaseAccountService(config, httpClient)
+        val voiceRecordingStore = DirectoryVoiceRecordingStore(
+            File(applicationContext.filesDir, "voice-recordings")
+        )
+
         inboxViewModel = InboxViewModel(
             authService = authService,
             taskService = taskService,
@@ -123,7 +128,9 @@ class MainActivity : ComponentActivity() {
             commentService = commentService,
             settingsService = settingsService,
             realtimeService = realtimeService,
+            accountService = accountService,
             outboxStore = outboxStore,
+            voiceRecordingStore = voiceRecordingStore,
             installationSync = sync
         )
 
@@ -132,9 +139,6 @@ class MainActivity : ComponentActivity() {
         val voiceCaptureApi = SupabaseVoiceCaptureApi(
             config,
             SupabaseVoiceCaptureApi.voiceHttpClient(httpClient),
-        )
-        val voiceRecordingStore = DirectoryVoiceRecordingStore(
-            File(applicationContext.filesDir, "voice-recordings")
         )
         voiceViewModel = VoiceViewModel(
             authService = authService,
@@ -209,6 +213,41 @@ class MainActivity : ComponentActivity() {
                     onDeepLinkConsumed = { pendingDeepLinkAction = null },
                     onRequestMicPermission = {
                         requestMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                    },
+                    onExportDataReady = { exportJson ->
+                        runCatching {
+                            val exportFile = File(applicationContext.filesDir, "cras-export-${System.currentTimeMillis()}.json")
+                            exportFile.writeText(exportJson)
+                        }
+                    },
+                    onGoogleReauthRequested = { callback ->
+                        lifecycleScope.launch {
+                            when (val result = googleAuthManager.getGoogleIdToken()) {
+                                is GoogleSignInResult.Success -> {
+                                    val currentAuth = inboxViewModel.authState.value
+                                    val currentEmail = (currentAuth as? AuthUiState.Authenticated)?.session?.email
+                                    val currentOperatorId = (currentAuth as? AuthUiState.Authenticated)?.session?.operatorId
+
+                                    try {
+                                        val newSession = authService.signInWithGoogleIdToken(result.idToken, result.nonce)
+                                        if ((currentOperatorId != null && newSession.operatorId == currentOperatorId) ||
+                                            (currentEmail != null && newSession.email == currentEmail)) {
+                                            callback(true, null)
+                                        } else {
+                                            callback(false, "Signed in with a different Google account. Please use the matching account.")
+                                        }
+                                    } catch (e: Exception) {
+                                        callback(false, e.message ?: "Reauthentication failed")
+                                    }
+                                }
+                                is GoogleSignInResult.Error -> {
+                                    callback(false, result.message)
+                                }
+                                is GoogleSignInResult.Cancelled -> {
+                                    callback(false, null)
+                                }
+                            }
+                        }
                     },
                     onGoogleSignInRequested = {
                         lifecycleScope.launch {

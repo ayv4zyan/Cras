@@ -947,7 +947,7 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
-        if (verificationState == VerificationState.UNVERIFIED && accountService != null) {
+        if (!isOfflineMutationAllowed()) {
             onError("Account verification in progress")
             return
         }
@@ -1026,7 +1026,7 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
-        if (verificationState == VerificationState.UNVERIFIED && accountService != null) {
+        if (!isOfflineMutationAllowed()) {
             onError("Account verification in progress")
             return
         }
@@ -1166,7 +1166,7 @@ class InboxViewModel(
             onError("Account deletion is pending")
             return
         }
-        if (verificationState == VerificationState.UNVERIFIED && accountService != null) {
+        if (!isOfflineMutationAllowed()) {
             onError("Account verification in progress")
             return
         }
@@ -1322,6 +1322,10 @@ class InboxViewModel(
 
     private fun isAccountStatusVerified(): Boolean {
         return accountService == null || verificationState == VerificationState.VERIFIED
+    }
+
+    private fun isOfflineMutationAllowed(): Boolean {
+        return accountService == null || verificationState != VerificationState.UNVERIFIED
     }
 
     private fun isAccountOperationAllowed(): Boolean {

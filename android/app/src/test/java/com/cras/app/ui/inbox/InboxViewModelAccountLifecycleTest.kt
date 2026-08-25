@@ -1060,6 +1060,7 @@ class InboxViewModelAccountLifecycleTest {
 
         assertNull(labelUpdated)
         assertNull(updateError)
+        assertTrue(viewModel.labels.value.isEmpty())
     }
 
     @Test
@@ -1085,6 +1086,7 @@ class InboxViewModelAccountLifecycleTest {
 
         assertFalse(deleteSuccess)
         assertNull(deleteError)
+        assertTrue(viewModel.labels.value.isEmpty())
     }
 
     @Test

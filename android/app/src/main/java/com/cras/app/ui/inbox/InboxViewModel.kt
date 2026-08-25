@@ -629,7 +629,7 @@ class InboxViewModel(
         onGeneralError: ((String) -> Unit)? = null,
         onNetworkError: ((String) -> Unit)? = null
     ) {
-        if (!isSessionCurrent(session) || isAccountPendingDeletion()) {
+        if (!isSessionActive(session)) {
             return
         }
 
@@ -637,7 +637,7 @@ class InboxViewModel(
             session = session,
             callbacks = object : OutboxDrainCallbacks {
                 private fun isSessionValid(): Boolean {
-                    return isSessionCurrent(session) && !isAccountPendingDeletion()
+                    return isSessionActive(session)
                 }
 
                 override suspend fun onTaskCreated(task: Task) {
@@ -772,13 +772,13 @@ class InboxViewModel(
                     session = session,
                     params = CreateLabelParams(name = name, color = color)
                 )
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 _labels.value = _labels.value + created
                 onSuccess(created)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 val errorMsg = e.message ?: "Failed to create label"
                 _createLabelError.value = errorMsg
                 onError(errorMsg)
@@ -812,14 +812,14 @@ class InboxViewModel(
                     session = session,
                     params = UpdateLabelParams(id = id, name = name, color = color)
                 )
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 _labels.value = _labels.value.map { if (it.id == id) updated else it }
                 triggerLoadTasks(session)
                 onSuccess(updated)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 val errorMsg = e.message ?: "Failed to update label"
                 onError(errorMsg)
             }
@@ -845,14 +845,14 @@ class InboxViewModel(
         viewModelScope.launch {
             try {
                 labelService.deleteLabel(session, id)
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 _labels.value = _labels.value.filterNot { it.id == id }
                 triggerLoadTasks(session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 val errorMsg = e.message ?: "Failed to delete label"
                 onError(errorMsg)
             }
@@ -888,13 +888,13 @@ class InboxViewModel(
                     session = session,
                     params = CreateCommentParams(taskId = taskId, content = trimmedContent)
                 )
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 _comments.value = _comments.value + created
                 onSuccess(created)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 val errorMsg = e.message ?: "Failed to create comment"
                 onError(errorMsg)
             }
@@ -1071,14 +1071,14 @@ class InboxViewModel(
         viewModelScope.launch {
             try {
                 val updatedTask = mutation(session)
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 applyTaskUpdate(updatedTask)
                 triggerLoadTasks(session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 val errorMsg = e.message ?: defaultError
                 // Reload canonical state after a conflict or error to avoid stale overwrites
                 triggerLoadTasks(session)
@@ -1211,14 +1211,14 @@ class InboxViewModel(
             try {
                 settingsService.updateOperatorTimedPlanType(session, type)
                 val effective = settingsService.fetchEffectiveTimedPlanType(session)
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 _operatorTimedPlanType.value = type
                 _effectiveTimedPlanType.value = effective
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!isSessionCurrent(session) || isAccountPendingDeletion()) return@launch
+                if (!isSessionActive(session)) return@launch
                 onError(e.message ?: "Failed to update default timed plan type")
             }
         }
@@ -1251,6 +1251,9 @@ class InboxViewModel(
             }
         )
     }
+
+    private fun isSessionActive(session: OperatorSession): Boolean =
+        isSessionCurrent(session) && !isAccountPendingDeletion()
 
     private fun isSessionCurrent(session: OperatorSession): Boolean {
         val auth = _authState.value

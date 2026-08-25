@@ -143,6 +143,7 @@ class InboxViewModel(
     val selectedTask: StateFlow<Task?> = _selectedTask.asStateFlow()
 
     private var routedTaskId: String? = null
+    private var pendingCompletionTaskId: String? = null
 
     private val _isCreatingTask = MutableStateFlow(false)
     val isCreatingTask: StateFlow<Boolean> = _isCreatingTask.asStateFlow()
@@ -279,6 +280,31 @@ class InboxViewModel(
         _selectedTask.value = match
     }
 
+    /**
+     * Completes a Task requested through a widget action or deep-link. When
+     * auth is still loading or the task data has not arrived yet, the request is
+     * retained and executed once authenticated and the matching task is loaded.
+     */
+    fun completeRoutedTask(taskId: String) {
+        val currentAuth = _authState.value
+        val match = _allTasks.value.firstOrNull { it.id == taskId }
+        if (currentAuth is AuthUiState.Authenticated && match != null) {
+            pendingCompletionTaskId = null
+            completeTask(taskId = taskId)
+        } else {
+            pendingCompletionTaskId = taskId
+        }
+    }
+
+    private fun consumePendingCompletionTask() {
+        val pendingId = pendingCompletionTaskId ?: return
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated) return
+        val match = _allTasks.value.firstOrNull { it.id == pendingId } ?: return
+        pendingCompletionTaskId = null
+        completeTask(taskId = pendingId)
+    }
+
     fun signInWithGoogleIdToken(idToken: String, nonce: String? = null) {
         viewModelScope.launch {
             _authState.value = AuthUiState.Loading
@@ -412,6 +438,10 @@ class InboxViewModel(
                 currentSelected
             }
         }
+
+        if (updated.id == pendingCompletionTaskId) {
+            consumePendingCompletionTask()
+        }
     }
 
     fun reconcileFreshTasks(freshTasks: List<Task>) {
@@ -450,6 +480,7 @@ class InboxViewModel(
             _comments.value = emptyList()
         }
         consumePendingRoutedTask()
+        consumePendingCompletionTask()
     }
 
     private fun handleInvalidationEvent(session: OperatorSession, event: InvalidationPayload) {

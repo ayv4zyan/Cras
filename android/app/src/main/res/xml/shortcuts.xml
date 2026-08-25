@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="shortcut_today"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_today"
+        android:shortcutLongLabel="@string/shortcut_today_label"
+        android:shortcutShortLabel="@string/shortcut_today_short">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="cras://open/today"
+            android:targetPackage="com.cras.app"
+            android:targetClass="com.cras.app.MainActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="shortcut_upcoming"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_agenda"
+        android:shortcutLongLabel="@string/shortcut_upcoming_label"
+        android:shortcutShortLabel="@string/shortcut_upcoming_short">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="cras://open/upcoming"
+            android:targetPackage="com.cras.app"
+            android:targetClass="com.cras.app.MainActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="shortcut_voice"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_btn_speak_now"
+        android:shortcutLongLabel="@string/shortcut_voice_label"
+        android:shortcutShortLabel="@string/shortcut_voice_short">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="cras://open/voice"
+            android:targetPackage="com.cras.app"
+            android:targetClass="com.cras.app.MainActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="shortcut_create"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_input_add"
+        android:shortcutLongLabel="@string/shortcut_create_label"
+        android:shortcutShortLabel="@string/shortcut_create_short">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="cras://open/create"
+            android:targetPackage="com.cras.app"
+            android:targetClass="com.cras.app.MainActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+</shortcuts>

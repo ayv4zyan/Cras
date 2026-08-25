@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launchpad widget: 4×1 home-screen widget with action buttons -->
+    <string name="launchpad_widget_name">Cras Launchpad</string>
+    <string name="launchpad_widget_description">Quick access to Today, Upcoming, Voice, and Create task</string>
+
+    <!-- Today Glance widget: task list widget -->
+    <string name="today_glance_widget_name">Cras Today</string>
+    <string name="today_glance_widget_description">Your tasks for today at a glance</string>
+    <string name="today_glance_header">Today</string>
+    <string name="today_glance_empty">No tasks for today</string>
+    <string name="today_glance_complete_task">Complete task</string>
+
+    <!-- Shortcut labels -->
+    <string name="shortcut_today_label">Today</string>
+    <string name="shortcut_upcoming_label">Upcoming</string>
+    <string name="shortcut_voice_label">Voice capture</string>
+    <string name="shortcut_create_label">Create task</string>
+    <string name="shortcut_today_short">Today</string>
+    <string name="shortcut_upcoming_short">Upcoming</string>
+    <string name="shortcut_voice_short">Voice</string>
+    <string name="shortcut_create_short">Create</string>
+</resources>

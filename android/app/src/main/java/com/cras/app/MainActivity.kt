@@ -9,6 +9,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -31,6 +34,8 @@ import com.cras.app.notification.FirebaseFcmTokenProvider
 import com.cras.app.notification.NotificationInstallationSync
 import com.cras.app.notification.PlatformPermissionState
 import com.cras.app.notification.SharedPreferencesNotificationPreferenceStore
+import com.cras.app.quickaccess.DeepLinkAction
+import com.cras.app.quickaccess.parseDeepLinkAction
 import com.cras.app.ui.CrasApp
 import com.cras.app.ui.inbox.AuthUiState
 import com.cras.app.ui.inbox.InboxViewModel
@@ -50,6 +55,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var voiceViewModel: VoiceViewModel
     private var installationSync: NotificationInstallationSync? = null
     private lateinit var notificationPrefs: android.content.SharedPreferences
+
+    /** One-shot pending deep-link action delivered as Compose state to [CrasApp]. */
+    private var pendingDeepLinkAction by mutableStateOf<DeepLinkAction?>(null)
 
     companion object {
         private const val KEY_PERMISSION_ASKED = "cras_notifications_permission_asked"
@@ -163,11 +171,42 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Push updated today rows to any home-screen Today Glance widgets whenever
+        // the task list changes while the app is running. No-op when no widget
+        // instances are pinned.
+        lifecycleScope.launch {
+            inboxViewModel.allTasks.collect { tasks ->
+                runCatching {
+                    val rows = com.cras.app.quickaccess.buildTodayGlanceRows(tasks)
+                    com.cras.app.quickaccess.updateTodayWidgets(applicationContext, rows)
+                }
+            }
+        }
+
+        // Periodically refresh Today glance rows at the local-date boundary
+        // from canonical task state, ensuring tasks planned for the new day
+        // appear without requiring a task mutation.
+        lifecycleScope.launch {
+            while (true) {
+                val now = java.time.ZonedDateTime.now()
+                val nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay(now.zone)
+                val millisUntilMidnight = java.time.Duration.between(now, nextMidnight).toMillis() + 50L
+                kotlinx.coroutines.delay(millisUntilMidnight.coerceAtLeast(1000L))
+                runCatching {
+                    val tasks = inboxViewModel.allTasks.value
+                    val rows = com.cras.app.quickaccess.buildTodayGlanceRows(tasks)
+                    com.cras.app.quickaccess.updateTodayWidgets(applicationContext, rows)
+                }
+            }
+        }
+
         setContent {
             CrasTheme {
                 CrasApp(
                     viewModel = inboxViewModel,
                     voiceViewModel = voiceViewModel,
+                    pendingDeepLinkAction = pendingDeepLinkAction,
+                    onDeepLinkConsumed = { pendingDeepLinkAction = null },
                     onRequestMicPermission = {
                         requestMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO)
                     },
@@ -190,21 +229,41 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        handleNotificationRouting(intent)
+        handleIncomingIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleNotificationRouting(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
     }
 
     /**
-     * Opens the Task identified by a displayed notification's tap intent. The
-     * routing data is opaque to the client surface; the Inbox resolves it.
+     * Dispatches an incoming [Intent] to the correct handler:
+     * - Notification tap: routes to the Task identified by [EXTRA_TASK_ID].
+     * - Deep-link cras://open/&#42; sets a pending [DeepLinkAction] for [CrasApp].
+     * - Deep-link cras://complete/task/{id} completes the Task via [InboxViewModel.completeRoutedTask],
+     *   retaining the request until authenticated and tasks are loaded.
      */
-    private fun handleNotificationRouting(intent: Intent?) {
-        val taskId = intent?.getStringExtra(EXTRA_TASK_ID) ?: return
-        inboxViewModel.focusRoutedTask(taskId)
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent == null) return
+
+        // Notification tap routing (pre-existing)
+        val taskId = intent.getStringExtra(EXTRA_TASK_ID)
+        if (taskId != null) {
+            inboxViewModel.focusRoutedTask(taskId)
+            return
+        }
+
+        val action = parseDeepLinkAction(intent) ?: return
+        when (action) {
+            is DeepLinkAction.CompleteTask -> {
+                inboxViewModel.completeRoutedTask(action.taskId)
+            }
+            else -> {
+                pendingDeepLinkAction = action
+            }
+        }
     }
 
     override fun onResume() {
@@ -212,6 +271,17 @@ class MainActivity : ComponentActivity() {
         // Reconcile endpoint and permission state whenever the app resumes.
         inboxViewModel.reconcileInstallation()
         maybeRequestNotificationPermissionOnce()
+
+        // Re-evaluate today glance rows against current device date on resume.
+        val tasks = inboxViewModel.allTasks.value
+        if (tasks.isNotEmpty()) {
+            lifecycleScope.launch {
+                runCatching {
+                    val rows = com.cras.app.quickaccess.buildTodayGlanceRows(tasks)
+                    com.cras.app.quickaccess.updateTodayWidgets(applicationContext, rows)
+                }
+            }
+        }
     }
 
     private fun currentPlatformPermissionState(): PlatformPermissionState {

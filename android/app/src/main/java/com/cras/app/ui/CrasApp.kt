@@ -25,6 +25,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +42,7 @@ import com.cras.app.ui.auth.SignInScreen
 import com.cras.app.models.Task
 import com.cras.app.data.UpdateTaskParams
 import com.cras.app.domain.filterSubtasks
+import com.cras.app.quickaccess.DeepLinkAction
 import com.cras.app.ui.completed.CompletedScreen
 import com.cras.app.ui.detail.TaskDetailDialog
 import com.cras.app.ui.inbox.AuthUiState
@@ -68,7 +70,15 @@ fun CrasApp(
     viewModel: InboxViewModel,
     onGoogleSignInRequested: (() -> Unit)? = null,
     voiceViewModel: VoiceViewModel? = null,
-    onRequestMicPermission: (() -> Unit)? = null
+    onRequestMicPermission: (() -> Unit)? = null,
+    /**
+     * A one-shot deep-link action from a Launchpad button, Shortcut, or
+     * Today Glance widget tap. Consumed in a [LaunchedEffect] to switch the
+     * active view or open a dialog; null means no pending action.
+     */
+    pendingDeepLinkAction: DeepLinkAction? = null,
+    /** Notifies the host that [pendingDeepLinkAction] has been consumed. */
+    onDeepLinkConsumed: () -> Unit = {}
 ) {
     val authState by viewModel.authState.collectAsState()
     val inboxState by viewModel.inboxState.collectAsState()
@@ -86,9 +96,34 @@ fun CrasApp(
     var currentView by remember { mutableStateOf(AppView.INBOX) }
     var isLabelManagerOpen by remember { mutableStateOf(false) }
     var isVoiceCaptureOpen by remember { mutableStateOf(false) }
+    var isCreateFocused by remember { mutableStateOf(false) }
     var voiceFocusedTask by remember { mutableStateOf<Task?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
+
+    // Consume a pending deep-link action once: navigate to the correct view
+    // or open the appropriate dialog/input.
+    LaunchedEffect(pendingDeepLinkAction) {
+        if (pendingDeepLinkAction != null && authState is AuthUiState.Authenticated) {
+            when (pendingDeepLinkAction) {
+                is DeepLinkAction.OpenToday -> currentView = AppView.TODAY
+                is DeepLinkAction.OpenUpcoming -> currentView = AppView.UPCOMING
+                is DeepLinkAction.OpenVoice -> {
+                    voiceFocusedTask = null
+                    voiceViewModel?.open(null)
+                    isVoiceCaptureOpen = true
+                }
+                is DeepLinkAction.OpenCreate -> {
+                    currentView = AppView.INBOX
+                    isCreateFocused = true
+                }
+                is DeepLinkAction.OpenTask -> {
+                    viewModel.focusRoutedTask(pendingDeepLinkAction.taskId)
+                }
+            }
+            onDeepLinkConsumed()
+        }
+    }
 
     when (val state = authState) {
         is AuthUiState.Loading -> {

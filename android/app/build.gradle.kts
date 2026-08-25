@@ -98,6 +98,8 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging:25.1.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.glance:glance-material3:1.1.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation(kotlin("test"))

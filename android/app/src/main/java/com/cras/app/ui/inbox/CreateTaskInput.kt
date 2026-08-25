@@ -35,6 +35,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +44,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -67,6 +70,8 @@ fun CreateTaskInput(
     placeholder: String = "Create a task in Inbox...",
     defaultDate: String? = null,
     effectiveDefault: TimedPlanType = TimedPlanType.INSTANT,
+    isFocused: Boolean = false,
+    onFocusHandled: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var title by remember { mutableStateOf("") }
@@ -74,6 +79,14 @@ fun CreateTaskInput(
     var priority by remember { mutableIntStateOf(TaskPriorities.P4) }
     var selectedLabels by remember { mutableStateOf(emptyList<String>()) }
     var isExpanded by remember { mutableStateOf(false) }
+
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(isFocused) {
+        if (isFocused) {
+            focusRequester.requestFocus()
+            onFocusHandled()
+        }
+    }
 
     var planDate by remember(defaultDate) { mutableStateOf(defaultDate ?: "") }
     var planTime by remember { mutableStateOf("") }
@@ -140,7 +153,9 @@ fun CreateTaskInput(
                     unfocusedBorderColor = MaterialTheme.colorScheme.outline
                 ),
                 shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester)
             )
 
             Spacer(modifier = Modifier.width(4.dp))

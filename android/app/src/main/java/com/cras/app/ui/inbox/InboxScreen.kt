@@ -62,6 +62,8 @@ fun InboxScreen(
     effectiveDefault: TimedPlanType = TimedPlanType.INSTANT,
     isCreatingTask: Boolean = false,
     createTaskError: String? = null,
+    isCreateFocused: Boolean = false,
+    onFocusCreateHandled: () -> Unit = {},
     onCreateTask: (title: String, description: String?, priority: Int, labels: List<String>, plan: Plan?, onSuccess: () -> Unit) -> Unit,
     onCompleteTask: (String) -> Unit,
     onSelectTask: (Task) -> Unit,
@@ -135,7 +137,9 @@ fun InboxScreen(
                 availableLabels = labels,
                 isSubmitting = isCreatingTask,
                 errorMessage = createTaskError,
-                effectiveDefault = effectiveDefault
+                effectiveDefault = effectiveDefault,
+                isFocused = isCreateFocused,
+                onFocusHandled = onFocusCreateHandled
             )
 
             Spacer(modifier = Modifier.height(16.dp))

@@ -90,6 +90,30 @@ class DeepLinkActionTest {
     }
 
     @Test
+    fun `parses CompleteTask with id`() {
+        val taskId = "550e8400-e29b-41d4-a716-446655440001"
+        assertEquals(
+            DeepLinkAction.CompleteTask(taskId),
+            parseDeepLinkUri(DEEP_LINK_SCHEME, DEEP_LINK_HOST_COMPLETE, segments("task", taskId))
+        )
+    }
+
+    @Test
+    fun `returns null for CompleteTask without id segment`() {
+        assertNull(parseDeepLinkUri(DEEP_LINK_SCHEME, DEEP_LINK_HOST_COMPLETE, segments("task")))
+    }
+
+    @Test
+    fun `returns null for CompleteTask with blank id`() {
+        assertNull(parseDeepLinkUri(DEEP_LINK_SCHEME, DEEP_LINK_HOST_COMPLETE, segments("task", "   ")))
+    }
+
+    @Test
+    fun `returns null for unrecognised complete path`() {
+        assertNull(parseDeepLinkUri(DEEP_LINK_SCHEME, DEEP_LINK_HOST_COMPLETE, segments("label", "123")))
+    }
+
+    @Test
     fun `returns null for unrecognised path`() {
         assertNull(parseDeepLinkUri(DEEP_LINK_SCHEME, DEEP_LINK_HOST, segments("settings")))
     }

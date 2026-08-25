@@ -102,8 +102,8 @@ fun CrasApp(
     val coroutineScope = rememberCoroutineScope()
 
     // Consume a pending deep-link action once: navigate to the correct view
-    // or open the appropriate dialog/input.
-    LaunchedEffect(pendingDeepLinkAction) {
+    // or open the appropriate dialog/input. Retried when authentication resolves.
+    LaunchedEffect(pendingDeepLinkAction, authState) {
         if (pendingDeepLinkAction != null && authState is AuthUiState.Authenticated) {
             when (pendingDeepLinkAction) {
                 is DeepLinkAction.OpenToday -> currentView = AppView.TODAY
@@ -119,6 +119,9 @@ fun CrasApp(
                 }
                 is DeepLinkAction.OpenTask -> {
                     viewModel.focusRoutedTask(pendingDeepLinkAction.taskId)
+                }
+                is DeepLinkAction.CompleteTask -> {
+                    viewModel.completeRoutedTask(pendingDeepLinkAction.taskId)
                 }
             }
             onDeepLinkConsumed()
@@ -180,6 +183,8 @@ fun CrasApp(
                                 effectiveDefault = effectiveTimedPlanType,
                                 isCreatingTask = isCreatingTask,
                                 createTaskError = createTaskError,
+                                isCreateFocused = isCreateFocused,
+                                onFocusCreateHandled = { isCreateFocused = false },
                                 onCreateTask = { title, description, priority, taskLabels, plan, onSuccess ->
                                     viewModel.createTask(title, description, priority, taskLabels, plan, onSuccess = onSuccess)
                                 },

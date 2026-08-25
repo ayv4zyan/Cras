@@ -36,6 +36,10 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import androidx.compose.ui.unit.dp
 
+import androidx.glance.appwidget.action.actionStartActivity
+import com.cras.app.MainActivity
+import com.cras.app.R
+
 /** Glance Preferences key holding the JSON-serialised list of [TodayGlanceRow]s. */
 val KEY_TODAY_ROWS = stringPreferencesKey("cras_today_rows")
 
@@ -71,8 +75,10 @@ class TodayGlanceOpenTaskCallback : ActionCallback {
         parameters: ActionParameters
     ) {
         val taskId = parameters[KEY_TASK_ID] ?: return
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("cras://open/task/$taskId")).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("cras://open/task/$taskId")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         context.startActivity(intent)
     }
@@ -87,8 +93,10 @@ class TodayGlanceOpenTodayCallback : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters
     ) {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("cras://open/today")).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("cras://open/today")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         context.startActivity(intent)
     }
@@ -103,8 +111,10 @@ class TodayGlanceCreateTaskCallback : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters
     ) {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("cras://open/create")).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("cras://open/create")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         context.startActivity(intent)
     }
@@ -112,9 +122,9 @@ class TodayGlanceCreateTaskCallback : ActionCallback {
 
 /**
  * [ActionCallback] that completes a Task by sending the Cras app a
- * `cras://complete/task/{id}` deep-link. The app's [MainActivity] receives
- * this and routes it through the canonical [InboxViewModel.completeTask] path,
- * which is safe when temporarily offline (Outbox-backed).
+ * `cras://complete/task/{id}` intent. The app's [MainActivity] receives
+ * this and routes it through [InboxViewModel.completeRoutedTask],
+ * which retains the intent if authentication or task data is loading.
  */
 class TodayGlanceCompleteTaskCallback : ActionCallback {
     override suspend fun onAction(
@@ -123,7 +133,9 @@ class TodayGlanceCompleteTaskCallback : ActionCallback {
         parameters: ActionParameters
     ) {
         val taskId = parameters[KEY_TASK_ID] ?: return
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("cras://complete/task/$taskId")).apply {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("cras://complete/task/$taskId")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         context.startActivity(intent)
@@ -132,7 +144,7 @@ class TodayGlanceCompleteTaskCallback : ActionCallback {
 
 /**
  * Jetpack Glance implementation of the Today Glance widget. It reads the cached
- * today task rows from Glance Preferences state (written by [TodayWidgetUpdater]
+ * today task rows from Glance Preferences state (written by [updateTodayWidgets]
  * whenever the task list changes in the running app).
  */
 class TodayGlanceWidget : GlanceAppWidget() {
@@ -152,8 +164,20 @@ class TodayGlanceWidget : GlanceAppWidget() {
 internal fun TodayGlanceContent(
     prefs: Preferences = androidx.glance.currentState()
 ) {
+    val context = androidx.glance.LocalContext.current
     val rowsJson = prefs[KEY_TODAY_ROWS]
     val rows = if (rowsJson != null) decodeTodayRows(rowsJson) else emptyList()
+
+    val openTodayIntent = Intent(context, MainActivity::class.java).apply {
+        action = Intent.ACTION_VIEW
+        data = Uri.parse("cras://open/today")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
+    val openCreateIntent = Intent(context, MainActivity::class.java).apply {
+        action = Intent.ACTION_VIEW
+        data = Uri.parse("cras://open/create")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
 
     Column(
         modifier = GlanceModifier
@@ -165,11 +189,11 @@ internal fun TodayGlanceContent(
             modifier = GlanceModifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 10.dp)
-                .clickable(actionRunCallback<TodayGlanceOpenTodayCallback>()),
+                .clickable(actionStartActivity(openTodayIntent)),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Today",
+                text = context.getString(R.string.today_glance_header),
                 style = TextStyle(
                     color = GlanceTheme.colors.onSurface,
                     fontWeight = FontWeight.Bold
@@ -184,7 +208,7 @@ internal fun TodayGlanceContent(
                 ),
                 modifier = GlanceModifier
                     .padding(start = 8.dp)
-                    .clickable(actionRunCallback<TodayGlanceCreateTaskCallback>())
+                    .clickable(actionStartActivity(openCreateIntent))
             )
         }
 
@@ -195,7 +219,7 @@ internal fun TodayGlanceContent(
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
-                    text = "No tasks for today",
+                    text = context.getString(R.string.today_glance_empty),
                     style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant)
                 )
             }
@@ -209,15 +233,18 @@ internal fun TodayGlanceContent(
 
 @Composable
 private fun TodayGlanceRowItem(row: TodayGlanceRow) {
+    val context = androidx.glance.LocalContext.current
+    val openTaskIntent = Intent(context, MainActivity::class.java).apply {
+        action = Intent.ACTION_VIEW
+        data = Uri.parse("cras://open/task/${row.taskId}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
+
     Row(
         modifier = GlanceModifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp)
-            .clickable(
-                actionRunCallback<TodayGlanceOpenTaskCallback>(
-                    actionParametersOf(KEY_TASK_ID to row.taskId)
-                )
-            ),
+            .clickable(actionStartActivity(openTaskIntent)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Completion circle — routes through canonical complete path

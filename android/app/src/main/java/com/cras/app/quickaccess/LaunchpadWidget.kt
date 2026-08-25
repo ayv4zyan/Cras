@@ -46,6 +46,7 @@ class LaunchpadActionCallback : ActionCallback {
     ) {
         val uriString = parameters[KEY_DEEP_LINK_URI] ?: return
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uriString)).apply {
+            setPackage(context.packageName)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
@@ -69,6 +70,7 @@ class LaunchpadWidget : GlanceAppWidget() {
 
 @Composable
 internal fun LaunchpadContent() {
+    val context = androidx.glance.LocalContext.current
     Row(
         modifier = GlanceModifier
             .fillMaxSize()
@@ -77,22 +79,22 @@ internal fun LaunchpadContent() {
         verticalAlignment = Alignment.CenterVertically
     ) {
         LaunchpadButton(
-            label = "Today",
+            label = context.getString(com.cras.app.R.string.shortcut_today_short),
             deepLinkUri = "cras://open/today",
             modifier = GlanceModifier.defaultWeight()
         )
         LaunchpadButton(
-            label = "Upcoming",
+            label = context.getString(com.cras.app.R.string.shortcut_upcoming_short),
             deepLinkUri = "cras://open/upcoming",
             modifier = GlanceModifier.defaultWeight()
         )
         LaunchpadButton(
-            label = "Voice",
+            label = context.getString(com.cras.app.R.string.shortcut_voice_short),
             deepLinkUri = "cras://open/voice",
             modifier = GlanceModifier.defaultWeight()
         )
         LaunchpadButton(
-            label = "Create",
+            label = context.getString(com.cras.app.R.string.shortcut_create_short),
             deepLinkUri = "cras://open/create",
             modifier = GlanceModifier.defaultWeight()
         )

@@ -31,13 +31,6 @@
                 <data android:scheme="cras" android:host="open" />
             </intent-filter>
 
-            <!-- Complete-task deep-link from Today Glance widget completion button -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="cras" android:host="complete" />
-            </intent-filter>
-
             <!-- App Shortcuts metadata -->
             <meta-data
                 android:name="android.app.shortcuts"
@@ -55,6 +48,7 @@
         <!-- Launchpad widget: 4-button home-screen widget -->
         <receiver
             android:name=".quickaccess.LaunchpadWidgetReceiver"
+            android:label="@string/launchpad_widget_name"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -67,6 +61,7 @@
         <!-- Today Glance widget: task-list home-screen widget -->
         <receiver
             android:name=".quickaccess.TodayGlanceWidgetReceiver"
+            android:label="@string/today_glance_widget_name"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />

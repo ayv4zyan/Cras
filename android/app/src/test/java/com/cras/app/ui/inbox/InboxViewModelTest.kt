@@ -1927,4 +1927,112 @@ class InboxViewModelTest {
         assertEquals(listOf(bobTask), bobTasks)
         assertTrue(bobTasks.none { it.title == "Alice's in-flight task" })
     }
+
+    @Test
+    fun `completeRoutedTask completes matching task immediately when loaded and authenticated`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        viewModel.createTask("Task to Complete")
+        advanceUntilIdle()
+
+        val task = (viewModel.inboxState.value as InboxUiState.Success).tasks.first { it.title == "Task to Complete" }
+
+        viewModel.completeRoutedTask(task.id)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.inboxState.value is InboxUiState.Empty)
+        val completedState = viewModel.completedState.value
+        assertTrue(completedState is CompletedUiState.Success)
+        assertEquals(1, (completedState as CompletedUiState.Success).tasks.size)
+        assertEquals("Task to Complete", completedState.tasks[0].title)
+    }
+
+    @Test
+    fun `completeRoutedTask retains taskId when unauthenticated and completes upon sign-in and task load`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val targetTaskId = UUID.randomUUID().toString()
+        val existingTask = Task(
+            id = targetTaskId,
+            title = "Existing Task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-19T00:00:00Z",
+            updatedAt = "2026-08-19T00:00:00Z",
+            version = 1
+        )
+        taskService.tasksInDb.add(existingTask)
+
+        // Start unauthenticated
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+        assertTrue(viewModel.authState.value is AuthUiState.Unauthenticated)
+
+        // Receive completion intent before login
+        viewModel.completeRoutedTask(targetTaskId)
+        advanceUntilIdle()
+
+        // Sign in
+        viewModel.signInWithGoogleIdToken("google-token")
+        advanceUntilIdle()
+
+        // Reconciled tasks should have completed targetTaskId
+        val completedState = viewModel.completedState.value
+        assertTrue(completedState is CompletedUiState.Success)
+        assertEquals(1, (completedState as CompletedUiState.Success).tasks.size)
+        assertEquals("Existing Task", completedState.tasks[0].title)
+    }
+
+    @Test
+    fun `focusRoutedTask opens matching task or retains identity until reconciliation`() = runTest {
+        val authService = FakeAuthService()
+        val taskService = FakeTaskService()
+        val labelService = FakeLabelService()
+        val commentService = FakeCommentService()
+        val targetTaskId = UUID.randomUUID().toString()
+        val existingTask = Task(
+            id = targetTaskId,
+            title = "Target Task",
+            description = null,
+            priority = 4,
+            plan = null,
+            labels = emptyList(),
+            parentId = null,
+            completedAt = null,
+            createdAt = "2026-08-19T00:00:00Z",
+            updatedAt = "2026-08-19T00:00:00Z",
+            version = 1
+        )
+        taskService.tasksInDb.add(existingTask)
+
+        val viewModel = InboxViewModel(authService, taskService, labelService, commentService)
+        advanceUntilIdle()
+
+        // Focus when task is not yet loaded in _allTasks
+        viewModel.focusRoutedTask(targetTaskId)
+        assertNull(viewModel.selectedTask.value)
+
+        // Sign in & load
+        val session = OperatorSession("op-1", "alice@cras.app", "token-1")
+        authService.sessionFlow.value = session
+        advanceUntilIdle()
+
+        assertNotNull(viewModel.selectedTask.value)
+        assertEquals(targetTaskId, viewModel.selectedTask.value?.id)
+        assertEquals("Target Task", viewModel.selectedTask.value?.title)
+    }
 }

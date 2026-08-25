@@ -183,6 +183,23 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Periodically refresh Today glance rows at the local-date boundary
+        // from canonical task state, ensuring tasks planned for the new day
+        // appear without requiring a task mutation.
+        lifecycleScope.launch {
+            while (true) {
+                val now = java.time.ZonedDateTime.now()
+                val nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay(now.zone)
+                val millisUntilMidnight = java.time.Duration.between(now, nextMidnight).toMillis() + 50L
+                kotlinx.coroutines.delay(millisUntilMidnight.coerceAtLeast(1000L))
+                runCatching {
+                    val tasks = inboxViewModel.allTasks.value
+                    val rows = com.cras.app.quickaccess.buildTodayGlanceRows(tasks)
+                    com.cras.app.quickaccess.updateTodayWidgets(applicationContext, rows)
+                }
+            }
+        }
+
         setContent {
             CrasTheme {
                 CrasApp(
@@ -225,8 +242,8 @@ class MainActivity : ComponentActivity() {
      * Dispatches an incoming [Intent] to the correct handler:
      * - Notification tap: routes to the Task identified by [EXTRA_TASK_ID].
      * - Deep-link cras://open/&#42; sets a pending [DeepLinkAction] for [CrasApp].
-     * - Deep-link cras://complete/task/{id} completes the Task via the
-     *   canonical Outbox path (offline-safe).
+     * - Deep-link cras://complete/task/{id} completes the Task via [InboxViewModel.completeRoutedTask],
+     *   retaining the request until authenticated and tasks are loaded.
      */
     private fun handleIncomingIntent(intent: Intent?) {
         if (intent == null) return
@@ -238,20 +255,15 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val data = intent.data ?: return
-
-        // Complete-task deep-link from Today Glance widget
-        if (data.scheme == "cras" && data.host == "complete" &&
-            data.pathSegments.firstOrNull() == "task"
-        ) {
-            val id = data.pathSegments.getOrNull(1)?.takeIf { it.isNotBlank() } ?: return
-            inboxViewModel.completeTask(taskId = id)
-            return
-        }
-
-        // Navigation deep-link from Launchpad / Shortcuts / Today Glance header
         val action = parseDeepLinkAction(intent) ?: return
-        pendingDeepLinkAction = action
+        when (action) {
+            is DeepLinkAction.CompleteTask -> {
+                inboxViewModel.completeRoutedTask(action.taskId)
+            }
+            else -> {
+                pendingDeepLinkAction = action
+            }
+        }
     }
 
     override fun onResume() {
@@ -259,6 +271,17 @@ class MainActivity : ComponentActivity() {
         // Reconcile endpoint and permission state whenever the app resumes.
         inboxViewModel.reconcileInstallation()
         maybeRequestNotificationPermissionOnce()
+
+        // Re-evaluate today glance rows against current device date on resume.
+        val tasks = inboxViewModel.allTasks.value
+        if (tasks.isNotEmpty()) {
+            lifecycleScope.launch {
+                runCatching {
+                    val rows = com.cras.app.quickaccess.buildTodayGlanceRows(tasks)
+                    com.cras.app.quickaccess.updateTodayWidgets(applicationContext, rows)
+                }
+            }
+        }
     }
 
     private fun currentPlatformPermissionState(): PlatformPermissionState {

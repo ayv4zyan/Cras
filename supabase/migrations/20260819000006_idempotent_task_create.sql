@@ -14,6 +14,7 @@ LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = ''
 AS $$
+#variable_conflict use_column
 DECLARE
     v_task_id UUID;
     v_label_id UUID;

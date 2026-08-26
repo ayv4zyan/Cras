@@ -49,6 +49,8 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -298,6 +300,23 @@ class AccountLifecycleJourneyTest {
                 }
 
                 if (path.startsWith("/auth/v1/token")) {
+                    val grantType = request.requestUrl?.queryParameter("grant_type")
+                    val body = request.body.readUtf8()
+                    val reqJson = try {
+                        json.parseToJsonElement(body).jsonObject
+                    } catch (_: Exception) {
+                        null
+                    }
+                    val provider = reqJson?.get("provider")?.jsonPrimitive?.content
+                    val idToken = reqJson?.get("id_token")?.jsonPrimitive?.content
+
+                    if (grantType != "id_token" || provider != "google" || idToken != "google-id-token-alice") {
+                        return MockResponse()
+                            .setResponseCode(400)
+                            .setHeader("Content-Type", "application/json")
+                            .setBody("""{"error":"invalid_request","error_description":"Invalid token exchange request"}""")
+                    }
+
                     val session = currentGoogleAuthSession ?: operatorAlice
                     return MockResponse()
                         .setResponseCode(200)
@@ -634,12 +653,15 @@ class AccountLifecycleJourneyTest {
         val freshOperator = OperatorSession(
             operatorId = "550e8400-e29b-41d4-a716-446655440999",
             email = "alice@cras.app",
-            accessToken = "jwt-550e8400-e29b-41d4-a716-446655440999"
+            accessToken = "jwt-550e8400-e29b-41d4-a716-446655440999",
+            refreshToken = "refresh-fresh-alice"
         )
         currentGoogleAuthSession = freshOperator
 
         viewModel.signInWithGoogleIdToken("google-id-token-alice")
         advanceUntilIdle()
+
+        assertEquals(freshOperator, sessionStore.loadSession())
 
         // 4. Assert pristine empty active account
         assertEquals(AccountDeletionState.ACTIVE, viewModel.accountStatus.value?.deletionState)

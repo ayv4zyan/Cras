@@ -413,24 +413,19 @@ suspend fun collectAuthStateAndClearRecordingsOnOperatorChange(
         when (state) {
             is AuthUiState.Authenticated -> {
                 val currentOperatorId = state.session.operatorId
-                if (lastAuthenticatedOperatorId != null && lastAuthenticatedOperatorId != currentOperatorId) {
+                if (lastAuthenticatedOperatorId != currentOperatorId) {
                     val cleanupSuccess = onClearRecordings()
                     if (cleanupSuccess) {
                         lastAuthenticatedOperatorId = currentOperatorId
                         onOperatorChanged(currentOperatorId)
                     }
-                } else if (lastAuthenticatedOperatorId == null) {
-                    lastAuthenticatedOperatorId = currentOperatorId
-                    onOperatorChanged(currentOperatorId)
                 }
             }
             is AuthUiState.Unauthenticated -> {
-                if (lastAuthenticatedOperatorId != null) {
-                    val cleanupSuccess = onClearRecordings()
-                    if (cleanupSuccess) {
-                        lastAuthenticatedOperatorId = null
-                        onOperatorChanged(null)
-                    }
+                val cleanupSuccess = onClearRecordings()
+                if (cleanupSuccess) {
+                    lastAuthenticatedOperatorId = null
+                    onOperatorChanged(null)
                 }
             }
             is AuthUiState.Loading -> {

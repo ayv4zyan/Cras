@@ -2283,10 +2283,10 @@ class InboxViewModelAccountLifecycleTest {
         advanceUntilIdle()
         assertEquals(0, clearCount)
 
-        // 1. Initial login (Op 1)
+        // 1. Initial login (Op 1) clears ownerless recordings before assigning Op 1
         authStateFlow.value = AuthUiState.Authenticated(session)
         advanceUntilIdle()
-        assertEquals(0, clearCount)
+        assertEquals(1, clearCount)
 
         // 2. Token refresh for Op 1 (same operatorId) -> preserved
         val refreshedSession1 = OperatorSession(
@@ -2296,7 +2296,7 @@ class InboxViewModelAccountLifecycleTest {
         )
         authStateFlow.value = AuthUiState.Authenticated(refreshedSession1)
         advanceUntilIdle()
-        assertEquals(0, clearCount)
+        assertEquals(1, clearCount)
 
         // 3. Direct operator switch to Op 2 -> clears recordings
         val session2 = OperatorSession(
@@ -2306,7 +2306,7 @@ class InboxViewModelAccountLifecycleTest {
         )
         authStateFlow.value = AuthUiState.Authenticated(session2)
         advanceUntilIdle()
-        assertEquals(1, clearCount)
+        assertEquals(2, clearCount)
 
         // 4. Token refresh for Op 2 (same operatorId) -> preserved
         val refreshedSession2 = OperatorSession(
@@ -2316,36 +2316,114 @@ class InboxViewModelAccountLifecycleTest {
         )
         authStateFlow.value = AuthUiState.Authenticated(refreshedSession2)
         advanceUntilIdle()
-        assertEquals(1, clearCount)
+        assertEquals(2, clearCount)
 
         // 5. Sign out from Op 2 -> clears recordings
         authStateFlow.value = AuthUiState.Unauthenticated()
         advanceUntilIdle()
-        assertEquals(2, clearCount)
+        assertEquals(3, clearCount)
 
-        // 6. Sign in to Op 1 after sign out -> does not clear again
+        // 6. Sign in to Op 1 after sign out -> clears ownerless recordings before assigning Op 1
         authStateFlow.value = AuthUiState.Authenticated(session)
         advanceUntilIdle()
-        assertEquals(2, clearCount)
+        assertEquals(4, clearCount)
 
         // 7. Loading state transition before switch (Op 1 -> Loading -> Op 2) -> clears recordings
         authStateFlow.value = AuthUiState.Loading
         advanceUntilIdle()
-        assertEquals(2, clearCount)
+        assertEquals(4, clearCount)
 
         authStateFlow.value = AuthUiState.Authenticated(session2)
         advanceUntilIdle()
-        assertEquals(3, clearCount)
+        assertEquals(5, clearCount)
 
         // 8. Loading state transition before logout (Op 2 -> Loading -> Unauthenticated) -> clears recordings
         authStateFlow.value = AuthUiState.Loading
         advanceUntilIdle()
-        assertEquals(3, clearCount)
+        assertEquals(5, clearCount)
 
         authStateFlow.value = AuthUiState.Unauthenticated()
         advanceUntilIdle()
-        assertEquals(4, clearCount)
+        assertEquals(6, clearCount)
 
+        job.cancel()
+    }
+
+    @Test
+    fun `auth lifecycle collector clears ownerless recordings on initial Authenticated state before setting owner`() = runTest {
+        val authStateFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        var clearCount = 0
+        var recordedOwner: String? = null
+
+        val job = launch {
+            collectAuthStateAndClearRecordingsOnOperatorChange(
+                authState = authStateFlow,
+                initialOperatorId = null,
+                onOperatorChanged = { recordedOwner = it },
+                onClearRecordings = { clearCount++; true },
+            )
+        }
+        advanceUntilIdle()
+        assertEquals(0, clearCount)
+        assertNull(recordedOwner)
+
+        authStateFlow.value = AuthUiState.Authenticated(session)
+        advanceUntilIdle()
+
+        assertEquals(1, clearCount)
+        assertEquals(session.operatorId, recordedOwner)
+        job.cancel()
+    }
+
+    @Test
+    fun `auth lifecycle collector does not set owner on initial Authenticated state if ownerless cleanup fails`() = runTest {
+        val authStateFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        var clearCount = 0
+        var recordedOwner: String? = null
+
+        val job = launch {
+            collectAuthStateAndClearRecordingsOnOperatorChange(
+                authState = authStateFlow,
+                initialOperatorId = null,
+                onOperatorChanged = { recordedOwner = it },
+                onClearRecordings = { clearCount++; false },
+            )
+        }
+        advanceUntilIdle()
+        assertEquals(0, clearCount)
+        assertNull(recordedOwner)
+
+        authStateFlow.value = AuthUiState.Authenticated(session)
+        advanceUntilIdle()
+
+        assertEquals(1, clearCount)
+        assertNull(recordedOwner)
+        job.cancel()
+    }
+
+    @Test
+    fun `auth lifecycle collector clears ownerless recordings on initial Unauthenticated state`() = runTest {
+        val authStateFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        var clearCount = 0
+        var recordedOwner: String? = "unmodified"
+
+        val job = launch {
+            collectAuthStateAndClearRecordingsOnOperatorChange(
+                authState = authStateFlow,
+                initialOperatorId = null,
+                onOperatorChanged = { recordedOwner = it },
+                onClearRecordings = { clearCount++; true },
+            )
+        }
+        advanceUntilIdle()
+        assertEquals(0, clearCount)
+        assertEquals("unmodified", recordedOwner)
+
+        authStateFlow.value = AuthUiState.Unauthenticated()
+        advanceUntilIdle()
+
+        assertEquals(1, clearCount)
+        assertNull(recordedOwner)
         job.cancel()
     }
 

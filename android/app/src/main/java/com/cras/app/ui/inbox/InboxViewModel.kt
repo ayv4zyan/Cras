@@ -1496,11 +1496,13 @@ class InboxViewModel(
         viewModelScope.launch {
             sessionMutex.withLock {
                 if (!isSessionActive(session)) {
+                    onError("Session is no longer active")
                     return@withLock
                 }
                 try {
                     val confirmation = accountService.requestAccountDeletion(session)
                     if (!isSessionActive(session)) {
+                        onError("Session is no longer active")
                         return@withLock
                     }
                     if (!confirmation.confirmed) {
@@ -1523,6 +1525,7 @@ class InboxViewModel(
                         runCatching { installationSync.deactivateForSignOut(session) }
                     }
                     if (!isSessionCurrent(session)) {
+                        onError("Session is no longer active")
                         return@withLock
                     }
                     authService.signOut()
@@ -1531,6 +1534,7 @@ class InboxViewModel(
                     throw e
                 } catch (e: Exception) {
                     if (!isSessionCurrent(session)) {
+                        onError("Session is no longer active")
                         return@withLock
                     }
                     onError(e.message ?: "Failed to request account deletion")
@@ -1588,10 +1592,12 @@ class InboxViewModel(
         viewModelScope.launch {
             try {
                 if (!isSessionCurrent(session)) {
+                    onError("Session is no longer active")
                     return@launch
                 }
                 val exportJson = accountService.exportOperatorData(session)
                 if (!isSessionCurrent(session)) {
+                    onError("Session is no longer active")
                     return@launch
                 }
                 onSuccess(exportJson)
@@ -1599,6 +1605,7 @@ class InboxViewModel(
                 throw e
             } catch (e: Exception) {
                 if (!isSessionCurrent(session)) {
+                    onError("Session is no longer active")
                     return@launch
                 }
                 onError(e.message ?: "Failed to export data")

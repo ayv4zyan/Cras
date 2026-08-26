@@ -103,6 +103,7 @@ class InboxViewModelAccountLifecycleTest {
         var deleteCalled = false
         var onDeleteCallback: (suspend () -> Unit)? = null
         var exportCalled = false
+        var onExportCallback: (suspend () -> Unit)? = null
 
         override suspend fun fetchAccountStatus(session: OperatorSession): AccountStatus {
             fetchCalled = true
@@ -130,6 +131,7 @@ class InboxViewModelAccountLifecycleTest {
 
         override suspend fun exportOperatorData(session: OperatorSession): String {
             exportCalled = true
+            onExportCallback?.invoke()
             return exportDataToReturn
         }
     }
@@ -743,6 +745,59 @@ class InboxViewModelAccountLifecycleTest {
     }
 
     @Test
+    fun `exportOperatorData reports error and does not invoke onSuccess if user signed out in flight`() = runTest {
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        accountService.onExportCallback = {
+            authService.signOut()
+        }
+
+        var exportSuccess = false
+        var errorReceived: String? = null
+        viewModel.exportOperatorData(
+            onSuccess = { exportSuccess = true },
+            onError = { errorReceived = it }
+        )
+        advanceUntilIdle()
+
+        assertTrue(accountService.exportCalled)
+        assertFalse(exportSuccess)
+        assertEquals("Session is no longer active", errorReceived)
+    }
+
+    @Test
+    fun `exportOperatorData reports error and does not invoke onSuccess if account switched in flight`() = runTest {
+        val sessionB = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator-b@cras.app",
+            accessToken = "jwt-session-b"
+        )
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        accountService.onExportCallback = {
+            accountService.onExportCallback = null
+            authService.setSession(sessionB)
+        }
+
+        var exportSuccess = false
+        var errorReceived: String? = null
+        viewModel.exportOperatorData(
+            onSuccess = { exportSuccess = true },
+            onError = { errorReceived = it }
+        )
+        advanceUntilIdle()
+
+        assertTrue(accountService.exportCalled)
+        assertFalse(exportSuccess)
+        assertEquals("Session is no longer active", errorReceived)
+        assertEquals(sessionB, authService.currentSession.value)
+    }
+
+    @Test
     fun `recoverAccount restores active state and reloads canonical tasks`() = runTest {
         accountService.statusToReturn = AccountStatus(
             deletionState = AccountDeletionState.PENDING_DELETION,
@@ -977,7 +1032,7 @@ class InboxViewModelAccountLifecycleTest {
 
         assertTrue(accountService.deleteCalled)
         assertFalse(deleteSuccess)
-        assertNull(errorReceived)
+        assertEquals("Session is no longer active", errorReceived)
         assertEquals(1, outboxStore.getOutbox(session.operatorId).size)
     }
 
@@ -1007,7 +1062,7 @@ class InboxViewModelAccountLifecycleTest {
 
         assertTrue(accountService.deleteCalled)
         assertFalse(deleteSuccess)
-        assertNull(errorReceived)
+        assertEquals("Session is no longer active", errorReceived)
         assertEquals(sessionB, authService.currentSession.value)
         assertEquals(sessionB, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
     }
@@ -1511,7 +1566,7 @@ class InboxViewModelAccountLifecycleTest {
 
         assertTrue(accountService.deleteCalled)
         assertFalse(deleteSuccess)
-        assertNull(errorReceived)
+        assertEquals("Session is no longer active", errorReceived)
         assertEquals(sessionB, authService.currentSession.value)
         assertEquals(sessionB, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
     }

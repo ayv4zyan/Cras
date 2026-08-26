@@ -78,7 +78,7 @@ fun CrasApp(
     viewModel: InboxViewModel,
     onGoogleSignInRequested: (() -> Unit)? = null,
     onGoogleReauthRequested: (((Boolean, String?) -> Unit) -> Unit)? = null,
-    onExportDataReady: ((String) -> Unit)? = null,
+    onExportDataReady: ((String, (Boolean, String?) -> Unit) -> Unit)? = null,
     voiceViewModel: VoiceViewModel? = null,
     onRequestMicPermission: (() -> Unit)? = null,
     /**
@@ -364,11 +364,16 @@ fun CrasApp(
                             onDownloadExport = { onSuccess, onError ->
                                 viewModel.exportOperatorData(
                                     onSuccess = { json ->
-                                        try {
-                                            onExportDataReady?.invoke(json)
+                                        if (onExportDataReady != null) {
+                                            onExportDataReady(json) { success, errorMsg ->
+                                                if (success) {
+                                                    onSuccess()
+                                                } else {
+                                                    onError(errorMsg ?: "Failed to export or save data")
+                                                }
+                                            }
+                                        } else {
                                             onSuccess()
-                                        } catch (e: Exception) {
-                                            onError(e.message ?: "Failed to export or save data")
                                         }
                                     },
                                     onError = { error ->

@@ -476,6 +476,9 @@ class AccountLifecycleJourneyTest {
 
         assertEquals(AccountDeletionState.PENDING_DELETION, viewModel.accountStatus.value?.deletionState)
 
+        val initialDeactivations = fakeInstallationService.deactivated.size
+        assertEquals(0, fakeInstallationService.registered.size)
+
         var recoverySuccess = false
         viewModel.recoverAccount(
             onSuccess = { recoverySuccess = true },
@@ -490,6 +493,10 @@ class AccountLifecycleJourneyTest {
         assertEquals("Recovered Task", viewModel.allTasks.value.first().title)
 
         assertEquals(AndroidNotificationStatus.Enabled, sync.status.value)
+        assertEquals(1, fakeInstallationService.registered.size)
+        assertEquals(notifPrefs.getOrCreateInstallationId(), fakeInstallationService.registered.single().id)
+        assertTrue(fakeInstallationService.registered.single().localEnabled)
+        assertEquals(initialDeactivations, fakeInstallationService.deactivated.size)
     }
 
     @Test

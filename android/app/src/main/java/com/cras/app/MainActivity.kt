@@ -45,7 +45,9 @@ import com.cras.app.voice.DirectoryVoiceRecordingStore
 import com.cras.app.voice.MicAudioRecorderFactory
 import com.cras.app.voice.SupabaseVoiceCaptureApi
 import com.cras.app.ui.voice.VoiceViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.File
 
@@ -215,21 +217,40 @@ class MainActivity : ComponentActivity() {
                     onRequestMicPermission = {
                         requestMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO)
                     },
-                    onExportDataReady = { exportJson ->
-                        val exportFile = File(cacheDir, "cras-export.json")
-                        exportFile.writeText(exportJson)
-                        val uri = FileProvider.getUriForFile(
-                            this@MainActivity,
-                            "${applicationContext.packageName}.fileprovider",
-                            exportFile
-                        )
-                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "application/json"
-                            putExtra(Intent.EXTRA_STREAM, uri)
-                            putExtra(Intent.EXTRA_TITLE, "cras-export.json")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    onExportDataReady = { exportJson, callback ->
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                val exportDir = File(cacheDir, "exports")
+                                if (!exportDir.exists()) {
+                                    exportDir.mkdirs()
+                                }
+                                val exportFile = File(exportDir, "cras-export.json")
+                                exportFile.writeText(exportJson)
+                                withContext(Dispatchers.Main) {
+                                    try {
+                                        val uri = FileProvider.getUriForFile(
+                                            this@MainActivity,
+                                            "${applicationContext.packageName}.fileprovider",
+                                            exportFile
+                                        )
+                                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "application/json"
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            putExtra(Intent.EXTRA_TITLE, "cras-export.json")
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        startActivity(Intent.createChooser(sendIntent, "Export Cras Operator Data"))
+                                        callback(true, null)
+                                    } catch (e: Exception) {
+                                        callback(false, e.message ?: "Failed to share export data")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    callback(false, e.message ?: "Failed to write export file")
+                                }
+                            }
                         }
-                        startActivity(Intent.createChooser(sendIntent, "Export Cras Operator Data"))
                     },
                     onGoogleReauthRequested = { callback ->
                         lifecycleScope.launch {

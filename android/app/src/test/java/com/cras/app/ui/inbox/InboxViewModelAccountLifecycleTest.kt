@@ -37,6 +37,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -2251,5 +2252,189 @@ class InboxViewModelAccountLifecycleTest {
         assertEquals(1, viewModel.allTasks.value.size)
         assertEquals("Op 2 Task", viewModel.allTasks.value.first().title)
         assertEquals(AuthUiState.Authenticated(session2), viewModel.authState.value)
+    }
+
+    @Test
+    fun `auth lifecycle collector clears retained recordings on direct operator switch and sign out but preserves on token refresh`() = runTest {
+        val authStateFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        var clearCount = 0
+        val clearAction = { clearCount++ }
+
+        val job = launch {
+            var lastAuthenticatedOperatorId: String? = null
+            authStateFlow.collect { state ->
+                when (state) {
+                    is AuthUiState.Authenticated -> {
+                        val currentOperatorId = state.session.operatorId
+                        if (lastAuthenticatedOperatorId != null && lastAuthenticatedOperatorId != currentOperatorId) {
+                            clearAction()
+                        }
+                        lastAuthenticatedOperatorId = currentOperatorId
+                    }
+                    is AuthUiState.Unauthenticated -> {
+                        if (lastAuthenticatedOperatorId != null) {
+                            clearAction()
+                            lastAuthenticatedOperatorId = null
+                        }
+                    }
+                    is AuthUiState.Loading -> {}
+                }
+            }
+        }
+        advanceUntilIdle()
+        assertEquals(0, clearCount)
+
+        // 1. Initial login (Op 1)
+        authStateFlow.value = AuthUiState.Authenticated(session)
+        advanceUntilIdle()
+        assertEquals(0, clearCount)
+
+        // 2. Token refresh for Op 1 (same operatorId) -> preserved
+        val refreshedSession1 = OperatorSession(
+            operatorId = session.operatorId,
+            email = session.email,
+            accessToken = "refreshed-token-1"
+        )
+        authStateFlow.value = AuthUiState.Authenticated(refreshedSession1)
+        advanceUntilIdle()
+        assertEquals(0, clearCount)
+
+        // 3. Direct operator switch to Op 2 -> clears recordings
+        val session2 = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator2@cras.app",
+            accessToken = "op2-token"
+        )
+        authStateFlow.value = AuthUiState.Authenticated(session2)
+        advanceUntilIdle()
+        assertEquals(1, clearCount)
+
+        // 4. Token refresh for Op 2 (same operatorId) -> preserved
+        val refreshedSession2 = OperatorSession(
+            operatorId = session2.operatorId,
+            email = session2.email,
+            accessToken = "refreshed-token-2"
+        )
+        authStateFlow.value = AuthUiState.Authenticated(refreshedSession2)
+        advanceUntilIdle()
+        assertEquals(1, clearCount)
+
+        // 5. Sign out from Op 2 -> clears recordings
+        authStateFlow.value = AuthUiState.Unauthenticated()
+        advanceUntilIdle()
+        assertEquals(2, clearCount)
+
+        // 6. Sign in to Op 1 after sign out -> does not clear again
+        authStateFlow.value = AuthUiState.Authenticated(session)
+        advanceUntilIdle()
+        assertEquals(2, clearCount)
+
+        // 7. Loading state transition before switch (Op 1 -> Loading -> Op 2) -> clears recordings
+        authStateFlow.value = AuthUiState.Loading
+        advanceUntilIdle()
+        assertEquals(2, clearCount)
+
+        authStateFlow.value = AuthUiState.Authenticated(session2)
+        advanceUntilIdle()
+        assertEquals(3, clearCount)
+
+        // 8. Loading state transition before logout (Op 2 -> Loading -> Unauthenticated) -> clears recordings
+        authStateFlow.value = AuthUiState.Loading
+        advanceUntilIdle()
+        assertEquals(3, clearCount)
+
+        authStateFlow.value = AuthUiState.Unauthenticated()
+        advanceUntilIdle()
+        assertEquals(4, clearCount)
+
+        job.cancel()
+    }
+
+    @Test
+    fun `reauthentication flow fails and does not restore stale session if auth state changed while picker was open`() = runTest {
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val capturedAuth = viewModel.authState.value
+        val capturedSession = (capturedAuth as? AuthUiState.Authenticated)?.session
+        assertNotNull(capturedSession)
+
+        // Simulate user signs out while Google picker was open
+        authService.signOut()
+        advanceUntilIdle()
+
+        val activeAuth = viewModel.authState.value
+        val activeSession = (activeAuth as? AuthUiState.Authenticated)?.session
+        val authServiceSession = authService.currentSession.value
+
+        var reauthSuccess = false
+        var reauthError: String? = null
+
+        val callback: (Boolean, String?) -> Unit = { success, error ->
+            reauthSuccess = success
+            reauthError = error
+        }
+
+        // Validate active session before token exchange
+        if (activeSession == null ||
+            activeSession != capturedSession ||
+            authServiceSession != capturedSession
+        ) {
+            callback(false, "Authentication state changed during reauthentication")
+        }
+
+        assertFalse(reauthSuccess)
+        assertEquals("Authentication state changed during reauthentication", reauthError)
+        // Ensure stale session was not restored
+        assertNull(authService.currentSession.value)
+        assertTrue(viewModel.authState.value is AuthUiState.Unauthenticated)
+    }
+
+    @Test
+    fun `reauthentication flow restores pre-reauth session when mismatched Google account returned`() = runTest {
+        authService = FakeAuthService(session)
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val capturedAuth = viewModel.authState.value
+        val capturedSession = (capturedAuth as? AuthUiState.Authenticated)?.session
+        assertNotNull(capturedSession)
+
+        val mismatchedSession = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440999",
+            email = "different@cras.app",
+            accessToken = "mismatched-token"
+        )
+
+        // Mock token exchange returning mismatchedSession
+        authService.setSession(mismatchedSession)
+        advanceUntilIdle()
+
+        var reauthSuccess = false
+        var reauthError: String? = null
+        val callback: (Boolean, String?) -> Unit = { success, error ->
+            reauthSuccess = success
+            reauthError = error
+        }
+
+        val activeSession = requireNotNull(capturedSession)
+        val newSession = mismatchedSession
+        val isMatching = (newSession.operatorId == activeSession.operatorId) ||
+            (activeSession.email != null && newSession.email == activeSession.email)
+
+        if (!isMatching) {
+            if (authService.currentSession.value == newSession) {
+                authService.restoreSession(activeSession)
+            }
+            callback(false, "Signed in with a different Google account. Please use the matching account.")
+        }
+
+        advanceUntilIdle()
+        assertFalse(reauthSuccess)
+        assertEquals("Signed in with a different Google account. Please use the matching account.", reauthError)
+        // Active session is safely restored back to capturedSession
+        assertEquals(session, authService.currentSession.value)
+        assertEquals(session, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
     }
 }

@@ -45,14 +45,18 @@ import com.cras.app.voice.DirectoryVoiceRecordingStore
 import com.cras.app.voice.MicAudioRecorderFactory
 import com.cras.app.voice.SupabaseVoiceCaptureApi
 import com.cras.app.ui.voice.VoiceViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.File
 
 class MainActivity : ComponentActivity() {
 
+    private val authOperationMutex = Mutex()
     private lateinit var googleAuthManager: GoogleAuthManager
     private lateinit var inboxViewModel: InboxViewModel
     private lateinit var voiceViewModel: VoiceViewModel
@@ -164,17 +168,30 @@ class MainActivity : ComponentActivity() {
         }
 
         // Retained recordings live in an install-wide directory: drop them the
-        // moment an Operator signs out so a later Operator cannot replay
-        // earlier audio through Voice retry.
+        // moment an Operator signs out or switches so a different Operator
+        // cannot replay earlier audio through Voice retry.
         lifecycleScope.launch {
-            var previousState: AuthUiState? = null
+            var lastAuthenticatedOperatorId: String? = null
             inboxViewModel.authState.collect { state ->
-                if (previousState is AuthUiState.Authenticated &&
-                    state is AuthUiState.Unauthenticated
-                ) {
-                    voiceViewModel.deleteAllRetainedRecordings()
+                when (state) {
+                    is AuthUiState.Authenticated -> {
+                        val currentOperatorId = state.session.operatorId
+                        if (lastAuthenticatedOperatorId != null && lastAuthenticatedOperatorId != currentOperatorId) {
+                            voiceViewModel.deleteAllRetainedRecordings()
+                        }
+                        lastAuthenticatedOperatorId = currentOperatorId
+                    }
+                    is AuthUiState.Unauthenticated -> {
+                        if (lastAuthenticatedOperatorId != null) {
+                            voiceViewModel.deleteAllRetainedRecordings()
+                            lastAuthenticatedOperatorId = null
+                        }
+                    }
+                    is AuthUiState.Loading -> {
+                        // Maintain lastAuthenticatedOperatorId across transient loading
+                        // states to ensure operator transitions are detected accurately.
+                    }
                 }
-                previousState = state
             }
         }
 
@@ -254,31 +271,53 @@ class MainActivity : ComponentActivity() {
                     },
                     onGoogleReauthRequested = { callback ->
                         lifecycleScope.launch {
+                            val capturedAuth = inboxViewModel.authState.value
+                            val capturedSession = (capturedAuth as? AuthUiState.Authenticated)?.session
+                            if (capturedSession == null) {
+                                callback(false, "Operator is not authenticated")
+                                return@launch
+                            }
+
                             when (val result = googleAuthManager.getGoogleIdToken()) {
                                 is GoogleSignInResult.Success -> {
-                                    val currentAuth = inboxViewModel.authState.value
-                                    val currentSession = (currentAuth as? AuthUiState.Authenticated)?.session
-                                    val currentEmail = currentSession?.email
-                                    val currentOperatorId = currentSession?.operatorId
+                                    authOperationMutex.withLock {
+                                        val activeAuth = inboxViewModel.authState.value
+                                        val activeSession = (activeAuth as? AuthUiState.Authenticated)?.session
+                                        val authServiceSession = authService.currentSession.value
 
-                                    try {
-                                        val newSession = authService.signInWithGoogleIdToken(result.idToken, result.nonce)
-                                        if ((currentOperatorId != null && newSession.operatorId == currentOperatorId) ||
-                                            (currentEmail != null && newSession.email == currentEmail)) {
-                                            callback(true, null)
-                                        } else {
-                                            if (currentSession != null) {
-                                                authService.restoreSession(currentSession)
+                                        if (activeSession == null ||
+                                            activeSession != capturedSession ||
+                                            authServiceSession != capturedSession
+                                        ) {
+                                            callback(false, "Authentication state changed during reauthentication")
+                                            return@withLock
+                                        }
+
+                                        try {
+                                            val newSession = authService.signInWithGoogleIdToken(result.idToken, result.nonce)
+                                            val currentEmail = activeSession.email
+                                            val currentOperatorId = activeSession.operatorId
+
+                                            if (newSession.operatorId == currentOperatorId ||
+                                                (currentEmail != null && newSession.email == currentEmail)
+                                            ) {
+                                                callback(true, null)
                                             } else {
-                                                runCatching { authService.signOut() }
+                                                if (authService.currentSession.value == newSession) {
+                                                    authService.restoreSession(activeSession)
+                                                }
+                                                callback(false, "Signed in with a different Google account. Please use the matching account.")
                                             }
-                                            callback(false, "Signed in with a different Google account. Please use the matching account.")
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            if (authService.currentSession.value != activeSession &&
+                                                authService.currentSession.value != null
+                                            ) {
+                                                runCatching { authService.restoreSession(activeSession) }
+                                            }
+                                            callback(false, e.message ?: "Reauthentication failed")
                                         }
-                                    } catch (e: Exception) {
-                                        if (currentSession != null && (inboxViewModel.authState.value as? AuthUiState.Authenticated)?.session != currentSession) {
-                                            runCatching { authService.restoreSession(currentSession) }
-                                        }
-                                        callback(false, e.message ?: "Reauthentication failed")
                                     }
                                 }
                                 is GoogleSignInResult.Error -> {
@@ -294,10 +333,14 @@ class MainActivity : ComponentActivity() {
                         lifecycleScope.launch {
                             when (val result = googleAuthManager.getGoogleIdToken()) {
                                 is GoogleSignInResult.Success -> {
-                                    inboxViewModel.signInWithGoogleIdToken(result.idToken, result.nonce)
+                                    authOperationMutex.withLock {
+                                        inboxViewModel.signInWithGoogleIdToken(result.idToken, result.nonce)
+                                    }
                                 }
                                 is GoogleSignInResult.Error -> {
-                                    inboxViewModel.signInWithGoogleIdToken("invalid_error_token")
+                                    authOperationMutex.withLock {
+                                        inboxViewModel.signInWithGoogleIdToken("invalid_error_token")
+                                    }
                                 }
                                 is GoogleSignInResult.Cancelled -> {
                                     // User cancelled selection

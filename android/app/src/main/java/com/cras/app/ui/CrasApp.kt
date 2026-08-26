@@ -38,24 +38,32 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.cras.app.ui.auth.SignInScreen
-import com.cras.app.models.Task
+import com.cras.app.auth.OperatorSession
+import com.cras.app.data.AccountDeletionState
 import com.cras.app.data.UpdateTaskParams
+import com.cras.app.domain.TimedPlanType
 import com.cras.app.domain.filterSubtasks
+import com.cras.app.models.Label
+import com.cras.app.models.Task
 import com.cras.app.quickaccess.DeepLinkAction
+import com.cras.app.ui.account.AccountDeletionDialog
+import com.cras.app.ui.account.DeletionFlowStep
+import com.cras.app.ui.account.FrozenAccountScreen
+import com.cras.app.ui.auth.SignInScreen
 import com.cras.app.ui.completed.CompletedScreen
 import com.cras.app.ui.detail.TaskDetailDialog
 import com.cras.app.ui.inbox.AuthUiState
 import com.cras.app.ui.inbox.InboxScreen
 import com.cras.app.ui.inbox.InboxViewModel
 import com.cras.app.ui.labels.LabelManagerDialog
+import com.cras.app.ui.settings.SettingsDialog
 import com.cras.app.ui.today.TodayScreen
 import com.cras.app.ui.upcoming.UpcomingScreen
 import com.cras.app.ui.voice.VoiceCaptureDialog
 import com.cras.app.ui.voice.VoiceViewModel
 import kotlinx.coroutines.launch
 
-enum class AppView(
+private enum class AppView(
     val title: String,
     val icon: ImageVector
 ) {
@@ -69,6 +77,8 @@ enum class AppView(
 fun CrasApp(
     viewModel: InboxViewModel,
     onGoogleSignInRequested: (() -> Unit)? = null,
+    onGoogleReauthRequested: (((Boolean, String?) -> Unit) -> Unit)? = null,
+    onExportDataReady: ((String, (Boolean, String?) -> Unit) -> Unit)? = null,
     voiceViewModel: VoiceViewModel? = null,
     onRequestMicPermission: (() -> Unit)? = null,
     /**
@@ -81,10 +91,12 @@ fun CrasApp(
     onDeepLinkConsumed: () -> Unit = {}
 ) {
     val authState by viewModel.authState.collectAsState()
+    val accountStatus by viewModel.accountStatus.collectAsState()
     val inboxState by viewModel.inboxState.collectAsState()
     val todayState by viewModel.todayState.collectAsState()
     val upcomingState by viewModel.upcomingState.collectAsState()
     val completedState by viewModel.completedState.collectAsState()
+    val operatorTimedPlanType by viewModel.operatorTimedPlanType.collectAsState()
     val effectiveTimedPlanType by viewModel.effectiveTimedPlanType.collectAsState()
     val labels by viewModel.labels.collectAsState()
     val comments by viewModel.comments.collectAsState()
@@ -95,6 +107,11 @@ fun CrasApp(
 
     var currentView by remember { mutableStateOf(AppView.INBOX) }
     var isLabelManagerOpen by remember { mutableStateOf(false) }
+    var isSettingsOpen by remember { mutableStateOf(false) }
+    var isAccountDeletionOpen by remember { mutableStateOf(false) }
+    var accountDeletionStep by remember { mutableStateOf(DeletionFlowStep.OVERVIEW) }
+    var isRecovering by remember { mutableStateOf(false) }
+    var recoveryErrorMessage by remember { mutableStateOf<String?>(null) }
     var isVoiceCaptureOpen by remember { mutableStateOf(false) }
     var isCreateFocused by remember { mutableStateOf(false) }
     var voiceFocusedTask by remember { mutableStateOf<Task?>(null) }
@@ -152,6 +169,33 @@ fun CrasApp(
         }
 
         is AuthUiState.Authenticated -> {
+            if (accountStatus?.deletionState == AccountDeletionState.PENDING_DELETION) {
+                FrozenAccountScreen(
+                    userEmail = state.session.email,
+                    deletionDeadline = accountStatus?.deletionDeadline,
+                    recoveryAvailable = accountStatus?.recoveryAvailable ?: false,
+                    isRecovering = isRecovering,
+                    errorMessage = recoveryErrorMessage,
+                    onRecover = {
+                        isRecovering = true
+                        recoveryErrorMessage = null
+                        viewModel.recoverAccount(
+                            onSuccess = {
+                                isRecovering = false
+                            },
+                            onError = { error ->
+                                isRecovering = false
+                                recoveryErrorMessage = error
+                            }
+                        )
+                    },
+                    onSignOut = {
+                        viewModel.signOut()
+                    }
+                )
+                return
+            }
+
             Scaffold(
                 snackbarHost = { SnackbarHost(snackbarHostState) },
                 bottomBar = {
@@ -202,6 +246,7 @@ fun CrasApp(
                                     viewModel.selectTask(task)
                                 },
                                 onOpenLabelManager = { isLabelManagerOpen = true },
+                                onOpenSettings = { isSettingsOpen = true },
                                 onStartVoiceCapture = {
                                     voiceFocusedTask = null
                                     voiceViewModel?.open(null)
@@ -237,6 +282,7 @@ fun CrasApp(
                                     viewModel.selectTask(task)
                                 },
                                 onOpenLabelManager = { isLabelManagerOpen = true },
+                                onOpenSettings = { isSettingsOpen = true },
                                 onRefresh = { viewModel.loadTasks() },
                                 onSignOut = { viewModel.signOut() }
                             )
@@ -261,6 +307,7 @@ fun CrasApp(
                                     viewModel.selectTask(task)
                                 },
                                 onOpenLabelManager = { isLabelManagerOpen = true },
+                                onOpenSettings = { isSettingsOpen = true },
                                 onRefresh = { viewModel.loadTasks() },
                                 onSignOut = { viewModel.signOut() }
                             )
@@ -285,10 +332,82 @@ fun CrasApp(
                                     viewModel.selectTask(task)
                                 },
                                 onOpenLabelManager = { isLabelManagerOpen = true },
+                                onOpenSettings = { isSettingsOpen = true },
                                 onRefresh = { viewModel.loadTasks() },
                                 onSignOut = { viewModel.signOut() }
                             )
                         }
+                    }
+
+                    if (isSettingsOpen) {
+                        SettingsDialog(
+                            userEmail = state.session.email,
+                            operatorTimedPlanType = operatorTimedPlanType,
+                            effectiveDefaultTimedPlanType = effectiveTimedPlanType,
+                            onDismiss = { isSettingsOpen = false },
+                            onTimedPlanTypeChanged = { type ->
+                                viewModel.updateOperatorTimedPlanType(type)
+                            },
+                            onDeleteAccountRequested = {
+                                isSettingsOpen = false
+                                accountDeletionStep = DeletionFlowStep.OVERVIEW
+                                isAccountDeletionOpen = true
+                            }
+                        )
+                    }
+
+                    if (isAccountDeletionOpen) {
+                        AccountDeletionDialog(
+                            userEmail = state.session.email,
+                            initialStep = accountDeletionStep,
+                            onDismiss = { isAccountDeletionOpen = false },
+                            onDownloadExport = { onSuccess, onError ->
+                                viewModel.exportOperatorData(
+                                    onSuccess = { json ->
+                                        if (onExportDataReady != null) {
+                                            onExportDataReady(json) { success, errorMsg ->
+                                                if (success) {
+                                                    onSuccess()
+                                                } else {
+                                                    onError(errorMsg ?: "Failed to export or save data")
+                                                }
+                                            }
+                                        } else {
+                                            onSuccess()
+                                        }
+                                    },
+                                    onError = { error ->
+                                        onError(error)
+                                    }
+                                )
+                            },
+                            onReauthenticate = {
+                                if (onGoogleReauthRequested != null) {
+                                    onGoogleReauthRequested { success, errorMsg ->
+                                        if (success) {
+                                            accountDeletionStep = DeletionFlowStep.CONFIRM
+                                        } else if (errorMsg != null) {
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(errorMsg)
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    accountDeletionStep = DeletionFlowStep.CONFIRM
+                                }
+                            },
+                            onConfirmDeletion = { onSuccess, onError ->
+                                viewModel.requestAccountDeletion(
+                                    onSuccess = { confirmation ->
+                                        isAccountDeletionOpen = false
+                                        onSuccess()
+                                    },
+                                    onError = { error ->
+                                        onError(error)
+                                    }
+                                )
+                            }
+                        )
                     }
 
                     if (selectedTask != null) {

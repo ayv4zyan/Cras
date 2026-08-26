@@ -31,6 +31,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -74,6 +75,12 @@ class InboxViewModelInstallationTest {
         }
 
         override suspend fun restoreSession(): OperatorSession? = store.loadSession()
+
+        override suspend fun restoreSession(session: OperatorSession): OperatorSession {
+            store.saveSession(session)
+            sessionFlow.value = session
+            return session
+        }
 
         override suspend fun signOut() {
             events.add("auth-sign-out")
@@ -205,5 +212,37 @@ class InboxViewModelInstallationTest {
             "installation deactivation must happen before auth sign-out",
             events.indexOf("installation-deactivated") < events.indexOf("auth-sign-out")
         )
+    }
+
+    @Test
+    fun `reconcileInstallation and setNotificationsEnabled do not invoke service with stale session after signOut`() = runTest(dispatcher) {
+        var registerCallCount = 0
+        val service = object : RecordingInstallationService() {
+            override suspend fun registerOrUpdate(
+                session: OperatorSession,
+                params: RegisterInstallationParams
+            ): com.cras.app.data.InstallationRecord {
+                registerCallCount++
+                events.add("installation-reconciled")
+                return super.registerOrUpdate(session, params)
+            }
+        }
+        val sync = NotificationInstallationSync(service, InMemoryNotificationPreferenceStore(), { com.cras.app.notification.PlatformPermissionState.GRANTED }, { "fcm-token" })
+        val viewModel = createViewModel(sync)
+
+        authSessionFlow.value = sessionA
+        advanceUntilIdle()
+
+        val initialReconciliations = registerCallCount
+
+        // Trigger reconcile and notifications enabled before & after signOut
+        viewModel.signOut()
+        viewModel.reconcileInstallation()
+        viewModel.setNotificationsEnabled(true)
+        advanceUntilIdle()
+
+        assertEquals(initialReconciliations, registerCallCount)
+        assertEquals(1, service.deactivatedIds.size)
+        assertNull(authSessionFlow.value)
     }
 }

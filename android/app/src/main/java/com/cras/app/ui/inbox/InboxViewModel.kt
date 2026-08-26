@@ -4,10 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.cras.app.auth.AuthService
 import com.cras.app.auth.OperatorSession
+import com.cras.app.data.AccountDeletionState
+import com.cras.app.data.AccountLifecycleException
+import com.cras.app.data.AccountService
+import com.cras.app.data.AccountStatus
 import com.cras.app.data.CommentService
 import com.cras.app.data.CreateCommentParams
 import com.cras.app.data.CreateLabelParams
 import com.cras.app.data.CreateTaskParams
+import com.cras.app.data.DeletionConfirmation
 import com.cras.app.data.InMemoryOutboxStore
 import com.cras.app.data.InvalidationPayload
 import com.cras.app.data.LabelService
@@ -35,6 +40,7 @@ import com.cras.app.models.Plan
 import com.cras.app.models.Task
 import com.cras.app.notification.AndroidNotificationStatus
 import com.cras.app.notification.NotificationInstallationSync
+import com.cras.app.voice.VoiceRecordingStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -45,9 +51,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
+
+private enum class VerificationState {
+    UNVERIFIED,
+    VERIFIED,
+    NETWORK_ERROR
+}
 
 private sealed interface QueueItem {
     val session: OperatorSession
@@ -103,7 +117,9 @@ class InboxViewModel(
     private val commentService: CommentService,
     private val settingsService: SettingsService? = null,
     private val realtimeService: RealtimeService? = null,
+    private val accountService: AccountService? = null,
     private val outboxStore: OutboxStore = InMemoryOutboxStore(),
+    private val voiceRecordingStore: VoiceRecordingStore? = null,
     private val installationSync: NotificationInstallationSync? = null,
     private val nowProvider: () -> Instant = { Instant.now() },
     private val zoneIdProvider: () -> ZoneId = { ZoneId.systemDefault() }
@@ -111,6 +127,9 @@ class InboxViewModel(
 
     private val _authState = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
     val authState: StateFlow<AuthUiState> = _authState.asStateFlow()
+
+    private val _accountStatus = MutableStateFlow<AccountStatus?>(null)
+    val accountStatus: StateFlow<AccountStatus?> = _accountStatus.asStateFlow()
 
     private val _allTasks = MutableStateFlow<List<Task>>(emptyList())
     val allTasks: StateFlow<List<Task>> = _allTasks.asStateFlow()
@@ -126,6 +145,9 @@ class InboxViewModel(
 
     private val _completedState = MutableStateFlow<CompletedUiState>(CompletedUiState.Loading)
     val completedState: StateFlow<CompletedUiState> = _completedState.asStateFlow()
+
+    private val _operatorTimedPlanType = MutableStateFlow<TimedPlanType?>(null)
+    val operatorTimedPlanType: StateFlow<TimedPlanType?> = _operatorTimedPlanType.asStateFlow()
 
     private val _effectiveTimedPlanType = MutableStateFlow<TimedPlanType>(TimedPlanType.INSTANT)
     val effectiveTimedPlanType: StateFlow<TimedPlanType> = _effectiveTimedPlanType.asStateFlow()
@@ -144,6 +166,7 @@ class InboxViewModel(
 
     private var routedTaskId: String? = null
     private var pendingCompletionTaskId: String? = null
+    private var verificationState: VerificationState = if (accountService == null) VerificationState.VERIFIED else VerificationState.UNVERIFIED
 
     private val _isCreatingTask = MutableStateFlow(false)
     val isCreatingTask: StateFlow<Boolean> = _isCreatingTask.asStateFlow()
@@ -158,6 +181,7 @@ class InboxViewModel(
     val createLabelError: StateFlow<String?> = _createLabelError.asStateFlow()
 
     private val outboxDrainer by lazy { OutboxDrainer(taskService, outboxStore) }
+    private val sessionMutex = Mutex()
 
     private var realtimeSubscription: RealtimeSubscription? = null
     private val queue = ArrayDeque<QueueItem>()
@@ -190,50 +214,40 @@ class InboxViewModel(
 
         viewModelScope.launch {
             authService.currentSession.collect { session ->
-                synchronized(queue) {
-                    queue.clear()
-                }
-                realtimeSubscription?.unsubscribe()
-                realtimeSubscription = null
+                val previousAuth = _authState.value
+                val previousSession = (previousAuth as? AuthUiState.Authenticated)?.session
 
                 if (session != null) {
-                    _authState.value = AuthUiState.Authenticated(session)
-                    triggerLoadTasks(session)
-                    viewModelScope.launch {
-                        loadSettingsInternal(session)
-                    }
-                    installationSync?.let { sync ->
-                        viewModelScope.launch {
-                            runCatching { sync.reconcile(session) }
+                    if (previousSession != null && isSameOperator(previousSession, session)) {
+                        // Token refresh for the same operator: preserve cached state, subscriptions, and queue.
+                        _authState.value = AuthUiState.Authenticated(session)
+                    } else {
+                        // Initial login or operator switch
+                        synchronized(queue) {
+                            queue.clear()
                         }
-                    }
+                        realtimeSubscription?.unsubscribe()
+                        realtimeSubscription = null
+                        _accountStatus.value = null
+                        verificationState = if (accountService == null) VerificationState.VERIFIED else VerificationState.UNVERIFIED
+                        clearLocalDataInMemory()
 
-                    realtimeSubscription = realtimeService?.subscribeToInvalidations(
-                        session = session,
-                        onInvalidate = { payload ->
-                            handleInvalidationEvent(session, payload)
-                        },
-                        onReconnect = {
-                            viewModelScope.launch {
-                                val currentAuth = _authState.value
-                                if (currentAuth is AuthUiState.Authenticated && currentAuth.session == session) {
-                                    triggerLoadTasks(session)
-                                }
-                            }
+                        _authState.value = AuthUiState.Authenticated(session)
+                        viewModelScope.launch {
+                            checkAccountStatusInternal(session)
                         }
-                    )
+                    }
                 } else {
+                    // Sign out
+                    synchronized(queue) {
+                        queue.clear()
+                    }
+                    realtimeSubscription?.unsubscribe()
+                    realtimeSubscription = null
+                    _accountStatus.value = null
+                    verificationState = if (accountService == null) VerificationState.VERIFIED else VerificationState.UNVERIFIED
+                    clearLocalDataInMemory()
                     _authState.value = AuthUiState.Unauthenticated()
-                    _allTasks.value = emptyList()
-                    _inboxState.value = InboxUiState.Empty
-                    _todayState.value = TodayUiState.Empty
-                    _upcomingState.value = UpcomingUiState.Empty
-                    _completedState.value = CompletedUiState.Empty
-                    _effectiveTimedPlanType.value = TimedPlanType.INSTANT
-                    _labels.value = emptyList()
-                    _comments.value = emptyList()
-                    _commentsError.value = null
-                    _selectedTask.value = null
                 }
             }
         }
@@ -264,6 +278,11 @@ class InboxViewModel(
      * reconciliation.
      */
     fun focusRoutedTask(taskId: String) {
+        if (isAccountPendingDeletion()) return
+        if (!isAccountStatusVerified()) {
+            routedTaskId = taskId
+            return
+        }
         val match = _allTasks.value.firstOrNull { it.id == taskId }
         if (match != null) {
             routedTaskId = null
@@ -286,6 +305,11 @@ class InboxViewModel(
      * retained and executed once authenticated and the matching task is loaded.
      */
     fun completeRoutedTask(taskId: String) {
+        if (isAccountPendingDeletion()) return
+        if (!isAccountStatusVerified()) {
+            pendingCompletionTaskId = taskId
+            return
+        }
         val currentAuth = _authState.value
         val match = _allTasks.value.firstOrNull { it.id == taskId }
         if (currentAuth is AuthUiState.Authenticated && match != null) {
@@ -325,17 +349,20 @@ class InboxViewModel(
         realtimeSubscription?.unsubscribe()
         realtimeSubscription = null
         viewModelScope.launch {
-            val currentAuth = _authState.value
-            // Sign-out immediately disables the Operator-bound installation and
-            // cancels its jobs before the session itself is cleared.
-            if (currentAuth is AuthUiState.Authenticated && installationSync != null) {
-                runCatching { installationSync.deactivateForSignOut(currentAuth.session) }
+            sessionMutex.withLock {
+                val currentAuth = _authState.value
+                // Sign-out immediately disables the Operator-bound installation and
+                // cancels its jobs before the session itself is cleared.
+                if (currentAuth is AuthUiState.Authenticated && installationSync != null) {
+                    runCatching { installationSync.deactivateForSignOut(currentAuth.session) }
+                }
+                authService.signOut()
             }
-            authService.signOut()
         }
     }
 
     fun loadTasks() {
+        if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
         if (currentAuth is AuthUiState.Authenticated) {
             triggerLoadTasks(currentAuth.session)
@@ -353,30 +380,39 @@ class InboxViewModel(
      * session is active, per the shared installation lifecycle.
      */
     fun reconcileInstallation() {
+        if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
         if (currentAuth is AuthUiState.Authenticated) {
+            val session = currentAuth.session
             installationSync?.let { sync ->
                 viewModelScope.launch {
-                    runCatching { sync.reconcile(currentAuth.session) }
+                    sessionMutex.withLock {
+                        if (!isSessionActive(session)) return@withLock
+                        runCatching { sync.reconcile(session) }
+                    }
                 }
             }
         }
     }
 
     fun setNotificationsEnabled(enabled: Boolean) {
-        installationSync ?: return
+        if (!isAccountOperationAllowed()) return
+        val sync = installationSync ?: return
         val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated) return
+        val session = currentAuth.session
         viewModelScope.launch {
-            runCatching {
-                installationSync.setLocalEnabled(
-                    enabled,
-                    (currentAuth as? AuthUiState.Authenticated)?.session
-                )
+            sessionMutex.withLock {
+                if (!isSessionActive(session)) return@withLock
+                runCatching {
+                    sync.setLocalEnabled(enabled, session)
+                }
             }
         }
     }
 
     private fun triggerLoadTasks(session: OperatorSession) {
+        if (!isAccountOperationAllowed()) return
         enqueueReload(session)
     }
 
@@ -415,6 +451,7 @@ class InboxViewModel(
     }
 
     fun applyTaskUpdate(updated: Task) {
+        if (!isAccountOperationAllowed()) return
         _allTasks.update { current ->
             val exists = current.any { it.id == updated.id }
             if (!exists) {
@@ -445,6 +482,7 @@ class InboxViewModel(
     }
 
     fun reconcileFreshTasks(freshTasks: List<Task>) {
+        if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
         val outbox = if (currentAuth is AuthUiState.Authenticated) {
             outboxStore.getOutbox(currentAuth.session.operatorId)
@@ -484,12 +522,14 @@ class InboxViewModel(
     }
 
     private fun handleInvalidationEvent(session: OperatorSession, event: InvalidationPayload) {
+        if (!isAccountOperationAllowed()) return
         enqueueInvalidation(session, event)
     }
 
     private suspend fun processQueueItem(item: QueueItem) {
+        if (!isAccountOperationAllowed()) return
         val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != item.session) {
+        if (currentAuth !is AuthUiState.Authenticated || !isSameOperator(currentAuth.session, item.session)) {
             return
         }
 
@@ -504,15 +544,16 @@ class InboxViewModel(
     }
 
     private fun enqueueInvalidation(session: OperatorSession, payload: InvalidationPayload) {
+        if (!isAccountOperationAllowed()) return
         synchronized(queue) {
-            val hasPendingReload = queue.any { it is QueueItem.Reload && it.session == session }
+            val hasPendingReload = queue.any { it is QueueItem.Reload && isSameOperator(it.session, session) }
             if (hasPendingReload) {
                 return
             }
 
             val existingIndex = queue.indexOfFirst { item ->
                 item is QueueItem.Invalidation &&
-                    item.session == session &&
+                    isSameOperator(item.session, session) &&
                     item.payload.resource == payload.resource &&
                     (item.payload.resource == "label" || item.payload.id == payload.id)
             }
@@ -521,7 +562,7 @@ class InboxViewModel(
                 queue[existingIndex] = QueueItem.Invalidation(session, payload)
             } else {
                 if (queue.size >= MAX_QUEUE_CAPACITY) {
-                    queue.removeAll { it.session == session }
+                    queue.removeAll { isSameOperator(it.session, session) }
                     queue.addLast(QueueItem.Reload(session))
                 } else {
                     queue.addLast(QueueItem.Invalidation(session, payload))
@@ -532,11 +573,12 @@ class InboxViewModel(
     }
 
     private fun enqueueReload(session: OperatorSession) {
+        if (!isAccountOperationAllowed()) return
         synchronized(queue) {
-            val alreadyHasReload = queue.any { it is QueueItem.Reload && it.session == session }
+            val alreadyHasReload = queue.any { it is QueueItem.Reload && isSameOperator(it.session, session) }
             if (!alreadyHasReload) {
                 if (queue.size >= MAX_QUEUE_CAPACITY) {
-                    queue.removeAll { it.session == session }
+                    queue.removeAll { isSameOperator(it.session, session) }
                 }
                 queue.addLast(QueueItem.Reload(session))
             }
@@ -545,8 +587,7 @@ class InboxViewModel(
     }
 
     private suspend fun handleInvalidationEventInternal(session: OperatorSession, event: InvalidationPayload) {
-        val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) return
+        if (!isSessionActive(session)) return
 
         when (event.resource) {
             "task" -> {
@@ -554,10 +595,12 @@ class InboxViewModel(
                     "updated", "created" -> {
                         try {
                             val freshTask = taskService.fetchTaskById(session, event.id)
+                            if (!isSessionActive(session)) return
                             if (freshTask != null) {
                                 applyTaskUpdate(freshTask)
                             } else {
                                 val freshTasks = taskService.fetchTasks(session)
+                                if (!isSessionActive(session)) return
                                 reconcileFreshTasks(freshTasks)
                             }
                         } catch (e: CancellationException) {
@@ -566,12 +609,14 @@ class InboxViewModel(
                             val freshTasks = runCatching { taskService.fetchTasks(session) }
                                 .onFailure { if (it is CancellationException) throw it }
                                 .getOrNull()
+                            if (!isSessionActive(session)) return
                             if (freshTasks != null) {
                                 reconcileFreshTasks(freshTasks)
                             }
                         }
                     }
                     "deleted" -> {
+                        if (!isSessionActive(session)) return
                         _allTasks.update { current ->
                             current.filterNot { it.id == event.id }
                         }
@@ -591,6 +636,7 @@ class InboxViewModel(
                 val freshLabels = runCatching { labelService.fetchLabels(session) }
                     .onFailure { if (it is CancellationException) throw it }
                     .getOrNull()
+                if (!isSessionActive(session)) return
                 if (freshLabels != null) {
                     _labels.value = freshLabels
                 }
@@ -601,6 +647,7 @@ class InboxViewModel(
                     val freshComments = runCatching { commentService.fetchComments(session) }
                         .onFailure { if (it is CancellationException) throw it }
                         .getOrNull()
+                    if (!isSessionActive(session)) return
                     if (freshComments != null) {
                         _comments.value = freshComments
                         _commentsError.value = null
@@ -611,13 +658,15 @@ class InboxViewModel(
     }
 
     private suspend fun loadSettingsInternal(session: OperatorSession) {
-        if (settingsService == null) return
+        if (settingsService == null || !isSessionActive(session)) return
         try {
+            val settings = settingsService.fetchOperatorSettings(session)
             val effective = settingsService.fetchEffectiveTimedPlanType(session)
-            val currentAuth = _authState.value
-            if (currentAuth is AuthUiState.Authenticated && currentAuth.session == session) {
-                _effectiveTimedPlanType.value = effective
+            if (!isSessionActive(session)) {
+                return
             }
+            _operatorTimedPlanType.value = settings?.defaultTimedPlanType
+            _effectiveTimedPlanType.value = effective
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -631,8 +680,7 @@ class InboxViewModel(
         onGeneralError: ((String) -> Unit)? = null,
         onNetworkError: ((String) -> Unit)? = null
     ) {
-        val currentAuth = _authState.value
-        if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) {
+        if (!isSessionActive(session)) {
             return
         }
 
@@ -640,8 +688,7 @@ class InboxViewModel(
             session = session,
             callbacks = object : OutboxDrainCallbacks {
                 private fun isSessionValid(): Boolean {
-                    val current = _authState.value
-                    return current is AuthUiState.Authenticated && current.session == session
+                    return isSessionActive(session)
                 }
 
                 override suspend fun onTaskCreated(task: Task) {
@@ -692,6 +739,7 @@ class InboxViewModel(
     }
 
     private suspend fun loadTasksInternal(session: OperatorSession) {
+        if (!isSessionActive(session)) return
         if (_inboxState.value !is InboxUiState.Success) {
             _inboxState.value = InboxUiState.Loading
         }
@@ -711,8 +759,7 @@ class InboxViewModel(
             val commentsResult = runCatching { commentService.fetchComments(session) }
                 .onFailure { if (it is CancellationException) throw it }
 
-            val currentAuth = _authState.value
-            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) {
+            if (!isSessionActive(session)) {
                 return
             }
 
@@ -729,8 +776,7 @@ class InboxViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            val currentAuth = _authState.value
-            if (currentAuth !is AuthUiState.Authenticated || currentAuth.session != session) {
+            if (!isSessionActive(session)) {
                 return
             }
             if (isNetworkError(e)) {
@@ -756,25 +802,37 @@ class InboxViewModel(
         onSuccess: (Label) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) {
             onError("Not authenticated")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             _isCreatingLabel.value = true
             _createLabelError.value = null
             try {
+                if (!isSessionActive(session)) return@launch
                 val created = labelService.createLabel(
-                    session = currentAuth.session,
+                    session = session,
                     params = CreateLabelParams(name = name, color = color)
                 )
+                if (!isSessionActive(session)) return@launch
                 _labels.value = _labels.value + created
                 onSuccess(created)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionActive(session)) return@launch
                 val errorMsg = e.message ?: "Failed to create label"
                 _createLabelError.value = errorMsg
                 onError(errorMsg)
@@ -791,24 +849,36 @@ class InboxViewModel(
         onSuccess: (Label) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) {
             onError("Not authenticated")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
+                if (!isSessionActive(session)) return@launch
                 val updated = labelService.updateLabel(
-                    session = currentAuth.session,
+                    session = session,
                     params = UpdateLabelParams(id = id, name = name, color = color)
                 )
+                if (!isSessionActive(session)) return@launch
                 _labels.value = _labels.value.map { if (it.id == id) updated else it }
-                triggerLoadTasks(currentAuth.session)
+                triggerLoadTasks(session)
                 onSuccess(updated)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionActive(session)) return@launch
                 val errorMsg = e.message ?: "Failed to update label"
                 onError(errorMsg)
             }
@@ -820,21 +890,33 @@ class InboxViewModel(
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) {
             onError("Not authenticated")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
-                labelService.deleteLabel(currentAuth.session, id)
+                if (!isSessionActive(session)) return@launch
+                labelService.deleteLabel(session, id)
+                if (!isSessionActive(session)) return@launch
                 _labels.value = _labels.value.filterNot { it.id == id }
-                triggerLoadTasks(currentAuth.session)
+                triggerLoadTasks(session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionActive(session)) return@launch
                 val errorMsg = e.message ?: "Failed to delete label"
                 onError(errorMsg)
             }
@@ -847,6 +929,14 @@ class InboxViewModel(
         onSuccess: (Comment) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val trimmedContent = content.trim()
         if (trimmedContent.isEmpty()) {
             onError("Comment content cannot be empty")
@@ -858,18 +948,22 @@ class InboxViewModel(
             onError("Not authenticated")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
+                if (!isSessionActive(session)) return@launch
                 val created = commentService.createComment(
-                    session = currentAuth.session,
+                    session = session,
                     params = CreateCommentParams(taskId = taskId, content = trimmedContent)
                 )
+                if (!isSessionActive(session)) return@launch
                 _comments.value = _comments.value + created
                 onSuccess(created)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionActive(session)) return@launch
                 val errorMsg = e.message ?: "Failed to create comment"
                 onError(errorMsg)
             }
@@ -882,6 +976,14 @@ class InboxViewModel(
         onSuccess: (Task) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
+        if (!isOfflineMutationAllowed()) {
+            onError("Account verification in progress")
+            return
+        }
         val trimmedTitle = title.trim()
         if (trimmedTitle.isEmpty()) {
             onError("Task title cannot be empty")
@@ -953,6 +1055,14 @@ class InboxViewModel(
         onError: (String) -> Unit = {},
         onSuccess: () -> Unit = {}
     ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
+        if (!isOfflineMutationAllowed()) {
+            onError("Account verification in progress")
+            return
+        }
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
 
@@ -1024,24 +1134,36 @@ class InboxViewModel(
         onError: (String) -> Unit,
         mutation: suspend (OperatorSession) -> Task
     ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) {
             onError("Not authenticated")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
-                val updatedTask = mutation(currentAuth.session)
+                if (!isSessionActive(session)) return@launch
+                val updatedTask = mutation(session)
+                if (!isSessionActive(session)) return@launch
                 applyTaskUpdate(updatedTask)
-                triggerLoadTasks(currentAuth.session)
+                triggerLoadTasks(session)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionActive(session)) return@launch
                 val errorMsg = e.message ?: defaultError
                 // Reload canonical state after a conflict or error to avoid stale overwrites
-                triggerLoadTasks(currentAuth.session)
+                triggerLoadTasks(session)
                 onError(errorMsg)
             }
         }
@@ -1074,6 +1196,14 @@ class InboxViewModel(
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
+        if (!isOfflineMutationAllowed()) {
+            onError("Account verification in progress")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated) {
             onError("Not authenticated")
@@ -1152,24 +1282,357 @@ class InboxViewModel(
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
         val currentAuth = _authState.value
         if (currentAuth !is AuthUiState.Authenticated || settingsService == null) {
             onError("Not authenticated or settings unavailable")
             return
         }
+        val session = currentAuth.session
 
         viewModelScope.launch {
             try {
-                settingsService.updateOperatorTimedPlanType(currentAuth.session, type)
-                val effective = settingsService.fetchEffectiveTimedPlanType(currentAuth.session)
+                if (!isSessionActive(session)) return@launch
+                settingsService.updateOperatorTimedPlanType(session, type)
+                if (!isSessionActive(session)) return@launch
+                val effective = settingsService.fetchEffectiveTimedPlanType(session)
+                if (!isSessionActive(session)) return@launch
+                _operatorTimedPlanType.value = type
                 _effectiveTimedPlanType.value = effective
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isSessionActive(session)) return@launch
                 onError(e.message ?: "Failed to update default timed plan type")
             }
         }
+    }
+
+    private fun startAuthenticatedSession(session: OperatorSession) {
+        triggerLoadTasks(session)
+        viewModelScope.launch {
+            loadSettingsInternal(session)
+        }
+        installationSync?.let { sync ->
+            viewModelScope.launch {
+                sessionMutex.withLock {
+                    if (!isSessionActive(session)) return@withLock
+                    runCatching { sync.reconcile(session) }
+                }
+            }
+        }
+
+        realtimeSubscription?.unsubscribe()
+        realtimeSubscription = realtimeService?.subscribeToInvalidations(
+            session = session,
+            onInvalidate = { payload ->
+                handleInvalidationEvent(session, payload)
+            },
+            onReconnect = {
+                viewModelScope.launch {
+                    val auth = _authState.value
+                    if (auth is AuthUiState.Authenticated && isSameOperator(auth.session, session)) {
+                        triggerLoadTasks(auth.session)
+                    }
+                }
+            }
+        )
+    }
+
+    private fun isSameOperator(a: OperatorSession?, b: OperatorSession?): Boolean {
+        return a != null && b != null && a.operatorId == b.operatorId
+    }
+
+    private fun isSessionActive(session: OperatorSession): Boolean =
+        isSessionCurrent(session) && isAccountOperationAllowed()
+
+    private fun isSessionCurrent(session: OperatorSession): Boolean {
+        val auth = _authState.value
+        val currentAuthSession = (auth as? AuthUiState.Authenticated)?.session
+        val authServiceSession = authService.currentSession.value
+        return isSameOperator(currentAuthSession, session) && isSameOperator(authServiceSession, session)
+    }
+
+    private fun isAccountPendingDeletion(): Boolean {
+        return _accountStatus.value?.deletionState == AccountDeletionState.PENDING_DELETION
+    }
+
+    private fun isAccountStatusVerified(): Boolean {
+        return accountService == null || verificationState == VerificationState.VERIFIED
+    }
+
+    private fun isOfflineMutationAllowed(): Boolean {
+        return accountService == null || verificationState != VerificationState.UNVERIFIED
+    }
+
+    private fun isAccountOperationAllowed(): Boolean {
+        return verificationState != VerificationState.UNVERIFIED && !isAccountPendingDeletion()
+    }
+
+    private suspend fun handlePendingDeletion(session: OperatorSession) {
+        routedTaskId = null
+        pendingCompletionTaskId = null
+        synchronized(queue) {
+            queue.clear()
+        }
+        realtimeSubscription?.unsubscribe()
+        realtimeSubscription = null
+        clearLocalData(session.operatorId)
+        installationSync?.let { sync ->
+            runCatching { sync.deactivateForSignOut(session) }
+        }
+    }
+
+    private suspend fun checkAccountStatusInternal(session: OperatorSession) {
+        if (accountService == null) {
+            if (!isSessionCurrent(session)) return
+            verificationState = VerificationState.VERIFIED
+            startAuthenticatedSession(session)
+            return
+        }
+
+        val status = try {
+            if (!isSessionCurrent(session)) return
+            accountService.fetchAccountStatus(session)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (!isSessionCurrent(session)) return
+            if ((e is AccountLifecycleException && e.isNetworkError) || isNetworkError(e)) {
+                verificationState = VerificationState.NETWORK_ERROR
+            } else {
+                verificationState = VerificationState.UNVERIFIED
+            }
+            val errorMsg = e.message ?: "Failed to verify account status"
+            _inboxState.value = InboxUiState.Error(errorMsg)
+            _todayState.value = TodayUiState.Error(errorMsg)
+            _upcomingState.value = UpcomingUiState.Error(errorMsg)
+            _completedState.value = CompletedUiState.Error(errorMsg)
+            return
+        }
+
+        if (!isSessionCurrent(session)) return
+
+        verificationState = VerificationState.VERIFIED
+        _accountStatus.value = status
+        if (status.deletionState == AccountDeletionState.PENDING_DELETION) {
+            handlePendingDeletion(session)
+            return
+        }
+
+        startAuthenticatedSession(session)
+    }
+
+    fun fetchAccountStatus(
+        onSuccess: (AccountStatus) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || accountService == null) {
+            return
+        }
+        val session = currentAuth.session
+        viewModelScope.launch {
+            try {
+                if (!isSessionCurrent(session)) {
+                    return@launch
+                }
+                val status = accountService.fetchAccountStatus(session)
+                if (!isSessionCurrent(session)) {
+                    return@launch
+                }
+                verificationState = VerificationState.VERIFIED
+                _accountStatus.value = status
+                if (status.deletionState == AccountDeletionState.PENDING_DELETION) {
+                    handlePendingDeletion(session)
+                    if (!isSessionCurrent(session)) {
+                        return@launch
+                    }
+                }
+                onSuccess(status)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!isSessionCurrent(session)) {
+                    return@launch
+                }
+                if ((e is AccountLifecycleException && e.isNetworkError) || isNetworkError(e)) {
+                    verificationState = VerificationState.NETWORK_ERROR
+                } else {
+                    verificationState = VerificationState.UNVERIFIED
+                }
+                onError(e.message ?: "Failed to fetch account status")
+            }
+        }
+    }
+
+    fun requestAccountDeletion(
+        onSuccess: (DeletionConfirmation) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (isAccountPendingDeletion()) {
+            onError("Account deletion is pending")
+            return
+        }
+        if (!isAccountStatusVerified()) {
+            onError("Account verification in progress")
+            return
+        }
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || accountService == null) {
+            onError("Not authenticated or account service unavailable")
+            return
+        }
+        val session = currentAuth.session
+
+        viewModelScope.launch {
+            sessionMutex.withLock {
+                if (!isSessionActive(session)) {
+                    onError("Session is no longer active")
+                    return@withLock
+                }
+                try {
+                    val confirmation = accountService.requestAccountDeletion(session)
+                    if (!isSessionActive(session)) {
+                        onError("Session is no longer active")
+                        return@withLock
+                    }
+                    if (!confirmation.confirmed) {
+                        onError("Account deletion was not confirmed. Please try again.")
+                        return@withLock
+                    }
+                    verificationState = VerificationState.VERIFIED
+                    _accountStatus.value = AccountStatus(
+                        deletionState = AccountDeletionState.PENDING_DELETION,
+                        deletionDeadline = confirmation.deletionDeadline,
+                        recoveryAvailable = true
+                    )
+                    synchronized(queue) {
+                        queue.clear()
+                    }
+                    realtimeSubscription?.unsubscribe()
+                    realtimeSubscription = null
+                    clearLocalData(session.operatorId)
+                    if (installationSync != null) {
+                        runCatching { installationSync.deactivateForSignOut(session) }
+                    }
+                    if (!isSessionCurrent(session)) {
+                        onError("Session is no longer active")
+                        return@withLock
+                    }
+                    authService.signOut()
+                    onSuccess(confirmation)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (!isSessionCurrent(session)) {
+                        onError("Session is no longer active")
+                        return@withLock
+                    }
+                    onError(e.message ?: "Failed to request account deletion")
+                }
+            }
+        }
+    }
+
+    fun recoverAccount(
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || accountService == null) {
+            onError("Not authenticated or account service unavailable")
+            return
+        }
+        val session = currentAuth.session
+
+        viewModelScope.launch {
+            try {
+                if (!isSessionCurrent(session)) {
+                    return@launch
+                }
+                accountService.recoverAccount(session)
+                if (!isSessionCurrent(session)) {
+                    return@launch
+                }
+                verificationState = VerificationState.VERIFIED
+                _accountStatus.value = AccountStatus(AccountDeletionState.ACTIVE, null, false)
+                startAuthenticatedSession(session)
+                onSuccess()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!isSessionCurrent(session)) {
+                    return@launch
+                }
+                onError(e.message ?: "Failed to recover account")
+            }
+        }
+    }
+
+    fun exportOperatorData(
+        onSuccess: (String) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val currentAuth = _authState.value
+        if (currentAuth !is AuthUiState.Authenticated || accountService == null) {
+            onError("Not authenticated or account service unavailable")
+            return
+        }
+        val session = currentAuth.session
+
+        viewModelScope.launch {
+            try {
+                if (!isSessionCurrent(session)) {
+                    onError("Session is no longer active")
+                    return@launch
+                }
+                val exportJson = accountService.exportOperatorData(session)
+                if (!isSessionCurrent(session)) {
+                    onError("Session is no longer active")
+                    return@launch
+                }
+                onSuccess(exportJson)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!isSessionCurrent(session)) {
+                    onError("Session is no longer active")
+                    return@launch
+                }
+                onError(e.message ?: "Failed to export data")
+            }
+        }
+    }
+
+    fun clearLocalData(operatorId: String) {
+        outboxStore.clear(operatorId)
+        voiceRecordingStore?.clearAll()
+        clearLocalDataInMemory()
+    }
+
+    private fun clearLocalDataInMemory() {
+        _allTasks.value = emptyList()
+        _inboxState.value = InboxUiState.Empty
+        _todayState.value = TodayUiState.Empty
+        _upcomingState.value = UpcomingUiState.Empty
+        _completedState.value = CompletedUiState.Empty
+        _operatorTimedPlanType.value = null
+        _effectiveTimedPlanType.value = TimedPlanType.INSTANT
+        _labels.value = emptyList()
+        _comments.value = emptyList()
+        _commentsError.value = null
+        _selectedTask.value = null
+        _createTaskError.value = null
+        _createLabelError.value = null
     }
 
     companion object {

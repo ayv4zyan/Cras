@@ -16,11 +16,14 @@ import com.cras.app.voice.VoiceCaptureResult
 import com.cras.app.voice.VoiceError
 import com.cras.app.voice.VoiceRecordingStore
 import com.cras.app.voice.VoiceMicRecorder
+import com.cras.app.voice.RetainedRecording
+import com.cras.app.ui.inbox.AuthUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -28,6 +31,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -60,6 +65,11 @@ private class FakeAuthService(session: OperatorSession) : AuthService {
         authenticated
 
     override suspend fun restoreSession(): OperatorSession? = store.loadSession()
+    override suspend fun restoreSession(session: OperatorSession): OperatorSession {
+        store.saveSession(session)
+        flow.value = session
+        return session
+    }
     override suspend fun signOut() {
         flow.value = null
     }
@@ -573,6 +583,500 @@ class VoiceViewModelTest {
         advanceUntilIdle()
 
         assertTrue(viewModel.retainedRecordings.value.isEmpty())
+    }
+
+    @Test
+    fun `cold start with persisted owner clears recordings if authenticated operator differs`() = runTest {
+        val folder = tmp.newFolder("cold_start_diff_op")
+        val store = com.cras.app.voice.DirectoryVoiceRecordingStore(folder)
+        store.setRecordingOwner("operator-A")
+        store.save(byteArrayOf(1, 2, 3), createdAtEpochMs = 1_000L)
+        assertEquals(1, store.list().size)
+
+        val api = FakeVoiceCaptureApi()
+        val opB = OperatorSession(
+            operatorId = "operator-B",
+            email = "opB@example.com",
+            accessToken = "tokenB",
+        )
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(opB),
+            voiceCaptureApi = api,
+            recordingStore = store,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        val authFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        val job = launch { viewModel.collectAuthStateAndPruneRecordings(authFlow) }
+        advanceUntilIdle()
+
+        authFlow.value = AuthUiState.Authenticated(opB)
+        advanceUntilIdle()
+
+        assertTrue(store.list().isEmpty())
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+        assertEquals("operator-B", store.getRecordingOwner())
+        job.cancel()
+    }
+
+    @Test
+    fun `cold start with persisted owner retains recordings if authenticated operator matches`() = runTest {
+        val folder = tmp.newFolder("cold_start_same_op")
+        val store = com.cras.app.voice.DirectoryVoiceRecordingStore(folder)
+        store.setRecordingOwner("operator-A")
+        store.save(byteArrayOf(1, 2, 3), createdAtEpochMs = 1_000L)
+        assertEquals(1, store.list().size)
+
+        val api = FakeVoiceCaptureApi()
+        val opA = OperatorSession(
+            operatorId = "operator-A",
+            email = "opA@example.com",
+            accessToken = "tokenA",
+        )
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(opA),
+            voiceCaptureApi = api,
+            recordingStore = store,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        val authFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        val job = launch { viewModel.collectAuthStateAndPruneRecordings(authFlow) }
+        advanceUntilIdle()
+
+        authFlow.value = AuthUiState.Authenticated(opA)
+        advanceUntilIdle()
+
+        assertEquals(1, store.list().size)
+        assertEquals("operator-A", store.getRecordingOwner())
+        job.cancel()
+    }
+
+    @Test
+    fun `cold start with persisted owner clears recordings if unauthenticated`() = runTest {
+        val folder = tmp.newFolder("cold_start_unauth")
+        val store = com.cras.app.voice.DirectoryVoiceRecordingStore(folder)
+        store.setRecordingOwner("operator-A")
+        store.save(byteArrayOf(1, 2, 3), createdAtEpochMs = 1_000L)
+        assertEquals(1, store.list().size)
+
+        val api = FakeVoiceCaptureApi()
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(session()),
+            voiceCaptureApi = api,
+            recordingStore = store,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        val authFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        val job = launch { viewModel.collectAuthStateAndPruneRecordings(authFlow) }
+        advanceUntilIdle()
+
+        authFlow.value = AuthUiState.Unauthenticated()
+        advanceUntilIdle()
+
+        assertTrue(store.list().isEmpty())
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+        assertNull(store.getRecordingOwner())
+        job.cancel()
+    }
+
+    @Test
+    fun `cold start with ownerless recordings clears recordings before assigning authenticated operator`() = runTest {
+        val folder = tmp.newFolder("cold_start_ownerless_auth")
+        val store = com.cras.app.voice.DirectoryVoiceRecordingStore(folder)
+        // Store has recording but NO owner
+        store.save(byteArrayOf(1, 2, 3), createdAtEpochMs = 1_000L)
+        assertNull(store.getRecordingOwner())
+        assertEquals(1, store.list().size)
+
+        val api = FakeVoiceCaptureApi()
+        val opA = OperatorSession(
+            operatorId = "operator-A",
+            email = "opA@example.com",
+            accessToken = "tokenA",
+        )
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(opA),
+            voiceCaptureApi = api,
+            recordingStore = store,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        val authFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        val job = launch { viewModel.collectAuthStateAndPruneRecordings(authFlow) }
+        advanceUntilIdle()
+
+        authFlow.value = AuthUiState.Authenticated(opA)
+        advanceUntilIdle()
+
+        assertTrue(store.list().isEmpty())
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+        assertEquals("operator-A", store.getRecordingOwner())
+        job.cancel()
+    }
+
+    @Test
+    fun `cold start with ownerless recordings does not assign operator if cleanup fails`() = runTest {
+        val rec = RetainedRecording("rec-ownerless", "rec-ownerless.wav", 100L, 1_000L)
+        var storeOwner: String? = null
+        val failingStore = object : VoiceRecordingStore {
+            override fun save(wav: ByteArray, createdAtEpochMs: Long): RetainedRecording = rec
+            override fun list(): List<RetainedRecording> = listOf(rec)
+            override fun latest(): RetainedRecording? = rec
+            override fun readBytes(id: String): ByteArray? = byteArrayOf(1, 2, 3)
+            override fun delete(id: String): Boolean = false
+            override fun clearAll(): Boolean = false
+            override fun getRecordingOwner(): String? = storeOwner
+            override fun setRecordingOwner(operatorId: String?) {
+                storeOwner = operatorId
+            }
+        }
+
+        val opA = OperatorSession(operatorId = "operator-A", email = "opA@example.com", accessToken = "tokenA")
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(opA),
+            voiceCaptureApi = FakeVoiceCaptureApi(),
+            recordingStore = failingStore,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        val authFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        val job = launch { viewModel.collectAuthStateAndPruneRecordings(authFlow) }
+        advanceUntilIdle()
+
+        authFlow.value = AuthUiState.Authenticated(opA)
+        advanceUntilIdle()
+
+        // Owner must NOT be set because cleanup failed
+        assertNull(failingStore.getRecordingOwner())
+        job.cancel()
+    }
+
+    @Test
+    fun `cold start with ownerless recordings clears recordings when unauthenticated`() = runTest {
+        val folder = tmp.newFolder("cold_start_ownerless_unauth")
+        val store = com.cras.app.voice.DirectoryVoiceRecordingStore(folder)
+        // Store has recording but NO owner
+        store.save(byteArrayOf(1, 2, 3), createdAtEpochMs = 1_000L)
+        assertNull(store.getRecordingOwner())
+        assertEquals(1, store.list().size)
+
+        val api = FakeVoiceCaptureApi()
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(session()),
+            voiceCaptureApi = api,
+            recordingStore = store,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        val authFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        val job = launch { viewModel.collectAuthStateAndPruneRecordings(authFlow) }
+        advanceUntilIdle()
+
+        authFlow.value = AuthUiState.Unauthenticated()
+        advanceUntilIdle()
+
+        assertTrue(store.list().isEmpty())
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+        assertNull(store.getRecordingOwner())
+        job.cancel()
+    }
+
+    @Test
+    fun `refreshRetainedRecordings purges and clears memory if owner differs from active session`() = runTest {
+        val folder = tmp.newFolder("refresh_owner_mismatch")
+        val store = com.cras.app.voice.DirectoryVoiceRecordingStore(folder)
+        store.setRecordingOwner("operator-A")
+        store.save(byteArrayOf(1, 2, 3), createdAtEpochMs = 1_000L)
+
+        val opB = OperatorSession(
+            operatorId = "operator-B",
+            email = "opB@example.com",
+            accessToken = "tokenB",
+        )
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(opB),
+            voiceCaptureApi = FakeVoiceCaptureApi(),
+            recordingStore = store,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        viewModel.refreshRetainedRecordings()
+        assertTrue(store.list().isEmpty())
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+    }
+
+    @Test
+    fun `failed deletion retries and clears in-memory retained list`() = runTest {
+        val currentSession = session()
+        var attempts = 0
+        val stubStore = object : VoiceRecordingStore {
+            val rec = RetainedRecording("rec-1", "rec-1.wav", 100L, 1_000L)
+            var deleted = false
+            var owner: String? = currentSession.operatorId
+            override fun save(wav: ByteArray, createdAtEpochMs: Long): RetainedRecording = rec
+            override fun list(): List<RetainedRecording> = if (deleted) emptyList() else listOf(rec)
+            override fun latest(): RetainedRecording? = list().firstOrNull()
+            override fun readBytes(id: String): ByteArray? = if (deleted) null else byteArrayOf(1, 2)
+            override fun delete(id: String): Boolean {
+                attempts++
+                if (attempts >= 2) {
+                    deleted = true
+                    return true
+                }
+                return false
+            }
+            override fun clearAll(): Boolean {
+                attempts++
+                if (attempts >= 2) {
+                    deleted = true
+                    owner = null
+                    return true
+                }
+                return false
+            }
+            override fun getRecordingOwner(): String? = owner
+            override fun setRecordingOwner(operatorId: String?) {
+                owner = operatorId
+            }
+        }
+
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(currentSession),
+            voiceCaptureApi = FakeVoiceCaptureApi(),
+            recordingStore = stubStore,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        viewModel.refreshRetainedRecordings()
+        assertEquals(1, viewModel.retainedRecordings.value.size)
+
+        val success = viewModel.deleteAllRetainedRecordings()
+        assertTrue(success)
+        assertTrue(attempts >= 2)
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+    }
+
+    @Test
+    fun `retryProcessing handles unreadable or empty saved recording gracefully`() = runTest {
+        val currentSession = session()
+        val stubStore = object : VoiceRecordingStore {
+            val rec = RetainedRecording("rec-empty", "rec-empty.wav", 0L, 1_000L)
+            var owner: String? = currentSession.operatorId
+            override fun save(wav: ByteArray, createdAtEpochMs: Long): RetainedRecording = rec
+            override fun list(): List<RetainedRecording> = listOf(rec)
+            override fun latest(): RetainedRecording? = rec
+            override fun readBytes(id: String): ByteArray? = ByteArray(0)
+            override fun delete(id: String): Boolean = true
+            override fun clearAll(): Boolean = true
+            override fun getRecordingOwner(): String? = owner
+            override fun setRecordingOwner(operatorId: String?) {
+                owner = operatorId
+            }
+        }
+
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(currentSession),
+            voiceCaptureApi = FakeVoiceCaptureApi(),
+            recordingStore = stubStore,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        viewModel.retryProcessing()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value as VoiceUiState.Failed
+        assertFalse(state.canRetryWithSavedAudio)
+    }
+
+    @Test
+    fun `ownerless recordings are treated as unsafe and cleared on refresh`() = runTest {
+        val folder = tmp.newFolder("ownerless_recordings_refresh")
+        val store = com.cras.app.voice.DirectoryVoiceRecordingStore(folder)
+        // Save recording without an owner
+        store.save(byteArrayOf(1, 2, 3), createdAtEpochMs = 1_000L)
+        assertNull(store.getRecordingOwner())
+        assertEquals(1, store.list().size)
+
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(session()),
+            voiceCaptureApi = FakeVoiceCaptureApi(),
+            recordingStore = store,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        viewModel.refreshRetainedRecordings()
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+        assertTrue(store.list().isEmpty())
+    }
+
+    @Test
+    fun `ownerless recordings are treated as unsafe and not retried`() = runTest {
+        val folder = tmp.newFolder("ownerless_recordings_retry")
+        val store = com.cras.app.voice.DirectoryVoiceRecordingStore(folder)
+        store.save(byteArrayOf(1, 2, 3), createdAtEpochMs = 1_000L)
+        assertNull(store.getRecordingOwner())
+        assertEquals(1, store.list().size)
+
+        val api = FakeVoiceCaptureApi()
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(session()),
+            voiceCaptureApi = api,
+            recordingStore = store,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        viewModel.retryProcessing()
+        advanceUntilIdle()
+
+        // Capture API was never called with the ownerless recording
+        assertEquals(0, api.requests.size)
+        assertTrue(store.list().isEmpty())
+    }
+
+    @Test
+    fun `failed operator switch A to B cleanup preserves prior owner and denies operator B access`() = runTest {
+        val rec = RetainedRecording("rec-1", "rec-1.wav", 100L, 1_000L)
+        var storeOwner: String? = "operator-A"
+        val failingStore = object : VoiceRecordingStore {
+            override fun save(wav: ByteArray, createdAtEpochMs: Long): RetainedRecording = rec
+            override fun list(): List<RetainedRecording> = listOf(rec)
+            override fun latest(): RetainedRecording? = rec
+            override fun readBytes(id: String): ByteArray? = byteArrayOf(1, 2, 3)
+            override fun delete(id: String): Boolean = false
+            override fun clearAll(): Boolean = false
+            override fun getRecordingOwner(): String? = storeOwner
+            override fun setRecordingOwner(operatorId: String?) {
+                storeOwner = operatorId
+            }
+        }
+
+        val opA = OperatorSession(operatorId = "operator-A", email = "opA@example.com", accessToken = "tokenA")
+        val opB = OperatorSession(operatorId = "operator-B", email = "opB@example.com", accessToken = "tokenB")
+        val authService = FakeAuthService(opA)
+        val api = FakeVoiceCaptureApi()
+
+        val viewModel = VoiceViewModel(
+            authService = authService,
+            voiceCaptureApi = api,
+            recordingStore = failingStore,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        val authFlow = MutableStateFlow<AuthUiState>(AuthUiState.Authenticated(opA))
+        val job = launch { viewModel.collectAuthStateAndPruneRecordings(authFlow) }
+        advanceUntilIdle()
+
+        // Switch to operator B, where cleanup fails
+        authFlow.value = AuthUiState.Authenticated(opB)
+        advanceUntilIdle()
+
+        // Store owner must still be operator-A because cleanup failed
+        assertEquals("operator-A", failingStore.getRecordingOwner())
+
+        // Switch active session to opB
+        authService.restoreSession(opB)
+
+        // Operator B tries to refresh recordings -> must be empty
+        viewModel.refreshRetainedRecordings()
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+
+        // Operator B tries to retry processing -> must not send Op A's recording
+        viewModel.retryProcessing()
+        advanceUntilIdle()
+        assertEquals(0, api.requests.size)
+
+        job.cancel()
+    }
+
+    @Test
+    fun `same operator re-authenticating after failed sign out cleanup forces recording wipe`() = runTest {
+        var clearAttempts = 0
+        var allowClear = false
+        val rec = RetainedRecording("rec-1", "rec-1.wav", 100L, 1_000L)
+        val recordings = mutableListOf(rec)
+        var storeOwner: String? = "operator-A"
+
+        val customStore = object : VoiceRecordingStore {
+            override fun save(wav: ByteArray, createdAtEpochMs: Long): RetainedRecording = rec
+            override fun list(): List<RetainedRecording> = recordings.toList()
+            override fun latest(): RetainedRecording? = recordings.firstOrNull()
+            override fun readBytes(id: String): ByteArray? = byteArrayOf(1, 2)
+            override fun delete(id: String): Boolean = false
+            override fun clearAll(): Boolean {
+                clearAttempts++
+                if (allowClear) {
+                    recordings.clear()
+                    return true
+                }
+                return false
+            }
+            override fun getRecordingOwner(): String? = storeOwner
+            override fun setRecordingOwner(operatorId: String?) {
+                storeOwner = operatorId
+            }
+        }
+
+        val opA = OperatorSession(operatorId = "operator-A", email = "opA@example.com", accessToken = "tokenA")
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(opA),
+            voiceCaptureApi = FakeVoiceCaptureApi(),
+            recordingStore = customStore,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        val authFlow = MutableStateFlow<AuthUiState>(AuthUiState.Authenticated(opA))
+        val job = launch { viewModel.collectAuthStateAndPruneRecordings(authFlow) }
+        advanceUntilIdle()
+
+        // 1. Initial login for opA: owner matches initialOperatorId ("operator-A"), no cleanup yet
+        assertEquals(0, clearAttempts)
+        assertEquals("operator-A", customStore.getRecordingOwner())
+
+        // 2. Sign out -> unauthenticated cleanup is attempted but fails (allowClear is false, 4 attempts made in retry loop)
+        authFlow.value = AuthUiState.Unauthenticated()
+        advanceUntilIdle()
+        assertEquals(4, clearAttempts)
+        assertEquals(1, customStore.list().size)
+        // Store owner was preserved
+        assertEquals("operator-A", customStore.getRecordingOwner())
+
+        // 3. Same operator (opA) signs in again -> pending cleanup forces retry
+        allowClear = true
+        authFlow.value = AuthUiState.Authenticated(opA)
+        advanceUntilIdle()
+        assertEquals(5, clearAttempts)
+        assertTrue(customStore.list().isEmpty())
+        assertEquals("operator-A", customStore.getRecordingOwner())
+
+        job.cancel()
     }
 }
 

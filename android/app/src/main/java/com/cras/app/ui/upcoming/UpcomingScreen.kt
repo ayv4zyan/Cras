@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sell
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -57,6 +58,7 @@ fun UpcomingScreen(
     onCompleteTask: (String) -> Unit,
     onSelectTask: (Task) -> Unit,
     onOpenLabelManager: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     onRefresh: () -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -92,6 +94,9 @@ fun UpcomingScreen(
             actions = {
                 IconButton(onClick = onOpenLabelManager) {
                     Icon(Icons.Default.Sell, contentDescription = "Manage labels")
+                }
+                IconButton(onClick = onOpenSettings) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings")
                 }
                 IconButton(onClick = onRefresh) {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh")

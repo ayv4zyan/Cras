@@ -13,12 +13,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.cras.app.auth.GoogleAuthManager
 import com.cras.app.auth.GoogleSignInResult
 import com.cras.app.auth.SharedPreferencesSessionStore
 import com.cras.app.auth.SupabaseAuthService
+import com.cras.app.auth.isReauthenticationSessionUnchanged
+import com.cras.app.auth.performReauthenticationExchange
 import com.cras.app.config.getPublicSupabaseConfig
 import com.cras.app.data.SharedPreferencesOutboxStore
 import com.cras.app.data.SupabaseCommentService
@@ -44,12 +47,18 @@ import com.cras.app.voice.DirectoryVoiceRecordingStore
 import com.cras.app.voice.MicAudioRecorderFactory
 import com.cras.app.voice.SupabaseVoiceCaptureApi
 import com.cras.app.ui.voice.VoiceViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.File
 
 class MainActivity : ComponentActivity() {
 
+    private val authOperationMutex = Mutex()
     private lateinit var googleAuthManager: GoogleAuthManager
     private lateinit var inboxViewModel: InboxViewModel
     private lateinit var voiceViewModel: VoiceViewModel
@@ -116,6 +125,11 @@ class MainActivity : ComponentActivity() {
             .build()
         val realtimeService = SupabaseRealtimeService(config, realtimeHttpClient)
 
+        val accountService = com.cras.app.data.SupabaseAccountService(config, httpClient)
+        val voiceRecordingStore = DirectoryVoiceRecordingStore(
+            File(applicationContext.filesDir, "voice-recordings")
+        )
+
         inboxViewModel = InboxViewModel(
             authService = authService,
             taskService = taskService,
@@ -123,7 +137,9 @@ class MainActivity : ComponentActivity() {
             commentService = commentService,
             settingsService = settingsService,
             realtimeService = realtimeService,
+            accountService = accountService,
             outboxStore = outboxStore,
+            voiceRecordingStore = voiceRecordingStore,
             installationSync = sync
         )
 
@@ -132,9 +148,6 @@ class MainActivity : ComponentActivity() {
         val voiceCaptureApi = SupabaseVoiceCaptureApi(
             config,
             SupabaseVoiceCaptureApi.voiceHttpClient(httpClient),
-        )
-        val voiceRecordingStore = DirectoryVoiceRecordingStore(
-            File(applicationContext.filesDir, "voice-recordings")
         )
         voiceViewModel = VoiceViewModel(
             authService = authService,
@@ -157,18 +170,10 @@ class MainActivity : ComponentActivity() {
         }
 
         // Retained recordings live in an install-wide directory: drop them the
-        // moment an Operator signs out so a later Operator cannot replay
-        // earlier audio through Voice retry.
+        // moment an Operator signs out or switches so a different Operator
+        // cannot replay earlier audio through Voice retry.
         lifecycleScope.launch {
-            var previousState: AuthUiState? = null
-            inboxViewModel.authState.collect { state ->
-                if (previousState is AuthUiState.Authenticated &&
-                    state is AuthUiState.Unauthenticated
-                ) {
-                    voiceViewModel.deleteAllRetainedRecordings()
-                }
-                previousState = state
-            }
+            voiceViewModel.collectAuthStateAndPruneRecordings(inboxViewModel.authState)
         }
 
         // Push updated today rows to any home-screen Today Glance widgets whenever
@@ -210,14 +215,97 @@ class MainActivity : ComponentActivity() {
                     onRequestMicPermission = {
                         requestMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO)
                     },
+                    onExportDataReady = { exportJson, callback ->
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                val exportDir = File(cacheDir, "exports")
+                                if (!exportDir.exists()) {
+                                    exportDir.mkdirs()
+                                }
+                                val exportFile = File(exportDir, "cras-export.json")
+                                exportFile.writeText(exportJson)
+                                withContext(Dispatchers.Main) {
+                                    try {
+                                        val uri = FileProvider.getUriForFile(
+                                            this@MainActivity,
+                                            "${applicationContext.packageName}.fileprovider",
+                                            exportFile
+                                        )
+                                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "application/json"
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            putExtra(Intent.EXTRA_TITLE, "cras-export.json")
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        startActivity(Intent.createChooser(sendIntent, "Export Cras Operator Data"))
+                                        callback(true, null)
+                                    } catch (e: Exception) {
+                                        callback(false, e.message ?: "Failed to share export data")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    callback(false, e.message ?: "Failed to write export file")
+                                }
+                            }
+                        }
+                    },
+                    onGoogleReauthRequested = { callback ->
+                        lifecycleScope.launch {
+                            val capturedAuth = inboxViewModel.authState.value
+                            val capturedSession = (capturedAuth as? AuthUiState.Authenticated)?.session
+                            if (capturedSession == null) {
+                                callback(false, "Operator is not authenticated")
+                                return@launch
+                            }
+
+                            when (val result = googleAuthManager.getGoogleIdToken()) {
+                                is GoogleSignInResult.Success -> {
+                                    authOperationMutex.withLock {
+                                        val activeAuth = inboxViewModel.authState.value
+                                        val activeSession = (activeAuth as? AuthUiState.Authenticated)?.session
+                                        val authServiceSession = authService.currentSession.value
+
+                                        if (!isReauthenticationSessionUnchanged(
+                                                capturedSession = capturedSession,
+                                                activeSession = activeSession,
+                                                authServiceSession = authServiceSession
+                                            )
+                                        ) {
+                                            callback(false, "Authentication state changed during reauthentication")
+                                            return@withLock
+                                        }
+
+                                        performReauthenticationExchange(
+                                            authService = authService,
+                                            activeSession = requireNotNull(activeSession),
+                                            idToken = result.idToken,
+                                            nonce = result.nonce,
+                                            callback = callback,
+                                        )
+                                    }
+                                }
+                                is GoogleSignInResult.Error -> {
+                                    callback(false, result.message)
+                                }
+                                is GoogleSignInResult.Cancelled -> {
+                                    callback(false, null)
+                                }
+                            }
+                        }
+                    },
                     onGoogleSignInRequested = {
                         lifecycleScope.launch {
                             when (val result = googleAuthManager.getGoogleIdToken()) {
                                 is GoogleSignInResult.Success -> {
-                                    inboxViewModel.signInWithGoogleIdToken(result.idToken, result.nonce)
+                                    authOperationMutex.withLock {
+                                        inboxViewModel.signInWithGoogleIdToken(result.idToken, result.nonce)
+                                    }
                                 }
                                 is GoogleSignInResult.Error -> {
-                                    inboxViewModel.signInWithGoogleIdToken("invalid_error_token")
+                                    authOperationMutex.withLock {
+                                        inboxViewModel.signInWithGoogleIdToken("invalid_error_token")
+                                    }
                                 }
                                 is GoogleSignInResult.Cancelled -> {
                                     // User cancelled selection

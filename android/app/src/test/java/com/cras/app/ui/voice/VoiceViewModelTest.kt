@@ -715,10 +715,12 @@ class VoiceViewModelTest {
 
     @Test
     fun `failed deletion retries and clears in-memory retained list`() = runTest {
+        val currentSession = session()
         var attempts = 0
         val stubStore = object : VoiceRecordingStore {
             val rec = RetainedRecording("rec-1", "rec-1.wav", 100L, 1_000L)
             var deleted = false
+            var owner: String? = currentSession.operatorId
             override fun save(wav: ByteArray, createdAtEpochMs: Long): RetainedRecording = rec
             override fun list(): List<RetainedRecording> = if (deleted) emptyList() else listOf(rec)
             override fun latest(): RetainedRecording? = list().firstOrNull()
@@ -735,14 +737,19 @@ class VoiceViewModelTest {
                 attempts++
                 if (attempts >= 2) {
                     deleted = true
+                    owner = null
                     return true
                 }
                 return false
             }
+            override fun getRecordingOwner(): String? = owner
+            override fun setRecordingOwner(operatorId: String?) {
+                owner = operatorId
+            }
         }
 
         val viewModel = VoiceViewModel(
-            authService = FakeAuthService(session()),
+            authService = FakeAuthService(currentSession),
             voiceCaptureApi = FakeVoiceCaptureApi(),
             recordingStore = stubStore,
             micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
@@ -761,18 +768,24 @@ class VoiceViewModelTest {
 
     @Test
     fun `retryProcessing handles unreadable or empty saved recording gracefully`() = runTest {
+        val currentSession = session()
         val stubStore = object : VoiceRecordingStore {
             val rec = RetainedRecording("rec-empty", "rec-empty.wav", 0L, 1_000L)
+            var owner: String? = currentSession.operatorId
             override fun save(wav: ByteArray, createdAtEpochMs: Long): RetainedRecording = rec
             override fun list(): List<RetainedRecording> = listOf(rec)
             override fun latest(): RetainedRecording? = rec
             override fun readBytes(id: String): ByteArray? = ByteArray(0)
             override fun delete(id: String): Boolean = true
             override fun clearAll(): Boolean = true
+            override fun getRecordingOwner(): String? = owner
+            override fun setRecordingOwner(operatorId: String?) {
+                owner = operatorId
+            }
         }
 
         val viewModel = VoiceViewModel(
-            authService = FakeAuthService(session()),
+            authService = FakeAuthService(currentSession),
             voiceCaptureApi = FakeVoiceCaptureApi(),
             recordingStore = stubStore,
             micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
@@ -785,6 +798,112 @@ class VoiceViewModelTest {
 
         val state = viewModel.uiState.value as VoiceUiState.Failed
         assertFalse(state.canRetryWithSavedAudio)
+    }
+
+    @Test
+    fun `ownerless recordings are treated as unsafe and cleared on refresh`() = runTest {
+        val folder = tmp.newFolder("ownerless_recordings_refresh")
+        val store = com.cras.app.voice.DirectoryVoiceRecordingStore(folder)
+        // Save recording without an owner
+        store.save(byteArrayOf(1, 2, 3), createdAtEpochMs = 1_000L)
+        assertNull(store.getRecordingOwner())
+        assertEquals(1, store.list().size)
+
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(session()),
+            voiceCaptureApi = FakeVoiceCaptureApi(),
+            recordingStore = store,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        viewModel.refreshRetainedRecordings()
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+        assertTrue(store.list().isEmpty())
+    }
+
+    @Test
+    fun `ownerless recordings are treated as unsafe and not retried`() = runTest {
+        val folder = tmp.newFolder("ownerless_recordings_retry")
+        val store = com.cras.app.voice.DirectoryVoiceRecordingStore(folder)
+        store.save(byteArrayOf(1, 2, 3), createdAtEpochMs = 1_000L)
+        assertNull(store.getRecordingOwner())
+        assertEquals(1, store.list().size)
+
+        val api = FakeVoiceCaptureApi()
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(session()),
+            voiceCaptureApi = api,
+            recordingStore = store,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        viewModel.retryProcessing()
+        advanceUntilIdle()
+
+        // Capture API was never called with the ownerless recording
+        assertEquals(0, api.requests.size)
+        assertTrue(store.list().isEmpty())
+    }
+
+    @Test
+    fun `failed operator switch A to B cleanup preserves prior owner and denies operator B access`() = runTest {
+        val rec = RetainedRecording("rec-1", "rec-1.wav", 100L, 1_000L)
+        var storeOwner: String? = "operator-A"
+        val failingStore = object : VoiceRecordingStore {
+            override fun save(wav: ByteArray, createdAtEpochMs: Long): RetainedRecording = rec
+            override fun list(): List<RetainedRecording> = listOf(rec)
+            override fun latest(): RetainedRecording? = rec
+            override fun readBytes(id: String): ByteArray? = byteArrayOf(1, 2, 3)
+            override fun delete(id: String): Boolean = false
+            override fun clearAll(): Boolean = false
+            override fun getRecordingOwner(): String? = storeOwner
+            override fun setRecordingOwner(operatorId: String?) {
+                storeOwner = operatorId
+            }
+        }
+
+        val opA = OperatorSession(operatorId = "operator-A", email = "opA@example.com", accessToken = "tokenA")
+        val opB = OperatorSession(operatorId = "operator-B", email = "opB@example.com", accessToken = "tokenB")
+        val authService = FakeAuthService(opA)
+        val api = FakeVoiceCaptureApi()
+
+        val viewModel = VoiceViewModel(
+            authService = authService,
+            voiceCaptureApi = api,
+            recordingStore = failingStore,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        val authFlow = MutableStateFlow<AuthUiState>(AuthUiState.Authenticated(opA))
+        val job = launch { viewModel.collectAuthStateAndPruneRecordings(authFlow) }
+        advanceUntilIdle()
+
+        // Switch to operator B, where cleanup fails
+        authFlow.value = AuthUiState.Authenticated(opB)
+        advanceUntilIdle()
+
+        // Store owner must still be operator-A because cleanup failed
+        assertEquals("operator-A", failingStore.getRecordingOwner())
+
+        // Switch active session to opB
+        authService.restoreSession(opB)
+
+        // Operator B tries to refresh recordings -> must be empty
+        viewModel.refreshRetainedRecordings()
+        assertTrue(viewModel.retainedRecordings.value.isEmpty())
+
+        // Operator B tries to retry processing -> must not send Op A's recording
+        viewModel.retryProcessing()
+        advanceUntilIdle()
+        assertEquals(0, api.requests.size)
+
+        job.cancel()
     }
 }
 

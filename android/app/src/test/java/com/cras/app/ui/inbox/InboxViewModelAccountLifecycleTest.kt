@@ -2272,7 +2272,7 @@ class InboxViewModelAccountLifecycleTest {
     fun `auth lifecycle collector clears retained recordings on direct operator switch and sign out but preserves on token refresh`() = runTest {
         val authStateFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
         var clearCount = 0
-        val clearAction: () -> Unit = { clearCount++ }
+        val clearAction: () -> Boolean = { clearCount++; true }
 
         val job = launch {
             collectAuthStateAndClearRecordingsOnOperatorChange(
@@ -2365,7 +2365,7 @@ class InboxViewModelAccountLifecycleTest {
                 authState = authStateFlow,
                 initialOperatorId = "persisted-operator-1",
                 onOperatorChanged = { recordedOwner = it },
-                onClearRecordings = { clearCount++ },
+                onClearRecordings = { clearCount++; true },
             )
         }
         advanceUntilIdle()
@@ -2383,6 +2383,46 @@ class InboxViewModelAccountLifecycleTest {
         advanceUntilIdle()
         assertEquals(2, clearCount)
         assertNull(recordedOwner)
+
+        job.cancel()
+    }
+
+    @Test
+    fun `auth lifecycle collector preserves prior owner when cleanup fails`() = runTest {
+        val authStateFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        var clearCount = 0
+        var recordedOwner: String? = "persisted-operator-1"
+        val session2 = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator2@cras.app",
+            accessToken = "op2-token"
+        )
+
+        val job = launch {
+            collectAuthStateAndClearRecordingsOnOperatorChange(
+                authState = authStateFlow,
+                initialOperatorId = "persisted-operator-1",
+                onOperatorChanged = { recordedOwner = it },
+                onClearRecordings = { clearCount++; false },
+            )
+        }
+        advanceUntilIdle()
+        assertEquals(0, clearCount)
+        assertEquals("persisted-operator-1", recordedOwner)
+
+        // Auth resolves to Op 2, but cleanup fails
+        authStateFlow.value = AuthUiState.Authenticated(session2)
+        advanceUntilIdle()
+        assertEquals(1, clearCount)
+        // Owner must NOT be changed to Op 2
+        assertEquals("persisted-operator-1", recordedOwner)
+
+        // Sign out, but cleanup fails
+        authStateFlow.value = AuthUiState.Unauthenticated()
+        advanceUntilIdle()
+        assertEquals(2, clearCount)
+        // Owner must NOT be cleared when cleanup fails
+        assertEquals("persisted-operator-1", recordedOwner)
 
         job.cancel()
     }

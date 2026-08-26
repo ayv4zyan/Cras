@@ -159,4 +159,24 @@ class VoiceRecordingStoreTest {
 
         assertNull(store.readBytes(rec.id))
     }
+
+    @Test
+    fun `clearAll preserves owner if any recording deletion fails`() {
+        val folder = tmp.newFolder("failed_clear_all")
+        val store = DirectoryVoiceRecordingStore(folder)
+        store.setRecordingOwner("op-preserved")
+        store.save(wavOfSize(500), createdAtEpochMs = 1_000L)
+
+        // Make folder non-writable so file deletion fails
+        folder.setWritable(false)
+        try {
+            val result = store.clearAll()
+            assertFalse(result)
+            folder.setWritable(true)
+            assertEquals("op-preserved", store.getRecordingOwner())
+            assertEquals(1, store.list().size)
+        } finally {
+            folder.setWritable(true)
+        }
+    }
 }

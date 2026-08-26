@@ -83,6 +83,7 @@ class AccountLifecycleJourneyTest {
     private var currentDeletionState = AccountDeletionState.ACTIVE
     private var currentDeletionDeadline: String? = null
     private var currentRecoveryAvailable = false
+    private var currentGoogleAuthSession: OperatorSession? = null
     private var serverTasks = mutableListOf<Task>()
     private var serverLabels = mutableListOf<Label>()
     private var serverComments = mutableListOf<Comment>()
@@ -294,6 +295,27 @@ class AccountLifecycleJourneyTest {
                         .setResponseCode(200)
                         .setHeader("Content-Type", "application/json")
                         .setBody("[]")
+                }
+
+                if (path.startsWith("/auth/v1/token")) {
+                    val session = currentGoogleAuthSession ?: operatorAlice
+                    return MockResponse()
+                        .setResponseCode(200)
+                        .setHeader("Content-Type", "application/json")
+                        .setBody(
+                            """{
+                                "access_token": "${session.accessToken}",
+                                "token_type": "bearer",
+                                "expires_in": 3600,
+                                "refresh_token": "${session.refreshToken ?: "refresh-token"}",
+                                "user": {
+                                    "id": "${session.operatorId}",
+                                    "aud": "authenticated",
+                                    "role": "authenticated",
+                                    "email": "${session.email ?: "alice@cras.app"}"
+                                }
+                            }""".trimIndent()
+                        )
                 }
 
                 if (path.startsWith("/rest/v1/installations")) {
@@ -567,20 +589,59 @@ class AccountLifecycleJourneyTest {
 
     @Test
     fun `8 - Clean registration with same Google identity after purge sweep creates pristine empty account`() = runTest {
+        // Start with original Alice account active with a server task
+        serverTasks.add(
+            Task(
+                id = "550e8400-e29b-41d4-a716-446655440020",
+                title = "Original Alice Task",
+                description = null,
+                priority = 4,
+                plan = null,
+                labels = emptyList(),
+                parentId = null,
+                completedAt = null,
+                createdAt = "2026-08-25T08:00:00Z",
+                updatedAt = "2026-08-25T08:00:00Z",
+                version = 1
+            )
+        )
+        currentGoogleAuthSession = operatorAlice
+        val (viewModel, _) = createEnvironment(operatorAlice)
+        advanceUntilIdle()
+
+        assertEquals(AccountDeletionState.ACTIVE, viewModel.accountStatus.value?.deletionState)
+        assertEquals(1, viewModel.allTasks.value.size)
+
+        // 1. Drive the original account through deletion
+        var deletionDone = false
+        viewModel.requestAccountDeletion(
+            onSuccess = { deletionDone = true },
+            onError = {}
+        )
+        advanceUntilIdle()
+
+        assertTrue(deletionDone)
+        assertEquals(AccountDeletionState.PENDING_DELETION, currentDeletionState)
+        assertNull(sessionStore.loadSession())
+
+        // 2. Simulate backend purge sweep after deadline
+        serverTasks.clear()
         currentDeletionState = AccountDeletionState.ACTIVE
         currentDeletionDeadline = null
         currentRecoveryAvailable = false
-        serverTasks.clear()
 
+        // 3. Create replacement session via Google reauthentication for the same identity
         val freshOperator = OperatorSession(
             operatorId = "550e8400-e29b-41d4-a716-446655440999",
             email = "alice@cras.app",
             accessToken = "jwt-550e8400-e29b-41d4-a716-446655440999"
         )
+        currentGoogleAuthSession = freshOperator
 
-        val (viewModel, _) = createEnvironment(freshOperator)
+        viewModel.signInWithGoogleIdToken("google-id-token-alice")
         advanceUntilIdle()
 
+        // 4. Assert pristine empty active account
         assertEquals(AccountDeletionState.ACTIVE, viewModel.accountStatus.value?.deletionState)
         assertTrue(viewModel.allTasks.value.isEmpty())
         assertTrue(outboxStore.getOutbox(freshOperator.operatorId).isEmpty())

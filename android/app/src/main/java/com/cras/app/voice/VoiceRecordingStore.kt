@@ -119,14 +119,15 @@ class DirectoryVoiceRecordingStore(
                 }
             }
         }
-        if (ownerFile.exists()) {
+        val recordingsCleaned = allDeleted && recordingFiles().isEmpty()
+        if (recordingsCleaned && ownerFile.exists()) {
             val deleted = ownerFile.delete()
             if (!deleted && ownerFile.exists()) {
                 runCatching { ownerFile.writeText("") }
                 ownerFile.delete()
             }
         }
-        return allDeleted && recordingFiles().isEmpty()
+        return recordingsCleaned && (!ownerFile.exists())
     }
 
     override fun getRecordingOwner(): String? =

@@ -162,6 +162,15 @@ class VoiceViewModel(
     /** Re-sends the latest retained recording without re-recording. */
     fun retryProcessing() {
         if (_uiState.value is VoiceUiState.Processing) return
+        val currentOpId = authService.currentSession.value?.operatorId
+        val owner = recordingStore.getRecordingOwner()
+        if (currentOpId == null || owner == null || owner != currentOpId) {
+            if (recordingStore.list().isNotEmpty()) {
+                deleteAllRetainedRecordings()
+            }
+            startRecording()
+            return
+        }
         val latest = recordingStore.latest() ?: run {
             startRecording()
             return
@@ -271,8 +280,11 @@ class VoiceViewModel(
     fun refreshRetainedRecordings() {
         val owner = recordingStore.getRecordingOwner()
         val currentOpId = authService.currentSession.value?.operatorId
-        if (owner != null && currentOpId != null && owner != currentOpId) {
-            deleteAllRetainedRecordings()
+        if (currentOpId == null || owner == null || owner != currentOpId) {
+            if (recordingStore.list().isNotEmpty()) {
+                deleteAllRetainedRecordings()
+            }
+            _retainedRecordings.value = emptyList()
             return
         }
         _retainedRecordings.value = recordingStore.list()
@@ -289,7 +301,7 @@ class VoiceViewModel(
         if (session == null) {
             _uiState.value = VoiceUiState.Failed(
                 VoiceFailure.Unknown("Please sign in to use Voice capture."),
-                canRetryWithSavedAudio = true,
+                canRetryWithSavedAudio = false,
             )
             return
         }
@@ -319,12 +331,12 @@ class VoiceViewModel(
             } catch (e: VoiceError) {
                 _uiState.value = VoiceUiState.Failed(
                     failure = voiceFailureFromError(e),
-                    canRetryWithSavedAudio = recordingStore.latest() != null,
+                    canRetryWithSavedAudio = canRetrySavedRecording(),
                 )
             } catch (e: Exception) {
                 _uiState.value = VoiceUiState.Failed(
                     VoiceFailure.Unknown(e.message ?: "Voice capture failed."),
-                    canRetryWithSavedAudio = recordingStore.latest() != null,
+                    canRetryWithSavedAudio = canRetrySavedRecording(),
                 )
             }
         }
@@ -332,14 +344,27 @@ class VoiceViewModel(
 
     private fun retainForRetry(wav: ByteArray, anchor: Instant) {
         try {
-            authService.currentSession.value?.operatorId?.let { opId ->
+            val opId = authService.currentSession.value?.operatorId
+            if (opId != null) {
+                val owner = recordingStore.getRecordingOwner()
+                if (owner != opId && recordingStore.list().isNotEmpty()) {
+                    if (!recordingStore.clearAll()) {
+                        return
+                    }
+                }
                 recordingStore.setRecordingOwner(opId)
+                recordingStore.save(wav, createdAtEpochMs = anchor.toEpochMilli())
             }
-            recordingStore.save(wav, createdAtEpochMs = anchor.toEpochMilli())
         } catch (_: Exception) {
             // Retention is best-effort; the capture still processes.
         }
         refreshRetainedRecordings()
+    }
+
+    private fun canRetrySavedRecording(): Boolean {
+        val currentOpId = authService.currentSession.value?.operatorId ?: return false
+        val owner = recordingStore.getRecordingOwner() ?: return false
+        return owner == currentOpId && recordingStore.latest() != null
     }
 
     private fun effectiveDefault(): TimedPlanType = effectiveDefaultTimedPlanTypeProvider()
@@ -381,7 +406,7 @@ suspend fun collectAuthStateAndClearRecordingsOnOperatorChange(
     authState: Flow<AuthUiState>,
     initialOperatorId: String? = null,
     onOperatorChanged: (String?) -> Unit = {},
-    onClearRecordings: () -> Unit,
+    onClearRecordings: () -> Boolean,
 ) {
     var lastAuthenticatedOperatorId: String? = initialOperatorId
     authState.collect { state ->
@@ -389,16 +414,23 @@ suspend fun collectAuthStateAndClearRecordingsOnOperatorChange(
             is AuthUiState.Authenticated -> {
                 val currentOperatorId = state.session.operatorId
                 if (lastAuthenticatedOperatorId != null && lastAuthenticatedOperatorId != currentOperatorId) {
-                    onClearRecordings()
+                    val cleanupSuccess = onClearRecordings()
+                    if (cleanupSuccess) {
+                        lastAuthenticatedOperatorId = currentOperatorId
+                        onOperatorChanged(currentOperatorId)
+                    }
+                } else if (lastAuthenticatedOperatorId == null) {
+                    lastAuthenticatedOperatorId = currentOperatorId
+                    onOperatorChanged(currentOperatorId)
                 }
-                lastAuthenticatedOperatorId = currentOperatorId
-                onOperatorChanged(currentOperatorId)
             }
             is AuthUiState.Unauthenticated -> {
                 if (lastAuthenticatedOperatorId != null) {
-                    onClearRecordings()
-                    lastAuthenticatedOperatorId = null
-                    onOperatorChanged(null)
+                    val cleanupSuccess = onClearRecordings()
+                    if (cleanupSuccess) {
+                        lastAuthenticatedOperatorId = null
+                        onOperatorChanged(null)
+                    }
                 }
             }
             is AuthUiState.Loading -> {

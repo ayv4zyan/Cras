@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(24);
+SELECT plan(25);
 
 -- 1. Verify schema tables present after full migration run
 SELECT has_table('public', 'tasks', 'public.tasks table is present');
@@ -56,6 +56,12 @@ SELECT lives_ok(
 SELECT lives_ok(
   $$ SELECT api.create_task('Upgrade Task Idempotent', '88888888-8888-8888-8888-888888888888'::uuid) $$,
   'api.create_task is idempotent on replay with same id'
+);
+
+SELECT is(
+  (SELECT count(*)::integer FROM api.tasks WHERE id = '88888888-8888-8888-8888-888888888888'::uuid),
+  1,
+  'idempotent replay preserves exactly one row for task id'
 );
 
 -- Verify preserved row properties

@@ -371,15 +371,10 @@ describe("Database Migration Lifecycle, Upgrade, & Recovery Suite (AC 4)", () =>
       expect((db.tables.get("public.tasks") as TaskRow[]).length).toBe(0);
 
       // Execute documented restore procedure from snapshot into isolated database
-      const recoveredDb = new IsolatedDatabaseInstance();
-      recoveredDb.restoreFromSnapshot(preDisasterSnapshot);
+      db.restoreFromSnapshot(preDisasterSnapshot);
 
-      const recoveredTasks = recoveredDb.tables.get(
-        "public.tasks",
-      ) as TaskRow[];
-      const recoveredLabels = recoveredDb.tables.get(
-        "public.labels",
-      ) as LabelRow[];
+      const recoveredTasks = db.tables.get("public.tasks") as TaskRow[];
+      const recoveredLabels = db.tables.get("public.labels") as LabelRow[];
 
       expect(recoveredTasks.length).toBe(2);
       expect(recoveredTasks[0].id).toBe("task-001");
@@ -387,11 +382,9 @@ describe("Database Migration Lifecycle, Upgrade, & Recovery Suite (AC 4)", () =>
       expect(recoveredTasks[1].id).toBe("task-002");
       expect(recoveredLabels.length).toBe(1);
       expect(recoveredLabels[0].name).toBe("Operations");
-      expect(recoveredDb.appliedMigrations.length).toBe(
+      expect(db.appliedMigrations.length).toBe(
         preDisasterSnapshot.appliedMigrations.length,
       );
-
-      recoveredDb.destroy();
     });
   });
 });

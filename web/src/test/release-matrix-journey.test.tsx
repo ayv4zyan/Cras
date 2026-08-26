@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { AuthProvider } from "../contexts/AuthContext";
 import { CrasApp } from "../App";
@@ -6,21 +6,82 @@ import type { Plan } from "../contracts/task";
 import type { SupabaseClient, Session, User } from "@supabase/supabase-js";
 
 describe("Web Release Matrix & Full E2E Operator Journeys (AC 1)", () => {
-  const browserProfiles = [
+  interface BrowserEngineProfile {
+    name: string;
+    engine: "chromium" | "firefox" | "webkit";
+    userAgent: string;
+    vendor: string;
+    setup: () => void;
+    teardown: () => void;
+  }
+
+  const browserEngineProfiles: BrowserEngineProfile[] = [
     {
-      name: "Chromium Desktop",
+      name: "Chromium / Blink Desktop",
+      engine: "chromium",
       userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+      vendor: "Google Inc.",
+      setup: () => {
+        (window as unknown as { chrome: unknown }).chrome = {
+          app: { isInstalled: false },
+          runtime: { id: "cras-chromium-runtime" },
+        };
+        Object.defineProperty(navigator, "userAgentData", {
+          value: {
+            brands: [
+              { brand: "Chromium", version: "130" },
+              { brand: "Google Chrome", version: "130" },
+            ],
+            mobile: false,
+            platform: "Windows",
+          },
+          configurable: true,
+        });
+      },
+      teardown: () => {
+        delete (window as unknown as { chrome?: unknown }).chrome;
+        delete (navigator as unknown as { userAgentData?: unknown })
+          .userAgentData;
+      },
     },
     {
-      name: "Firefox Desktop",
+      name: "Firefox / Gecko Desktop",
+      engine: "firefox",
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+      vendor: "",
+      setup: () => {
+        (window as unknown as { InstallTrigger: unknown }).InstallTrigger = {};
+        delete (window as unknown as { chrome?: unknown }).chrome;
+        delete (navigator as unknown as { userAgentData?: unknown })
+          .userAgentData;
+      },
+      teardown: () => {
+        delete (window as unknown as { InstallTrigger?: unknown })
+          .InstallTrigger;
+      },
     },
     {
       name: "WebKit / Safari Desktop",
+      engine: "webkit",
       userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+      vendor: "Apple Computer, Inc.",
+      setup: () => {
+        (window as unknown as { WebKitCSSMatrix: unknown }).WebKitCSSMatrix =
+          class WebKitCSSMatrix {};
+        (window as unknown as { GestureEvent: unknown }).GestureEvent =
+          function GestureEvent() {};
+        delete (window as unknown as { chrome?: unknown }).chrome;
+        delete (navigator as unknown as { userAgentData?: unknown })
+          .userAgentData;
+      },
+      teardown: () => {
+        delete (window as unknown as { WebKitCSSMatrix?: unknown })
+          .WebKitCSSMatrix;
+        delete (window as unknown as { GestureEvent?: unknown }).GestureEvent;
+      },
     },
   ];
 
@@ -243,8 +304,8 @@ describe("Web Release Matrix & Full E2E Operator Journeys (AC 1)", () => {
     } as unknown as SupabaseClient;
   }
 
-  for (const profile of browserProfiles) {
-    describe(`Browser Matrix: ${profile.name}`, () => {
+  for (const profile of browserEngineProfiles) {
+    describe(`Browser Matrix Runtime: ${profile.name}`, () => {
       const mockUser: User = {
         id: "11111111-1111-1111-1111-111111111111",
         email: "operator@example.com",
@@ -260,9 +321,46 @@ describe("Web Release Matrix & Full E2E Operator Journeys (AC 1)", () => {
           value: profile.userAgent,
           configurable: true,
         });
+        Object.defineProperty(navigator, "vendor", {
+          value: profile.vendor,
+          configurable: true,
+        });
+        profile.setup();
       });
 
-      it("executes complete Operator journey (Auth, Task create with details, and View navigation)", async () => {
+      afterEach(() => {
+        profile.teardown();
+      });
+
+      it(`executes complete Operator journey under ${profile.name} engine environment`, async () => {
+        // Verify engine environment detection
+        if (profile.engine === "chromium") {
+          expect(
+            (window as unknown as { chrome: unknown }).chrome,
+          ).toBeDefined();
+          expect(
+            (navigator as unknown as { userAgentData: { mobile: boolean } })
+              .userAgentData.mobile,
+          ).toBe(false);
+          expect(navigator.vendor).toBe("Google Inc.");
+        } else if (profile.engine === "firefox") {
+          expect(
+            (window as unknown as { InstallTrigger: unknown }).InstallTrigger,
+          ).toBeDefined();
+          expect(
+            (window as unknown as { chrome?: unknown }).chrome,
+          ).toBeUndefined();
+          expect(navigator.vendor).toBe("");
+        } else if (profile.engine === "webkit") {
+          expect(
+            (window as unknown as { WebKitCSSMatrix: unknown }).WebKitCSSMatrix,
+          ).toBeDefined();
+          expect(
+            (window as unknown as { GestureEvent: unknown }).GestureEvent,
+          ).toBeDefined();
+          expect(navigator.vendor).toBe("Apple Computer, Inc.");
+        }
+
         const mockSupabase = createMockSupabase(mockUser);
 
         render(

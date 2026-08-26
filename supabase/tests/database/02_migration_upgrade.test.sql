@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(18);
+SELECT plan(24);
 
 -- 1. Verify schema tables present after full migration run
 SELECT has_table('public', 'tasks', 'public.tasks table is present');
@@ -37,6 +37,50 @@ SELECT is(
   (SELECT voice_enabled FROM public.deployment_config LIMIT 1),
   true,
   'deployment_config voice_enabled is true by default'
+);
+
+-- 4. Test Idempotency and Data Preservation Invariants
+INSERT INTO auth.users (id, email)
+VALUES ('99999999-9999-9999-9999-999999999999'::uuid, 'upgrade.operator@example.com')
+ON CONFLICT (id) DO NOTHING;
+
+SET LOCAL "request.jwt.claims" = '{"sub": "99999999-9999-9999-9999-999999999999", "role": "authenticated"}';
+SET LOCAL ROLE authenticated;
+
+-- Test Idempotent Task Creation
+SELECT lives_ok(
+  $$ SELECT api.create_task('Upgrade Task Idempotent', '88888888-8888-8888-8888-888888888888'::uuid) $$,
+  'api.create_task creates task on first call'
+);
+
+SELECT lives_ok(
+  $$ SELECT api.create_task('Upgrade Task Idempotent', '88888888-8888-8888-8888-888888888888'::uuid) $$,
+  'api.create_task is idempotent on replay with same id'
+);
+
+-- Verify preserved row properties
+SELECT is(
+  (SELECT version FROM api.tasks WHERE id = '88888888-8888-8888-8888-888888888888'::uuid),
+  1,
+  'created task has default version 1'
+);
+
+SELECT is(
+  (SELECT priority FROM api.tasks WHERE id = '88888888-8888-8888-8888-888888888888'::uuid),
+  4,
+  'created task has default priority 4'
+);
+
+-- Complete task and verify version bump
+SELECT lives_ok(
+  $$ SELECT api.complete_task('88888888-8888-8888-8888-888888888888'::uuid, 1) $$,
+  'api.complete_task completes task with matching version'
+);
+
+SELECT is(
+  (SELECT version FROM api.tasks WHERE id = '88888888-8888-8888-8888-888888888888'::uuid),
+  2,
+  'completed task version incremented to 2'
 );
 
 SELECT * FROM finish();

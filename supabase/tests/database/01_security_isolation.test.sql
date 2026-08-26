@@ -6,17 +6,17 @@ SELECT has_schema('api', 'api schema exists');
 SELECT has_schema('public', 'public schema exists');
 
 -- 2. Check RLS is enabled on all tables
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'tasks'), 'RLS is enabled on public.tasks');
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'labels'), 'RLS is enabled on public.labels');
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'task_labels'), 'RLS is enabled on public.task_labels');
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'comments'), 'RLS is enabled on public.comments');
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'settings'), 'RLS is enabled on public.settings');
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'installations'), 'RLS is enabled on public.installations');
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'notification_jobs'), 'RLS is enabled on public.notification_jobs');
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'operator_account_state'), 'RLS is enabled on public.operator_account_state');
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'voice_reservations'), 'RLS is enabled on public.voice_reservations');
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'deployment_config'), 'RLS is enabled on public.deployment_config');
-SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'voice_model_catalog'), 'RLS is enabled on public.voice_model_catalog');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'tasks'), 'RLS is enabled on public.tasks');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'labels'), 'RLS is enabled on public.labels');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'task_labels'), 'RLS is enabled on public.task_labels');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'comments'), 'RLS is enabled on public.comments');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'settings'), 'RLS is enabled on public.settings');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'installations'), 'RLS is enabled on public.installations');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'notification_jobs'), 'RLS is enabled on public.notification_jobs');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'operator_account_state'), 'RLS is enabled on public.operator_account_state');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'voice_reservations'), 'RLS is enabled on public.voice_reservations');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'deployment_config'), 'RLS is enabled on public.deployment_config');
+SELECT ok((SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'voice_model_catalog'), 'RLS is enabled on public.voice_model_catalog');
 
 -- 3. Check foreign key constraints
 SELECT has_fk('public', 'tasks', 'tasks foreign key exists');

@@ -3,6 +3,10 @@ package com.cras.app.ui.inbox
 import com.cras.app.auth.AuthService
 import com.cras.app.auth.InMemorySessionStore
 import com.cras.app.auth.OperatorSession
+import com.cras.app.auth.isMatchingReauthenticatedSession
+import com.cras.app.auth.isReauthenticationSessionUnchanged
+import com.cras.app.auth.performReauthenticationExchange
+import com.cras.app.ui.voice.collectAuthStateAndClearRecordingsOnOperatorChange
 import com.cras.app.data.AccountDeletionState
 import com.cras.app.data.AccountLifecycleException
 import com.cras.app.data.AccountService
@@ -63,12 +67,17 @@ class InboxViewModelAccountLifecycleTest {
     private class FakeAuthService(initialSession: OperatorSession? = null) : AuthService {
         private val _currentSession = MutableStateFlow<OperatorSession?>(initialSession)
         override val currentSession = _currentSession.asStateFlow()
+        var signInHandler: (suspend (idToken: String, nonce: String?) -> OperatorSession)? = null
 
         fun setSession(session: OperatorSession?) {
             _currentSession.value = session
         }
 
         override suspend fun signInWithGoogleIdToken(idToken: String, nonce: String?): OperatorSession {
+            val handler = signInHandler
+            if (handler != null) {
+                return handler(idToken, nonce)
+            }
             val session = OperatorSession(
                 operatorId = "550e8400-e29b-41d4-a716-446655440001",
                 email = "operator@cras.app",
@@ -2258,28 +2267,13 @@ class InboxViewModelAccountLifecycleTest {
     fun `auth lifecycle collector clears retained recordings on direct operator switch and sign out but preserves on token refresh`() = runTest {
         val authStateFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
         var clearCount = 0
-        val clearAction = { clearCount++ }
+        val clearAction: () -> Unit = { clearCount++ }
 
         val job = launch {
-            var lastAuthenticatedOperatorId: String? = null
-            authStateFlow.collect { state ->
-                when (state) {
-                    is AuthUiState.Authenticated -> {
-                        val currentOperatorId = state.session.operatorId
-                        if (lastAuthenticatedOperatorId != null && lastAuthenticatedOperatorId != currentOperatorId) {
-                            clearAction()
-                        }
-                        lastAuthenticatedOperatorId = currentOperatorId
-                    }
-                    is AuthUiState.Unauthenticated -> {
-                        if (lastAuthenticatedOperatorId != null) {
-                            clearAction()
-                            lastAuthenticatedOperatorId = null
-                        }
-                    }
-                    is AuthUiState.Loading -> {}
-                }
-            }
+            collectAuthStateAndClearRecordingsOnOperatorChange(
+                authState = authStateFlow,
+                onClearRecordings = clearAction,
+            )
         }
         advanceUntilIdle()
         assertEquals(0, clearCount)
@@ -2368,7 +2362,7 @@ class InboxViewModelAccountLifecycleTest {
         val activeSession = (activeAuth as? AuthUiState.Authenticated)?.session
         val authServiceSession = authService.currentSession.value
 
-        var reauthSuccess = false
+        var reauthSuccess: Boolean? = null
         var reauthError: String? = null
 
         val callback: (Boolean, String?) -> Unit = { success, error ->
@@ -2376,15 +2370,17 @@ class InboxViewModelAccountLifecycleTest {
             reauthError = error
         }
 
-        // Validate active session before token exchange
-        if (activeSession == null ||
-            activeSession != capturedSession ||
-            authServiceSession != capturedSession
+        // Validate active session before token exchange using shared production helper
+        if (!isReauthenticationSessionUnchanged(
+                capturedSession = requireNotNull(capturedSession),
+                activeSession = activeSession,
+                authServiceSession = authServiceSession
+            )
         ) {
             callback(false, "Authentication state changed during reauthentication")
         }
 
-        assertFalse(reauthSuccess)
+        assertEquals(false, reauthSuccess)
         assertEquals("Authentication state changed during reauthentication", reauthError)
         // Ensure stale session was not restored
         assertNull(authService.currentSession.value)
@@ -2393,7 +2389,18 @@ class InboxViewModelAccountLifecycleTest {
 
     @Test
     fun `reauthentication flow restores pre-reauth session when mismatched Google account returned`() = runTest {
-        authService = FakeAuthService(session)
+        val mismatchedSession = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440999",
+            email = "different@cras.app",
+            accessToken = "mismatched-token"
+        )
+        val fakeAuth = FakeAuthService(session).apply {
+            signInHandler = { _, _ ->
+                setSession(mismatchedSession)
+                mismatchedSession
+            }
+        }
+        authService = fakeAuth
         viewModel = createViewModel()
         advanceUntilIdle()
 
@@ -2401,40 +2408,69 @@ class InboxViewModelAccountLifecycleTest {
         val capturedSession = (capturedAuth as? AuthUiState.Authenticated)?.session
         assertNotNull(capturedSession)
 
-        val mismatchedSession = OperatorSession(
-            operatorId = "550e8400-e29b-41d4-a716-446655440999",
-            email = "different@cras.app",
-            accessToken = "mismatched-token"
-        )
-
-        // Mock token exchange returning mismatchedSession
-        authService.setSession(mismatchedSession)
-        advanceUntilIdle()
-
-        var reauthSuccess = false
+        var reauthSuccess: Boolean? = null
         var reauthError: String? = null
         val callback: (Boolean, String?) -> Unit = { success, error ->
             reauthSuccess = success
             reauthError = error
         }
 
-        val activeSession = requireNotNull(capturedSession)
-        val newSession = mismatchedSession
-        val isMatching = (newSession.operatorId == activeSession.operatorId) ||
-            (activeSession.email != null && newSession.email == activeSession.email)
-
-        if (!isMatching) {
-            if (authService.currentSession.value == newSession) {
-                authService.restoreSession(activeSession)
-            }
-            callback(false, "Signed in with a different Google account. Please use the matching account.")
-        }
+        performReauthenticationExchange(
+            authService = authService,
+            activeSession = requireNotNull(capturedSession),
+            idToken = "mock-id-token",
+            nonce = "mock-nonce",
+            callback = callback
+        )
 
         advanceUntilIdle()
-        assertFalse(reauthSuccess)
+        assertEquals(false, reauthSuccess)
         assertEquals("Signed in with a different Google account. Please use the matching account.", reauthError)
         // Active session is safely restored back to capturedSession
         assertEquals(session, authService.currentSession.value)
         assertEquals(session, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
+    }
+
+    @Test
+    fun `reauthentication flow succeeds when matching Google account returned`() = runTest {
+        val refreshedMatchingSession = OperatorSession(
+            operatorId = session.operatorId,
+            email = session.email,
+            accessToken = "new-fresh-token"
+        )
+        val fakeAuth = FakeAuthService(session).apply {
+            signInHandler = { _, _ ->
+                setSession(refreshedMatchingSession)
+                refreshedMatchingSession
+            }
+        }
+        authService = fakeAuth
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val capturedAuth = viewModel.authState.value
+        val capturedSession = (capturedAuth as? AuthUiState.Authenticated)?.session
+        assertNotNull(capturedSession)
+
+        var reauthSuccess: Boolean? = null
+        var reauthError: String? = null
+        val callback: (Boolean, String?) -> Unit = { success, error ->
+            reauthSuccess = success
+            reauthError = error
+        }
+
+        performReauthenticationExchange(
+            authService = authService,
+            activeSession = requireNotNull(capturedSession),
+            idToken = "mock-id-token",
+            nonce = "mock-nonce",
+            callback = callback
+        )
+
+        advanceUntilIdle()
+        assertEquals(true, reauthSuccess)
+        assertNull(reauthError)
+        assertEquals(refreshedMatchingSession, authService.currentSession.value)
+        assertEquals(refreshedMatchingSession, (viewModel.authState.value as? AuthUiState.Authenticated)?.session)
     }
 }

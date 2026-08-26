@@ -23,10 +23,12 @@ import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.cras.app.ui.inbox.AuthUiState
 
 /**
  * Drives the Voice capture journey: recording, boundary call, Draft review and
@@ -234,6 +236,16 @@ class VoiceViewModel(
         refreshRetainedRecordings()
     }
 
+    /**
+     * Observes [authState] and drops all retained recordings whenever the authenticated
+     * operator switches or signs out.
+     */
+    suspend fun collectAuthStateAndPruneRecordings(authState: Flow<AuthUiState>) {
+        collectAuthStateAndClearRecordingsOnOperatorChange(authState) {
+            deleteAllRetainedRecordings()
+        }
+    }
+
     fun refreshRetainedRecordings() {
         _retainedRecordings.value = recordingStore.list()
     }
@@ -328,3 +340,37 @@ class VoiceViewModel(
         tickerJob = null
     }
 }
+
+/**
+ * Observes [authState] and invokes [onClearRecordings] whenever the authenticated
+ * operator switches or signs out, preserving retained recordings across same-operator
+ * token refreshes and transient loading states.
+ */
+suspend fun collectAuthStateAndClearRecordingsOnOperatorChange(
+    authState: Flow<AuthUiState>,
+    onClearRecordings: () -> Unit,
+) {
+    var lastAuthenticatedOperatorId: String? = null
+    authState.collect { state ->
+        when (state) {
+            is AuthUiState.Authenticated -> {
+                val currentOperatorId = state.session.operatorId
+                if (lastAuthenticatedOperatorId != null && lastAuthenticatedOperatorId != currentOperatorId) {
+                    onClearRecordings()
+                }
+                lastAuthenticatedOperatorId = currentOperatorId
+            }
+            is AuthUiState.Unauthenticated -> {
+                if (lastAuthenticatedOperatorId != null) {
+                    onClearRecordings()
+                    lastAuthenticatedOperatorId = null
+                }
+            }
+            is AuthUiState.Loading -> {
+                // Maintain lastAuthenticatedOperatorId across transient loading
+                // states to ensure operator transitions are detected accurately.
+            }
+        }
+    }
+}
+

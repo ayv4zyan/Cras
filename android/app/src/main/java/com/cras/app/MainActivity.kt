@@ -20,6 +20,8 @@ import com.cras.app.auth.GoogleAuthManager
 import com.cras.app.auth.GoogleSignInResult
 import com.cras.app.auth.SharedPreferencesSessionStore
 import com.cras.app.auth.SupabaseAuthService
+import com.cras.app.auth.isReauthenticationSessionUnchanged
+import com.cras.app.auth.performReauthenticationExchange
 import com.cras.app.config.getPublicSupabaseConfig
 import com.cras.app.data.SharedPreferencesOutboxStore
 import com.cras.app.data.SupabaseCommentService
@@ -171,28 +173,7 @@ class MainActivity : ComponentActivity() {
         // moment an Operator signs out or switches so a different Operator
         // cannot replay earlier audio through Voice retry.
         lifecycleScope.launch {
-            var lastAuthenticatedOperatorId: String? = null
-            inboxViewModel.authState.collect { state ->
-                when (state) {
-                    is AuthUiState.Authenticated -> {
-                        val currentOperatorId = state.session.operatorId
-                        if (lastAuthenticatedOperatorId != null && lastAuthenticatedOperatorId != currentOperatorId) {
-                            voiceViewModel.deleteAllRetainedRecordings()
-                        }
-                        lastAuthenticatedOperatorId = currentOperatorId
-                    }
-                    is AuthUiState.Unauthenticated -> {
-                        if (lastAuthenticatedOperatorId != null) {
-                            voiceViewModel.deleteAllRetainedRecordings()
-                            lastAuthenticatedOperatorId = null
-                        }
-                    }
-                    is AuthUiState.Loading -> {
-                        // Maintain lastAuthenticatedOperatorId across transient loading
-                        // states to ensure operator transitions are detected accurately.
-                    }
-                }
-            }
+            voiceViewModel.collectAuthStateAndPruneRecordings(inboxViewModel.authState)
         }
 
         // Push updated today rows to any home-screen Today Glance widgets whenever
@@ -285,39 +266,23 @@ class MainActivity : ComponentActivity() {
                                         val activeSession = (activeAuth as? AuthUiState.Authenticated)?.session
                                         val authServiceSession = authService.currentSession.value
 
-                                        if (activeSession == null ||
-                                            activeSession != capturedSession ||
-                                            authServiceSession != capturedSession
+                                        if (!isReauthenticationSessionUnchanged(
+                                                capturedSession = capturedSession,
+                                                activeSession = activeSession,
+                                                authServiceSession = authServiceSession
+                                            )
                                         ) {
                                             callback(false, "Authentication state changed during reauthentication")
                                             return@withLock
                                         }
 
-                                        try {
-                                            val newSession = authService.signInWithGoogleIdToken(result.idToken, result.nonce)
-                                            val currentEmail = activeSession.email
-                                            val currentOperatorId = activeSession.operatorId
-
-                                            if (newSession.operatorId == currentOperatorId ||
-                                                (currentEmail != null && newSession.email == currentEmail)
-                                            ) {
-                                                callback(true, null)
-                                            } else {
-                                                if (authService.currentSession.value == newSession) {
-                                                    authService.restoreSession(activeSession)
-                                                }
-                                                callback(false, "Signed in with a different Google account. Please use the matching account.")
-                                            }
-                                        } catch (e: CancellationException) {
-                                            throw e
-                                        } catch (e: Exception) {
-                                            if (authService.currentSession.value != activeSession &&
-                                                authService.currentSession.value != null
-                                            ) {
-                                                runCatching { authService.restoreSession(activeSession) }
-                                            }
-                                            callback(false, e.message ?: "Reauthentication failed")
-                                        }
+                                        performReauthenticationExchange(
+                                            authService = authService,
+                                            activeSession = requireNotNull(activeSession),
+                                            idToken = result.idToken,
+                                            nonce = result.nonce,
+                                            callback = callback,
+                                        )
                                     }
                                 }
                                 is GoogleSignInResult.Error -> {

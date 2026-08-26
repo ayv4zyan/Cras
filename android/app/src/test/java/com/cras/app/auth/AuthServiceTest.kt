@@ -141,4 +141,34 @@ class AuthServiceTest {
         assertNull(sessionStore.loadSession())
         assertNull(authService.currentSession.value)
     }
+
+    @Test
+    fun `isReauthenticationSessionUnchanged returns true only when active and service sessions match captured`() {
+        val captured = OperatorSession("op-1", "op1@cras.app", "token-1")
+        val matchingActive = OperatorSession("op-1", "op1@cras.app", "token-1")
+        val differentActive = OperatorSession("op-2", "op2@cras.app", "token-2")
+
+        assertTrue(isReauthenticationSessionUnchanged(captured, matchingActive, matchingActive))
+        org.junit.Assert.assertFalse(isReauthenticationSessionUnchanged(captured, null, matchingActive))
+        org.junit.Assert.assertFalse(isReauthenticationSessionUnchanged(captured, differentActive, matchingActive))
+        org.junit.Assert.assertFalse(isReauthenticationSessionUnchanged(captured, matchingActive, null))
+        org.junit.Assert.assertFalse(isReauthenticationSessionUnchanged(captured, matchingActive, differentActive))
+    }
+
+    @Test
+    fun `isMatchingReauthenticatedSession matches by operatorId or email`() {
+        val session1 = OperatorSession("op-1", "op1@cras.app", "token-1")
+        val sessionSameIdDiffEmail = OperatorSession("op-1", "diff@cras.app", "token-2")
+        val sessionDiffIdSameEmail = OperatorSession("op-2", "op1@cras.app", "token-3")
+        val sessionDiffAll = OperatorSession("op-2", "diff@cras.app", "token-4")
+
+        assertTrue(isMatchingReauthenticatedSession(session1, sessionSameIdDiffEmail))
+        assertTrue(isMatchingReauthenticatedSession(session1, sessionDiffIdSameEmail))
+        org.junit.Assert.assertFalse(isMatchingReauthenticatedSession(session1, sessionDiffAll))
+
+        val sessionNullEmail = OperatorSession("op-1", null, "token-1")
+        val sessionOtherNullEmail = OperatorSession("op-2", null, "token-2")
+        org.junit.Assert.assertFalse(isMatchingReauthenticatedSession(sessionNullEmail, sessionOtherNullEmail))
+    }
 }
+

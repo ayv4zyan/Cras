@@ -1,6 +1,7 @@
 package com.cras.app.auth
 
 import com.cras.app.config.PublicSupabaseConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -177,3 +178,63 @@ class SupabaseAuthService(
         }
     }
 }
+
+/**
+ * Verifies that the active authenticated session and the underlying [AuthService] session
+ * have not diverged or been invalidated while an external reauthentication flow was in progress.
+ */
+fun isReauthenticationSessionUnchanged(
+    capturedSession: OperatorSession,
+    activeSession: OperatorSession?,
+    authServiceSession: OperatorSession?,
+): Boolean {
+    return activeSession != null &&
+        activeSession == capturedSession &&
+        authServiceSession == capturedSession
+}
+
+/**
+ * Verifies that the new [OperatorSession] obtained after reauthentication matches
+ * the active session either by operatorId or email.
+ */
+fun isMatchingReauthenticatedSession(
+    activeSession: OperatorSession,
+    newSession: OperatorSession,
+): Boolean {
+    return newSession.operatorId == activeSession.operatorId ||
+        (activeSession.email != null && newSession.email == activeSession.email)
+}
+
+/**
+ * Performs token exchange for reauthentication against [authService], verifying that
+ * the newly authenticated session matches [activeSession]. If mismatched, restores [activeSession].
+ */
+suspend fun performReauthenticationExchange(
+    authService: AuthService,
+    activeSession: OperatorSession,
+    idToken: String,
+    nonce: String?,
+    callback: (Boolean, String?) -> Unit,
+) {
+    try {
+        val newSession = authService.signInWithGoogleIdToken(idToken, nonce)
+        if (isMatchingReauthenticatedSession(activeSession, newSession)) {
+            callback(true, null)
+        } else {
+            if (authService.currentSession.value == newSession) {
+                authService.restoreSession(activeSession)
+            }
+            callback(false, "Signed in with a different Google account. Please use the matching account.")
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        if (authService.currentSession.value != activeSession &&
+            authService.currentSession.value != null
+        ) {
+            runCatching { authService.restoreSession(activeSession) }
+        }
+        callback(false, e.message ?: "Reauthentication failed")
+    }
+}
+

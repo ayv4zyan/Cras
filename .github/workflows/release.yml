@@ -30,11 +30,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.release_version || github.ref }}
           persist-credentials: false
+          fetch-depth: 0
 
-      - name: Validate Git Commit
+      - name: Validate Git Commit and Release Version
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_version || github.ref_name }}
         run: |
-          echo "Verifying commit $(git rev-parse HEAD)"
+          CHECKED_OUT_COMMIT="$(git rev-parse HEAD)"
+          echo "Verifying commit ${CHECKED_OUT_COMMIT} for target release ${RELEASE_TAG}"
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "Error: release version/tag is not set."
+            exit 1
+          fi
+          if git rev-parse --verify --quiet "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            TAG_COMMIT="$(git rev-parse -q --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+            if [ -n "$TAG_COMMIT" ] && [ "$TAG_COMMIT" != "$CHECKED_OUT_COMMIT" ]; then
+              echo "Error: Tag refs/tags/${RELEASE_TAG} (${TAG_COMMIT}) does not match checked-out commit (${CHECKED_OUT_COMMIT})."
+              exit 1
+            fi
+            echo "Verified tag refs/tags/${RELEASE_TAG} resolves to commit ${CHECKED_OUT_COMMIT}"
+          fi
 
   release-web:
     name: Web Release Matrix & Accessibility
@@ -44,6 +61,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.release_version || github.ref }}
           persist-credentials: false
 
       - name: Setup Bun
@@ -81,6 +99,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.release_version || github.ref }}
           persist-credentials: false
 
       - name: Set up JDK 21
@@ -119,6 +138,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.release_version || github.ref }}
           persist-credentials: false
 
       - name: Setup Supabase CLI
@@ -142,6 +162,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.release_version || github.ref }}
           persist-credentials: false
 
       - name: Setup Bun
@@ -175,6 +196,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.release_version || github.ref }}
           persist-credentials: false
 
       - name: Download All Artifacts
@@ -185,9 +207,9 @@ jobs:
       - name: Generate Traceability SHA-256 Checksums
         env:
           RELEASE_TAG: ${{ github.event.inputs.release_version || github.ref_name }}
-          COMMIT_SHA: ${{ github.sha }}
           ACTOR_NAME: ${{ github.actor }}
         run: |
+          COMMIT_SHA="$(git rev-parse HEAD)"
           mkdir -p release-manifest
           find downloaded-artifacts -type f -exec sha256sum {} + | sort > release-manifest/checksums.txt
           jq -n \

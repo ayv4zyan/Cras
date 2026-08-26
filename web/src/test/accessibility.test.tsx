@@ -215,7 +215,7 @@ describe("Accessibility Suite - Keyboard, Semantics, Focus, & Touch Targets (AC 
         expect(btn.getAttribute("aria-hidden")).toBeNull();
         const cls = btn.className;
         expect(cls).toMatch(/p-\d|px-\d|py-\d|min-h-\[|h-\d/);
-        expect(cls).toMatch(/focus-visible:|focus:|focus-ring/);
+        expect(cls).toMatch(/focus-visible:ring|focus:ring/);
       });
     });
   });

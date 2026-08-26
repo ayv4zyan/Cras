@@ -179,6 +179,8 @@ jobs:
 
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
+        with:
+          path: downloaded-artifacts
 
       - name: Generate Traceability SHA-256 Checksums
         env:
@@ -187,7 +189,7 @@ jobs:
           ACTOR_NAME: ${{ github.actor }}
         run: |
           mkdir -p release-manifest
-          find . -type f \( -name "*.apk" -o -name "*.js" -o -name "*.html" \) -exec sha256sum {} + > release-manifest/checksums.txt
+          find downloaded-artifacts -type f -exec sha256sum {} + | sort > release-manifest/checksums.txt
           jq -n \
             --arg project "cras" \
             --arg release "$RELEASE_TAG" \

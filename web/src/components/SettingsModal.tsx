@@ -359,7 +359,7 @@ export function SettingsModal({
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring transition-colors cursor-pointer min-h-[32px]"
+            className="p-1 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring transition-colors cursor-pointer min-h-[44px] min-w-[44px]"
           >
             <X className="h-4 w-4" />
           </button>
@@ -460,7 +460,7 @@ export function SettingsModal({
                       setPermissionState(getBrowserPermissionState());
                       loadData();
                     }}
-                    className="text-xs font-semibold underline hover:no-underline cursor-pointer"
+                    className="inline-flex items-center text-xs font-semibold underline hover:no-underline cursor-pointer min-h-[44px] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring rounded-xs"
                   >
                     Re-check browser permission
                   </button>
@@ -476,7 +476,7 @@ export function SettingsModal({
                   <button
                     type="button"
                     onClick={handleRequestPermission}
-                    className="text-xs font-semibold underline hover:no-underline cursor-pointer"
+                    className="inline-flex items-center text-xs font-semibold underline hover:no-underline cursor-pointer min-h-[44px] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring rounded-xs"
                   >
                     Grant permission / retry push subscription
                   </button>
@@ -638,7 +638,7 @@ export function SettingsModal({
                       type="button"
                       onClick={handleSaveCustomPrompt}
                       disabled={isSaving}
-                      className="text-[11px] font-semibold text-primary underline hover:no-underline cursor-pointer"
+                      className="inline-flex items-center px-2 py-1 text-[11px] font-semibold text-primary underline hover:no-underline cursor-pointer min-h-[44px] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring rounded-xs"
                     >
                       Save Prompt
                     </button>
@@ -674,7 +674,7 @@ export function SettingsModal({
                   type="button"
                   onClick={onDeleteAccount}
                   aria-label="Delete account"
-                  className="px-3 py-1.5 rounded-md bg-destructive text-destructive-foreground text-xs font-semibold hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-destructive transition-opacity cursor-pointer min-h-[36px]"
+                  className="px-3 py-1.5 inline-flex items-center justify-center rounded-md bg-destructive text-destructive-foreground text-xs font-semibold hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-destructive transition-opacity cursor-pointer min-h-[44px]"
                 >
                   Delete account...
                 </button>
@@ -695,7 +695,7 @@ export function SettingsModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring transition-opacity cursor-pointer min-h-[36px]"
+            className="px-4 py-1.5 inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring transition-opacity cursor-pointer min-h-[44px]"
           >
             Done
           </button>

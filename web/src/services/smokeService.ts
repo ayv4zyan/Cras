@@ -32,6 +32,8 @@ export interface SmokeTestResult {
   durationMs: number;
 }
 
+export const DEFAULT_SMOKE_TIMEOUT_MS = 10_000;
+
 export function sanitizeSecret(value?: string): string {
   if (!value || value.length < 6) return "[REDACTED]";
   return `${value.slice(0, 3)}...${value.slice(-3)}`;
@@ -66,6 +68,7 @@ export async function runGoogleAuthSmokeTest(
   try {
     const res = await fetch(
       "https://accounts.google.com/.well-known/openid-configuration",
+      { signal: AbortSignal.timeout(DEFAULT_SMOKE_TIMEOUT_MS) },
     );
     if (!res.ok) {
       return {
@@ -113,6 +116,7 @@ export async function runDeepInfraSmokeTest(
       "https://api.deepinfra.com/v1/models/meta-llama/Meta-Llama-3-8B-Instruct",
       {
         headers: { Authorization: `Bearer ${config.deepInfraApiKey}` },
+        signal: AbortSignal.timeout(DEFAULT_SMOKE_TIMEOUT_MS),
       },
     );
     if (res.status === 200) {
@@ -273,6 +277,7 @@ export async function runSupabaseCronSmokeTest(
         apikey: config.supabaseServiceRoleKey,
         Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
       },
+      signal: AbortSignal.timeout(DEFAULT_SMOKE_TIMEOUT_MS),
     });
 
     if (res.status === 200 || res.ok) {
@@ -319,7 +324,9 @@ export async function runHostedDeploymentSmokeTest(
   }
 
   try {
-    const res = await fetch(config.hostedAppUrl);
+    const res = await fetch(config.hostedAppUrl, {
+      signal: AbortSignal.timeout(DEFAULT_SMOKE_TIMEOUT_MS),
+    });
     return {
       service: "Hosted Deployment Availability",
       status: res.ok ? "PASSED" : "FAILED",

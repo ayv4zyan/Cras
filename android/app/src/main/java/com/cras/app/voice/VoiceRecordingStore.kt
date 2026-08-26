@@ -27,8 +27,10 @@ interface VoiceRecordingStore {
     fun list(): List<RetainedRecording>
     fun latest(): RetainedRecording?
     fun readBytes(id: String): ByteArray?
-    fun delete(id: String)
-    fun clearAll()
+    fun delete(id: String): Boolean
+    fun clearAll(): Boolean
+    fun getRecordingOwner(): String? = null
+    fun setRecordingOwner(operatorId: String?) {}
 }
 
 /**
@@ -41,6 +43,8 @@ class DirectoryVoiceRecordingStore(
     private val maxCount: Int = DEFAULT_MAX_RETAINED_RECORDINGS,
     private val maxTotalBytes: Long = DEFAULT_MAX_RETAINED_TOTAL_BYTES,
 ) : VoiceRecordingStore {
+
+    private val ownerFile = File(directory, OWNER_FILE_NAME)
 
     init {
         require(maxCount >= 1) { "maxCount must be at least 1" }
@@ -74,8 +78,8 @@ class DirectoryVoiceRecordingStore(
     }
 
     override fun list(): List<RetainedRecording> =
-        recordingFiles().map { file ->
-            val parsed = parseFileName(file.name)
+        recordingFiles().mapNotNull { file ->
+            val parsed = parseFileName(file.name) ?: return@mapNotNull null
             RetainedRecording(
                 id = parsed.second,
                 fileName = file.name,
@@ -88,21 +92,76 @@ class DirectoryVoiceRecordingStore(
 
     override fun readBytes(id: String): ByteArray? {
         val file = fileOf(id) ?: return null
-        return runCatching { file.readBytes() }.getOrNull()
+        return runCatching {
+            val bytes = file.readBytes()
+            if (bytes.isEmpty()) null else bytes
+        }.getOrNull()
     }
 
-    override fun delete(id: String) {
-        fileOf(id)?.delete()
+    override fun delete(id: String): Boolean {
+        val file = fileOf(id) ?: return true
+        val deleted = file.delete()
+        if (!deleted && file.exists()) {
+            runCatching { file.writeBytes(ByteArray(0)) }
+            return file.delete() || !file.exists()
+        }
+        return true
     }
 
-    override fun clearAll() {
-        recordingFiles().forEach { it.delete() }
+    override fun clearAll(): Boolean {
+        var allDeleted = true
+        for (file in recordingFiles()) {
+            val deleted = file.delete()
+            if (!deleted && file.exists()) {
+                runCatching { file.writeBytes(ByteArray(0)) }
+                if (!file.delete() && file.exists()) {
+                    allDeleted = false
+                }
+            }
+        }
+        if (ownerFile.exists()) {
+            val deleted = ownerFile.delete()
+            if (!deleted && ownerFile.exists()) {
+                runCatching { ownerFile.writeText("") }
+                ownerFile.delete()
+            }
+        }
+        return allDeleted && recordingFiles().isEmpty()
+    }
+
+    override fun getRecordingOwner(): String? =
+        runCatching {
+            if (ownerFile.exists()) {
+                ownerFile.readText().trim().ifEmpty { null }
+            } else {
+                null
+            }
+        }.getOrNull()
+
+    override fun setRecordingOwner(operatorId: String?) {
+        runCatching {
+            if (!directory.exists()) {
+                directory.mkdirs()
+            }
+            if (operatorId.isNullOrBlank()) {
+                if (ownerFile.exists()) {
+                    ownerFile.delete()
+                }
+            } else {
+                val tmp = File(directory, "$OWNER_FILE_NAME.part")
+                tmp.writeText(operatorId.trim())
+                if (!tmp.renameTo(ownerFile)) {
+                    ownerFile.writeText(operatorId.trim())
+                    tmp.delete()
+                }
+            }
+        }
     }
 
     fun totalBytes(): Long = recordingFiles().sumOf { it.length() }
 
     fun fileOf(id: String): File? =
-        recordingFiles().firstOrNull { parseFileName(it.name).second == id }
+        recordingFiles().firstOrNull { parseFileName(it.name)?.second == id }
 
     /** Evicts oldest recordings (newest-first list tail) until within both bounds. */
     private fun enforceBounds(excludeId: String? = null) {
@@ -113,9 +172,17 @@ class DirectoryVoiceRecordingStore(
         for (recording in ordered.asReversed()) {
             if (count <= maxCount && total <= maxTotalBytes) break
             if (count == 1 && recording.id == excludeId) break
-            if (fileOf(recording.id)?.delete() == true) {
-                total -= recording.sizeBytes
-                count -= 1
+            val file = fileOf(recording.id)
+            if (file != null) {
+                val deleted = file.delete()
+                if (!deleted && file.exists()) {
+                    runCatching { file.writeBytes(ByteArray(0)) }
+                    file.delete()
+                }
+                if (!file.exists()) {
+                    total -= recording.sizeBytes
+                    count -= 1
+                }
             }
         }
     }
@@ -125,16 +192,19 @@ class DirectoryVoiceRecordingStore(
             ?: emptyList()
 
     companion object {
+        private const val OWNER_FILE_NAME = "recording-owner.txt"
         private val FILE_NAME_REGEX = Regex("""^voice-capture-\d+-[0-9a-fA-F\-]{36}\.wav$""")
 
         private fun newId(): String = java.util.UUID.randomUUID().toString()
         private fun fileNameFor(createdAtEpochMs: Long, id: String): String =
             "voice-capture-$createdAtEpochMs-$id.wav"
 
-        private fun parseFileName(name: String): Pair<Long, String> {
+        private fun parseFileName(name: String): Pair<Long, String>? {
+            if (!FILE_NAME_REGEX.matches(name)) return null
             val body = name.removePrefix("voice-capture-").removeSuffix(".wav")
             val separator = body.indexOf('-')
-            val epoch = body.substring(0, separator).toLongOrNull() ?: 0L
+            if (separator < 0) return null
+            val epoch = body.substring(0, separator).toLongOrNull() ?: return null
             return epoch to body.substring(separator + 1)
         }
     }

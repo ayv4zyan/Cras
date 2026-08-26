@@ -117,10 +117,46 @@ class VoiceRecordingStoreTest {
         store.save(wavOfSize(500), createdAtEpochMs = 2_000L)
         store.save(wavOfSize(500), createdAtEpochMs = 3_000L)
 
-        store.clearAll()
+        assertTrue(store.clearAll())
 
         assertTrue(store.list().isEmpty())
         assertNull(store.latest())
         store.list().forEach { assertFalse(exists(store, it.id)) }
+    }
+
+    @Test
+    fun `recording owner is persisted across instances and cleared on clearAll`() {
+        val folder = tmp.newFolder("persisted_owner")
+        val store1 = DirectoryVoiceRecordingStore(folder)
+        assertNull(store1.getRecordingOwner())
+
+        store1.setRecordingOwner("op-1234")
+        assertEquals("op-1234", store1.getRecordingOwner())
+
+        // New instance targeting the same directory recovers the persisted owner
+        val store2 = DirectoryVoiceRecordingStore(folder)
+        assertEquals("op-1234", store2.getRecordingOwner())
+
+        store2.save(wavOfSize(500), createdAtEpochMs = 1_000L)
+        assertTrue(store2.clearAll())
+
+        // Clearing all recordings also clears the persisted owner
+        assertNull(store2.getRecordingOwner())
+
+        val store3 = DirectoryVoiceRecordingStore(folder)
+        assertNull(store3.getRecordingOwner())
+    }
+
+    @Test
+    fun `readBytes returns null when file is empty or corrupted`() {
+        val store = newStore()
+        val rec = store.save(wavOfSize(500), createdAtEpochMs = 1_000L)
+        val file = store.fileOf(rec.id)
+        assertTrue(file != null && file.exists())
+
+        // Truncate file to 0 bytes
+        file!!.writeBytes(ByteArray(0))
+
+        assertNull(store.readBytes(rec.id))
     }
 }

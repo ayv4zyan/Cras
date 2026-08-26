@@ -313,15 +313,20 @@ class InboxViewModelAccountLifecycleTest {
 
     private class FakeVoiceRecordingStore : VoiceRecordingStore {
         var clearCount = 0
+        var owner: String? = null
         override fun save(wav: ByteArray, createdAtEpochMs: Long) = throw NotImplementedError()
         override fun list() = emptyList<com.cras.app.voice.RetainedRecording>()
         override fun latest() = null
         override fun readBytes(id: String) = null
-        override fun delete(id: String) {
-            // No retained recordings in this fake; deletion is a no-op.
-        }
-        override fun clearAll() {
+        override fun delete(id: String): Boolean = true
+        override fun clearAll(): Boolean {
             clearCount++
+            owner = null
+            return true
+        }
+        override fun getRecordingOwner(): String? = owner
+        override fun setRecordingOwner(operatorId: String?) {
+            owner = operatorId
         }
     }
 
@@ -2340,6 +2345,44 @@ class InboxViewModelAccountLifecycleTest {
         authStateFlow.value = AuthUiState.Unauthenticated()
         advanceUntilIdle()
         assertEquals(4, clearCount)
+
+        job.cancel()
+    }
+
+    @Test
+    fun `auth lifecycle collector handles cold-start initial operator ID and invokes onOperatorChanged`() = runTest {
+        val authStateFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        var clearCount = 0
+        var recordedOwner: String? = "persisted-operator-1"
+        val session2 = OperatorSession(
+            operatorId = "550e8400-e29b-41d4-a716-446655440002",
+            email = "operator2@cras.app",
+            accessToken = "op2-token"
+        )
+
+        val job = launch {
+            collectAuthStateAndClearRecordingsOnOperatorChange(
+                authState = authStateFlow,
+                initialOperatorId = "persisted-operator-1",
+                onOperatorChanged = { recordedOwner = it },
+                onClearRecordings = { clearCount++ },
+            )
+        }
+        advanceUntilIdle()
+        assertEquals(0, clearCount)
+        assertEquals("persisted-operator-1", recordedOwner)
+
+        // Auth resolves to Op 2 (different from initial persisted owner)
+        authStateFlow.value = AuthUiState.Authenticated(session2)
+        advanceUntilIdle()
+        assertEquals(1, clearCount)
+        assertEquals(session2.operatorId, recordedOwner)
+
+        // Sign out
+        authStateFlow.value = AuthUiState.Unauthenticated()
+        advanceUntilIdle()
+        assertEquals(2, clearCount)
+        assertNull(recordedOwner)
 
         job.cancel()
     }

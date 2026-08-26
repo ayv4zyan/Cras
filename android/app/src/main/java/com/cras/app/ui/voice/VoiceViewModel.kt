@@ -166,7 +166,7 @@ class VoiceViewModel(
             startRecording()
             return
         }
-        val wav = recordingStore.readBytes(latest.id) ?: run {
+        val wav = recordingStore.readBytes(latest.id)?.takeIf { it.isNotEmpty() } ?: run {
             _uiState.value = VoiceUiState.Failed(
                 VoiceFailure.Unknown("The saved recording could not be read."),
                 canRetryWithSavedAudio = false,
@@ -226,14 +226,29 @@ class VoiceViewModel(
         }
     }
 
-    fun deleteRetainedRecording(id: String) {
-        recordingStore.delete(id)
+    fun deleteRetainedRecording(id: String): Boolean {
+        var success = recordingStore.delete(id)
+        var attempts = 0
+        while (!success && attempts < 3) {
+            attempts++
+            success = recordingStore.delete(id)
+        }
         refreshRetainedRecordings()
+        return success
     }
 
-    fun deleteAllRetainedRecordings() {
-        recordingStore.clearAll()
-        refreshRetainedRecordings()
+    fun deleteAllRetainedRecordings(): Boolean {
+        var success = recordingStore.clearAll()
+        var attempts = 0
+        while (!success && attempts < 3) {
+            attempts++
+            success = recordingStore.clearAll()
+        }
+        _retainedRecordings.value = recordingStore.list()
+        if (!success || _retainedRecordings.value.isNotEmpty()) {
+            _retainedRecordings.value = emptyList()
+        }
+        return success
     }
 
     /**
@@ -241,12 +256,25 @@ class VoiceViewModel(
      * operator switches or signs out.
      */
     suspend fun collectAuthStateAndPruneRecordings(authState: Flow<AuthUiState>) {
-        collectAuthStateAndClearRecordingsOnOperatorChange(authState) {
-            deleteAllRetainedRecordings()
-        }
+        collectAuthStateAndClearRecordingsOnOperatorChange(
+            authState = authState,
+            initialOperatorId = recordingStore.getRecordingOwner(),
+            onOperatorChanged = { newOwner ->
+                recordingStore.setRecordingOwner(newOwner)
+            },
+            onClearRecordings = {
+                deleteAllRetainedRecordings()
+            },
+        )
     }
 
     fun refreshRetainedRecordings() {
+        val owner = recordingStore.getRecordingOwner()
+        val currentOpId = authService.currentSession.value?.operatorId
+        if (owner != null && currentOpId != null && owner != currentOpId) {
+            deleteAllRetainedRecordings()
+            return
+        }
         _retainedRecordings.value = recordingStore.list()
     }
 
@@ -304,6 +332,9 @@ class VoiceViewModel(
 
     private fun retainForRetry(wav: ByteArray, anchor: Instant) {
         try {
+            authService.currentSession.value?.operatorId?.let { opId ->
+                recordingStore.setRecordingOwner(opId)
+            }
             recordingStore.save(wav, createdAtEpochMs = anchor.toEpochMilli())
         } catch (_: Exception) {
             // Retention is best-effort; the capture still processes.
@@ -348,9 +379,11 @@ class VoiceViewModel(
  */
 suspend fun collectAuthStateAndClearRecordingsOnOperatorChange(
     authState: Flow<AuthUiState>,
+    initialOperatorId: String? = null,
+    onOperatorChanged: (String?) -> Unit = {},
     onClearRecordings: () -> Unit,
 ) {
-    var lastAuthenticatedOperatorId: String? = null
+    var lastAuthenticatedOperatorId: String? = initialOperatorId
     authState.collect { state ->
         when (state) {
             is AuthUiState.Authenticated -> {
@@ -359,11 +392,13 @@ suspend fun collectAuthStateAndClearRecordingsOnOperatorChange(
                     onClearRecordings()
                 }
                 lastAuthenticatedOperatorId = currentOperatorId
+                onOperatorChanged(currentOperatorId)
             }
             is AuthUiState.Unauthenticated -> {
                 if (lastAuthenticatedOperatorId != null) {
                     onClearRecordings()
                     lastAuthenticatedOperatorId = null
+                    onOperatorChanged(null)
                 }
             }
             is AuthUiState.Loading -> {

@@ -119,6 +119,7 @@ class AccountLifecycleJourneyTest {
     private class InMemoryVoiceRecordingStore : VoiceRecordingStore {
         val recordings = mutableListOf<RetainedRecording>()
         var clearAllCount = 0
+        var owner: String? = null
 
         override fun save(wav: ByteArray, createdAtEpochMs: Long): RetainedRecording {
             val id = UUID.randomUUID().toString()
@@ -135,12 +136,19 @@ class AccountLifecycleJourneyTest {
         override fun list(): List<RetainedRecording> = recordings.toList()
         override fun latest(): RetainedRecording? = recordings.maxByOrNull { it.createdAtEpochMs }
         override fun readBytes(id: String): ByteArray? = byteArrayOf(1, 2, 3)
-        override fun delete(id: String) {
+        override fun delete(id: String): Boolean {
             recordings.removeIf { it.id == id }
+            return true
         }
-        override fun clearAll() {
+        override fun clearAll(): Boolean {
             clearAllCount++
             recordings.clear()
+            owner = null
+            return true
+        }
+        override fun getRecordingOwner(): String? = owner
+        override fun setRecordingOwner(operatorId: String?) {
+            owner = operatorId
         }
     }
 

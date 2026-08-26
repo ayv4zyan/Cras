@@ -109,7 +109,7 @@ describe("Security & Isolation Suite (Multi-Operator, Unauthenticated, & Lifecyc
       const del = this.accountDeletions.find(
         (d) => d.operator_id === operatorId,
       );
-      return Boolean(del && !del.purged_at);
+      return Boolean(del);
     }
 
     // Direct Table Access with RLS Check
@@ -351,10 +351,14 @@ describe("Security & Isolation Suite (Multi-Operator, Unauthenticated, & Lifecyc
       };
     }
 
-    public rpcRequestAccountDeletion(callerId: string | null) {
+    public rpcRequestAccountDeletion(
+      callerId: string | null,
+      deadlineOverride?: Date,
+    ) {
       if (!callerId) throw new Error("401: Unauthenticated");
       const now = new Date();
-      const deadline = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const deadline =
+        deadlineOverride ?? new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       this.accountDeletions.push({
         operator_id: callerId,
         deletion_requested_at: now.toISOString(),
@@ -362,6 +366,15 @@ describe("Security & Isolation Suite (Multi-Operator, Unauthenticated, & Lifecyc
         purged_at: null,
       });
       return { success: true, deadline: deadline.toISOString() };
+    }
+
+    public rpcFinalizePurge(operatorId: string) {
+      const del = this.accountDeletions.find(
+        (d) => d.operator_id === operatorId,
+      );
+      if (del) {
+        del.purged_at = new Date().toISOString();
+      }
     }
 
     public rpcRecoverAccount(callerId: string | null) {
@@ -616,6 +629,36 @@ describe("Security & Isolation Suite (Multi-Operator, Unauthenticated, & Lifecyc
       }).toThrow(/403: Account is in Pending Deletion/);
     });
 
+    it("keeps purged accounts frozen and prevents mutations or recovery", () => {
+      db.rpcCreateTask(OPERATOR_A_ID, {
+        id: "11111111-1111-1111-1111-111111111111",
+        title: "Active Task",
+      });
+      db.rpcRequestAccountDeletion(OPERATOR_A_ID);
+      db.rpcFinalizePurge(OPERATOR_A_ID);
+
+      expect(() => {
+        db.rpcCreateTask(OPERATOR_A_ID, {
+          id: "33333333-3333-3333-3333-333333333333",
+          title: "New Task",
+        });
+      }).toThrow(/403: Account is in Pending Deletion/);
+
+      expect(() => {
+        db.rpcRecoverAccount(OPERATOR_A_ID);
+      }).toThrow(/404: No active pending deletion record/);
+    });
+
+    it("rejects account recovery when the recovery window has expired", () => {
+      db.rpcRequestAccountDeletion(
+        OPERATOR_A_ID,
+        new Date(Date.now() - 1000 * 60), // expired 1 minute ago
+      );
+      expect(() => {
+        db.rpcRecoverAccount(OPERATOR_A_ID);
+      }).toThrow(/410: Recovery window has expired/);
+    });
+
     it("restores active mutation capability upon account recovery within 7-day window", () => {
       db.rpcCreateTask(OPERATOR_A_ID, {
         id: "11111111-1111-1111-1111-111111111111",
@@ -656,7 +699,67 @@ describe("Security & Isolation Suite (Multi-Operator, Unauthenticated, & Lifecyc
       expect(response.status).toBe(401);
     });
 
-    it("voice-capture Edge Function validates audio format and fails closed without charging allowance on invalid input", () => {
+    it("account-lifecycle Edge Function rejects unknown action", async () => {
+      const req = new Request(
+        "http://localhost:54321/functions/v1/account-lifecycle",
+        {
+          method: "POST",
+          body: JSON.stringify({ action: "unknown-action" }),
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+      const response = await handleAccountLifecycleRequest(req, {
+        anonClient: {} as unknown as SupabaseClient,
+        adminClient: {} as unknown as SupabaseClient,
+        storageApi: { from: () => ({ remove: async () => ({}) }) },
+        lifecycleSecret: "expected-secret",
+      });
+      expect(response.status).toBe(400);
+    });
+
+    it("account-lifecycle Edge Function rejects missing Bearer prefix", async () => {
+      const req = new Request(
+        "http://localhost:54321/functions/v1/account-lifecycle",
+        {
+          method: "POST",
+          body: JSON.stringify({ action: "status" }),
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Basic some-token",
+          },
+        },
+      );
+      const response = await handleAccountLifecycleRequest(req, {
+        anonClient: {} as unknown as SupabaseClient,
+        adminClient: {} as unknown as SupabaseClient,
+        storageApi: { from: () => ({ remove: async () => ({}) }) },
+        lifecycleSecret: "expected-secret",
+      });
+      expect(response.status).toBe(401);
+    });
+
+    it("account-lifecycle Edge Function rejects wrong secret on purge-sweep", async () => {
+      const req = new Request(
+        "http://localhost:54321/functions/v1/account-lifecycle",
+        {
+          method: "POST",
+          body: JSON.stringify({ action: "purge-sweep" }),
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer wrong-secret",
+          },
+        },
+      );
+      const response = await handleAccountLifecycleRequest(req, {
+        anonClient: {} as unknown as SupabaseClient,
+        adminClient: {} as unknown as SupabaseClient,
+        storageApi: { from: () => ({ remove: async () => ({}) }) },
+        lifecycleSecret: "expected-secret",
+      });
+      expect(response.status).toBe(401);
+    });
+
+    it("voice-capture Edge Function validates audio format and rejects malformed WAV headers", () => {
       // 4-byte invalid audio
       const invalidAudio = new Uint8Array([0, 1, 2, 3]);
       const validation = validateWavAudio(invalidAudio);

@@ -16,9 +16,7 @@ on:
       - 'v*.*.*'
 
 permissions:
-  contents: write
-  packages: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -104,7 +102,7 @@ jobs:
 
       - name: Assemble Release APK
         working-directory: android
-        run: ./gradlew assembleRelease || ./gradlew assembleDebug
+        run: ./gradlew assembleRelease
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
@@ -165,8 +163,9 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           HOSTED_APP_URL: ${{ secrets.HOSTED_APP_URL }}
+          STRICT_SMOKE_MODE: "true"
         run: |
-          bun run scripts/smoke/protected-smoke-tests.ts
+          bun run scripts/smoke/protected-smoke-tests.ts --strict
 
   publish-release-provenance:
     name: Publish Release Manifest & Provenance
@@ -182,20 +181,28 @@ jobs:
         uses: actions/download-artifact@v4
 
       - name: Generate Traceability SHA-256 Checksums
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_version || github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          ACTOR_NAME: ${{ github.actor }}
         run: |
           mkdir -p release-manifest
           find . -type f \( -name "*.apk" -o -name "*.js" -o -name "*.html" \) -exec sha256sum {} + > release-manifest/checksums.txt
-          cat <<EOF > release-manifest/manifest.json
-          {
-            "project": "cras",
-            "release": "${{ github.event.inputs.release_version || github.ref_name }}",
-            "commit": "${{ github.sha }}",
-            "actor": "${{ github.actor }}",
-            "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-            "changeGatePassed": true,
-            "releaseGatePassed": true
-          }
-          EOF
+          jq -n \
+            --arg project "cras" \
+            --arg release "$RELEASE_TAG" \
+            --arg commit "$COMMIT_SHA" \
+            --arg actor "$ACTOR_NAME" \
+            --arg createdAt "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            '{
+              project: $project,
+              release: $release,
+              commit: $commit,
+              actor: $actor,
+              createdAt: $createdAt,
+              changeGatePassed: true,
+              releaseGatePassed: true
+            }' > release-manifest/manifest.json
 
       - name: Upload Provenance Manifest
         uses: actions/upload-artifact@v4

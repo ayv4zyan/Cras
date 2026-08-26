@@ -14,6 +14,10 @@ export {
 import { runAllSmokeTests } from "../../web/src/services/smokeService";
 
 if (import.meta.main || process.argv[1]?.endsWith("protected-smoke-tests.ts")) {
+  const isStrict =
+    process.env.STRICT_SMOKE_MODE === "true" ||
+    process.argv.includes("--strict");
+
   const config = {
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
@@ -28,9 +32,17 @@ if (import.meta.main || process.argv[1]?.endsWith("protected-smoke-tests.ts")) {
 
   runAllSmokeTests(config).then((results) => {
     console.log("Smoke Test Results:", JSON.stringify(results, null, 2));
-    const failed = results.filter((r) => r.status === "FAILED");
+    const failed = results.filter(
+      (r) => r.status === "FAILED" || (isStrict && r.status === "SKIPPED_NO_SECRET"),
+    );
     if (failed.length > 0) {
-      console.error(`❌ ${failed.length} smoke tests failed.`);
+      if (isStrict) {
+        console.error(
+          `❌ ${failed.length} smoke tests failed or were skipped due to missing secrets in strict protected mode.`,
+        );
+      } else {
+        console.error(`❌ ${failed.length} smoke tests failed.`);
+      }
       process.exit(1);
     } else {
       console.log("✅ All smoke checks passed or safely skipped (no secrets in untrusted context).");

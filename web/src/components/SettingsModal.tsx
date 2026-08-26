@@ -359,7 +359,7 @@ export function SettingsModal({
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring transition-colors cursor-pointer min-h-[32px]"
           >
             <X className="h-4 w-4" />
           </button>
@@ -674,7 +674,7 @@ export function SettingsModal({
                   type="button"
                   onClick={onDeleteAccount}
                   aria-label="Delete account"
-                  className="px-3 py-1.5 rounded-md bg-destructive text-destructive-foreground text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+                  className="px-3 py-1.5 rounded-md bg-destructive text-destructive-foreground text-xs font-semibold hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-destructive transition-opacity cursor-pointer min-h-[36px]"
                 >
                   Delete account...
                 </button>
@@ -695,7 +695,7 @@ export function SettingsModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
+            className="px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring transition-opacity cursor-pointer min-h-[36px]"
           >
             Done
           </button>

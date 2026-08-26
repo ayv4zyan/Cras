@@ -41,7 +41,7 @@ export async function runGoogleAuthSmokeTest(
   config: SmokeTestConfig,
 ): Promise<SmokeTestResult> {
   const start = Date.now();
-  if (!config.googleClientId) {
+  if (!config.googleClientId || !config.googleClientSecret) {
     return {
       service: "Google Authentication",
       status: "SKIPPED_NO_SECRET",
@@ -50,12 +50,48 @@ export async function runGoogleAuthSmokeTest(
       durationMs: Date.now() - start,
     };
   }
-  return {
-    service: "Google Authentication",
-    status: "PASSED",
-    message: "Google OAuth client configuration verified.",
-    durationMs: Date.now() - start,
-  };
+
+  if (
+    !config.googleClientId.includes(".") ||
+    config.googleClientSecret.trim().length === 0
+  ) {
+    return {
+      service: "Google Authentication",
+      status: "FAILED",
+      message: "Invalid Google OAuth client credentials structure.",
+      durationMs: Date.now() - start,
+    };
+  }
+
+  try {
+    const res = await fetch(
+      "https://accounts.google.com/.well-known/openid-configuration",
+    );
+    if (!res.ok) {
+      return {
+        service: "Google Authentication",
+        status: "FAILED",
+        message: `Google OpenID Discovery endpoint returned HTTP ${res.status}`,
+        durationMs: Date.now() - start,
+      };
+    }
+    return {
+      service: "Google Authentication",
+      status: "PASSED",
+      message: "Google OAuth client configuration and discovery verified.",
+      durationMs: Date.now() - start,
+    };
+  } catch (err) {
+    return {
+      service: "Google Authentication",
+      status: "FAILED",
+      message:
+        err instanceof Error
+          ? err.message
+          : "Failed to connect to Google OpenID Discovery",
+      durationMs: Date.now() - start,
+    };
+  }
 }
 
 export async function runDeepInfraSmokeTest(
@@ -79,7 +115,7 @@ export async function runDeepInfraSmokeTest(
         headers: { Authorization: `Bearer ${config.deepInfraApiKey}` },
       },
     );
-    if (res.status === 200 || res.status === 404 || res.status === 400) {
+    if (res.status === 200) {
       return {
         service: "DeepInfra AI Voice Pipeline",
         status: "PASSED",
@@ -108,15 +144,34 @@ export async function runWebPushSmokeTest(
   config: SmokeTestConfig,
 ): Promise<SmokeTestResult> {
   const start = Date.now();
-  if (!config.vapidPrivateKey) {
+  if (!config.vapidPublicKey || !config.vapidPrivateKey) {
     return {
       service: "Web Push (VAPID)",
       status: "SKIPPED_NO_SECRET",
       message:
-        "No VAPID_PRIVATE_KEY configured. Skipping live Web Push delivery.",
+        "No VAPID credentials configured. Skipping live Web Push delivery check.",
       durationMs: Date.now() - start,
     };
   }
+
+  const base64UrlPattern = /^[A-Za-z0-9_-]+={0,2}$/;
+  const isPublicValid =
+    config.vapidPublicKey.length >= 40 &&
+    base64UrlPattern.test(config.vapidPublicKey.replace(/\s+/g, ""));
+  const isPrivateValid =
+    config.vapidPrivateKey.length >= 30 &&
+    base64UrlPattern.test(config.vapidPrivateKey.replace(/\s+/g, ""));
+
+  if (!isPublicValid || !isPrivateValid) {
+    return {
+      service: "Web Push (VAPID)",
+      status: "FAILED",
+      message:
+        "Invalid VAPID key structure: keys must be non-empty base64url encoded EC P-256 keys.",
+      durationMs: Date.now() - start,
+    };
+  }
+
   return {
     service: "Web Push (VAPID)",
     status: "PASSED",
@@ -138,33 +193,115 @@ export async function runFcmSmokeTest(
       durationMs: Date.now() - start,
     };
   }
-  return {
-    service: "Firebase Cloud Messaging (FCM)",
-    status: "PASSED",
-    message: "FCM credentials format and delivery worker verified.",
-    durationMs: Date.now() - start,
-  };
+
+  try {
+    const parsed = JSON.parse(config.firebaseServiceAccount) as Record<
+      string,
+      unknown
+    >;
+    const projectId = parsed.project_id;
+    const clientEmail = parsed.client_email;
+    const privateKey = parsed.private_key;
+
+    if (
+      typeof projectId !== "string" ||
+      projectId.trim().length === 0 ||
+      typeof clientEmail !== "string" ||
+      !clientEmail.includes("@") ||
+      typeof privateKey !== "string" ||
+      !privateKey.includes("BEGIN PRIVATE KEY")
+    ) {
+      return {
+        service: "Firebase Cloud Messaging (FCM)",
+        status: "FAILED",
+        message:
+          "Invalid Firebase Service Account format: missing project_id, valid client_email, or PEM private_key.",
+        durationMs: Date.now() - start,
+      };
+    }
+
+    return {
+      service: "Firebase Cloud Messaging (FCM)",
+      status: "PASSED",
+      message: "FCM credentials format and delivery worker verified.",
+      durationMs: Date.now() - start,
+    };
+  } catch (err) {
+    return {
+      service: "Firebase Cloud Messaging (FCM)",
+      status: "FAILED",
+      message:
+        err instanceof Error
+          ? `Invalid Firebase JSON: ${err.message}`
+          : "Invalid Firebase Service Account JSON format",
+      durationMs: Date.now() - start,
+    };
+  }
 }
 
 export async function runSupabaseCronSmokeTest(
   config: SmokeTestConfig,
 ): Promise<SmokeTestResult> {
   const start = Date.now();
-  if (!config.supabaseServiceRoleKey) {
+  if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
     return {
       service: "Supabase Cron & Scheduled Workers",
       status: "SKIPPED_NO_SECRET",
       message:
-        "No SUPABASE_SERVICE_ROLE_KEY configured. Skipping live scheduled worker invocation.",
+        "No SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY configured. Skipping live scheduled worker probe.",
       durationMs: Date.now() - start,
     };
   }
-  return {
-    service: "Supabase Cron & Scheduled Workers",
-    status: "PASSED",
-    message: "Supabase cron worker credentials verified.",
-    durationMs: Date.now() - start,
-  };
+
+  if (
+    !config.supabaseUrl.startsWith("http://") &&
+    !config.supabaseUrl.startsWith("https://")
+  ) {
+    return {
+      service: "Supabase Cron & Scheduled Workers",
+      status: "FAILED",
+      message:
+        "Invalid SUPABASE_URL scheme: must begin with http:// or https://",
+      durationMs: Date.now() - start,
+    };
+  }
+
+  try {
+    const baseUrl = config.supabaseUrl.replace(/\/$/, "");
+    const res = await fetch(`${baseUrl}/rest/v1/`, {
+      headers: {
+        apikey: config.supabaseServiceRoleKey,
+        Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
+      },
+    });
+
+    if (res.status === 200 || res.ok) {
+      return {
+        service: "Supabase Cron & Scheduled Workers",
+        status: "PASSED",
+        message:
+          "Supabase service-role endpoint and worker connection verified.",
+        durationMs: Date.now() - start,
+      };
+    }
+
+    return {
+      service: "Supabase Cron & Scheduled Workers",
+      status: "FAILED",
+      message: `Supabase service endpoint returned HTTP ${res.status}`,
+      durationMs: Date.now() - start,
+    };
+  } catch (err) {
+    return {
+      service: "Supabase Cron & Scheduled Workers",
+      status: "FAILED",
+      message:
+        err instanceof Error
+          ? err.message
+          : "Failed to connect to Supabase service endpoint",
+      durationMs: Date.now() - start,
+    };
+  }
 }
 
 export async function runHostedDeploymentSmokeTest(

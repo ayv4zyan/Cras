@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(17);
+SELECT plan(18);
 
 -- 1. Verify schema tables present after full migration run
 SELECT has_table('public', 'tasks', 'public.tasks table is present');
@@ -21,6 +21,12 @@ SELECT col_not_null('public', 'tasks', 'operator_id', 'tasks.operator_id is not 
 SELECT col_not_null('public', 'tasks', 'version', 'tasks.version is not null');
 
 -- 3. Verify Deployment Config and Defaults
+SELECT is(
+  (SELECT count(*)::integer FROM public.deployment_config),
+  1,
+  'deployment_config singleton row is present'
+);
+
 SELECT is(
   (SELECT default_timed_plan_type FROM public.deployment_config LIMIT 1),
   'instant'::text,

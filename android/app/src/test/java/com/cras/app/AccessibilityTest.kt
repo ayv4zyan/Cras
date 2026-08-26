@@ -1,6 +1,8 @@
 package com.cras.app
 
+import com.cras.app.ui.AppView
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -23,37 +25,33 @@ class AccessibilityTest {
     }
 
     @Test
-    fun `verifies essential screen-reader semantics and content descriptions`() {
-        val requiredContentDescriptions = mapOf(
-            "Create Task" to "Add a new task",
-            "Voice Capture" to "Start voice capture",
-            "Task Checkbox" to "Toggle task completion",
-            "Settings" to "Open operator settings",
-            "Manage Labels" to "Manage labels and colors",
-            "Close Dialog" to "Close dialog"
-        )
+    fun `verifies essential screen-reader semantics and content descriptions derived from UI navigation`() {
+        val appViews = AppView.entries
 
-        for ((control, description) in requiredContentDescriptions) {
+        for (view in appViews) {
             assertTrue(
-                "Control '$control' must have non-empty content description for screen readers",
-                description.isNotBlank()
+                "App navigation tab '${view.name}' must expose non-blank title for screen readers",
+                view.title.isNotBlank()
+            )
+            assertNotNull(
+                "App navigation tab '${view.name}' must have an associated icon vector",
+                view.icon
             )
         }
+
+        val requiredTabTitles = listOf("Inbox", "Today", "Upcoming", "Completed")
+        assertEquals(
+            requiredTabTitles,
+            appViews.map { it.title }
+        )
     }
 
     @Test
-    fun `verifies keyboard and D-pad focus traversal order`() {
-        val navigationOrder = listOf(
-            "Inbox Navigation Tab",
-            "Today Navigation Tab",
-            "Upcoming Navigation Tab",
-            "Completed Navigation Tab",
-            "Task List",
-            "Quick Action Button"
-        )
+    fun `verifies keyboard and D-pad focus traversal order derived from AppView`() {
+        val navigationOrder = AppView.entries.map { "${it.title} Navigation Tab" }
 
-        assertEquals(6, navigationOrder.size)
+        assertEquals(4, navigationOrder.size)
         assertEquals("Inbox Navigation Tab", navigationOrder.first())
-        assertEquals("Quick Action Button", navigationOrder.last())
+        assertEquals("Completed Navigation Tab", navigationOrder.last())
     }
 }

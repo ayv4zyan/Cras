@@ -212,8 +212,10 @@ describe("Accessibility Suite - Keyboard, Semantics, Focus, & Touch Targets (AC 
       const buttons = container.querySelectorAll("button");
       expect(buttons.length).toBeGreaterThan(0);
       buttons.forEach((btn) => {
-        // Buttons should not be aria-hidden unless explicitly non-interactive
         expect(btn.getAttribute("aria-hidden")).toBeNull();
+        const cls = btn.className;
+        expect(cls).toMatch(/p-\d|px-\d|py-\d|min-h-\[|h-\d/);
+        expect(cls).toMatch(/focus-visible:|focus:|focus-ring/);
       });
     });
   });

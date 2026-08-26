@@ -3,7 +3,6 @@ package com.cras.app
 import com.cras.app.auth.OperatorSession
 import com.cras.app.config.PublicSupabaseConfig
 import com.cras.app.data.CreateCommentParams
-import com.cras.app.data.CreateTaskParams
 import com.cras.app.data.SupabaseCommentService
 import com.cras.app.data.SupabaseTaskService
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -16,9 +15,12 @@ import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.assertFailsWith
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -80,9 +82,14 @@ class SecurityIsolationTest {
             }
         }
 
-        assertFailsWith<Exception> {
+        val ex = assertFailsWith<IOException> {
             taskService.fetchTasks(sessionAnon)
         }
+        assertTrue(
+            "Expected 401 unauthenticated error, got: ${ex.message}",
+            ex.message?.contains("401") == true || ex.message?.contains("unauthenticated") == true
+        )
+        assertEquals(1, mockServer.requestCount)
     }
 
     @Test
@@ -93,6 +100,7 @@ class SecurityIsolationTest {
         )
 
         val taskBId = "bbbb1111-1111-1111-1111-111111111111"
+        val matchedPaths = CopyOnWriteArrayList<String>()
 
         mockServer.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -101,6 +109,7 @@ class SecurityIsolationTest {
                 val isOpB = authHeader == "Bearer token-b"
 
                 val path = request.path ?: ""
+                matchedPaths.add(path)
 
                 if (path.contains("complete_task") || path.contains("update_task_details")) {
                     val body = request.body.readUtf8()
@@ -108,7 +117,6 @@ class SecurityIsolationTest {
                         return if (isOpB) {
                             MockResponse().setResponseCode(200).setBody("""{"id":"$taskBId","title":"B Task","description":null,"priority":4,"plan":null,"labels":[],"parentId":null,"completedAt":"2026-08-20T00:00:00Z","createdAt":"2026-08-19T00:00:00Z","updatedAt":"2026-08-20T00:00:00Z","version":2}""")
                         } else {
-
                             MockResponse().setResponseCode(404).setBody("""{"message":"Task not found or owned by another Operator"}""")
                         }
                     }
@@ -118,15 +126,22 @@ class SecurityIsolationTest {
             }
         }
 
-        // Operator A attempting to complete Operator B's task must fail
-        assertFailsWith<Exception> {
+        // Operator A attempting to complete Operator B's task must fail with 404
+        val exA = assertFailsWith<IOException> {
             taskService.completeTask(sessionA, taskBId, 1)
         }
+        assertTrue(
+            "Expected 404 cross-operator rejection, got: ${exA.message}",
+            exA.message?.contains("404") == true || exA.message?.contains("owned by another Operator") == true
+        )
 
         // Operator B completing own task succeeds
         val completed = taskService.completeTask(sessionB, taskBId, 1)
         assertNotNull(completed)
         assertEquals(taskBId, completed.id)
+
+        assertTrue("Expected complete_task request to have been observed", matchedPaths.any { it.contains("complete_task") })
+        assertEquals(2, mockServer.requestCount)
     }
 
     @Test
@@ -137,12 +152,14 @@ class SecurityIsolationTest {
         )
 
         val taskBId = "bbbb1111-1111-1111-1111-111111111111"
+        val matchedPaths = CopyOnWriteArrayList<String>()
 
         mockServer.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val authHeader = request.getHeader("Authorization") ?: ""
                 val isOpA = authHeader == "Bearer token-a"
                 val path = request.path ?: ""
+                matchedPaths.add(path)
 
                 if (path.contains("create_comment")) {
                     val body = request.body.readUtf8()
@@ -154,7 +171,7 @@ class SecurityIsolationTest {
             }
         }
 
-        assertFailsWith<Exception> {
+        val ex = assertFailsWith<IOException> {
             commentService.createComment(
                 sessionA,
                 CreateCommentParams(
@@ -164,5 +181,11 @@ class SecurityIsolationTest {
                 )
             )
         }
+        assertTrue(
+            "Expected 403 cross-operator rejection, got: ${ex.message}",
+            ex.message?.contains("403") == true || ex.message?.contains("Cross-operator") == true
+        )
+        assertTrue("Expected create_comment request to have been observed", matchedPaths.any { it.contains("create_comment") })
+        assertEquals(1, mockServer.requestCount)
     }
 }

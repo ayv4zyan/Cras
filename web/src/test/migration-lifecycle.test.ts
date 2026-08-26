@@ -30,7 +30,10 @@ describe("Database Migration Lifecycle, Upgrade, & Recovery Suite (AC 4)", () =>
       .sort();
 
     for (const file of files) {
-      const content = fs.readFileSync(path.join(migrationsDir, file), "utf-8");
+      const safeFileName = path.basename(file);
+      const filePath = path.resolve(migrationsDir, safeFileName);
+      expect(filePath.startsWith(migrationsDir)).toBe(true);
+      const content = fs.readFileSync(filePath, "utf-8");
       expect(content.length).toBeGreaterThan(0);
 
       // Verify no prohibited destructive operations or dropping operator data without check

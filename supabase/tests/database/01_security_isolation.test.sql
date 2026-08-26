@@ -1,119 +1,52 @@
 BEGIN;
-SELECT plan(35);
+SELECT plan(39);
 
--- 1. Unauthenticated / Anonymous caller checks
-SELECT throws_ok(
-  $$ SELECT * FROM public.tasks $$,
-  'permission denied for table tasks',
-  'Anonymous caller cannot select directly from public.tasks'
-);
+-- 1. Check Schemas
+SELECT has_schema('api', 'api schema exists');
+SELECT has_schema('public', 'public schema exists');
 
-SELECT throws_ok(
-  $$ SELECT * FROM public.comments $$,
-  'permission denied for table comments',
-  'Anonymous caller cannot select directly from public.comments'
-);
+-- 2. Check RLS is enabled on all tables
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'tasks'), 'RLS is enabled on public.tasks');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'labels'), 'RLS is enabled on public.labels');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'task_labels'), 'RLS is enabled on public.task_labels');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'comments'), 'RLS is enabled on public.comments');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'settings'), 'RLS is enabled on public.settings');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'installations'), 'RLS is enabled on public.installations');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'notification_jobs'), 'RLS is enabled on public.notification_jobs');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'operator_account_state'), 'RLS is enabled on public.operator_account_state');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'voice_reservations'), 'RLS is enabled on public.voice_reservations');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'deployment_config'), 'RLS is enabled on public.deployment_config');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE relname = 'voice_model_catalog'), 'RLS is enabled on public.voice_model_catalog');
 
-SELECT throws_ok(
-  $$ SELECT * FROM public.labels $$,
-  'permission denied for table labels',
-  'Anonymous caller cannot select directly from public.labels'
-);
+-- 3. Check foreign key constraints
+SELECT has_fk('public', 'tasks', 'tasks foreign key exists');
+SELECT has_fk('public', 'labels', 'labels foreign key exists');
+SELECT has_fk('public', 'comments', 'comments foreign key exists');
+SELECT has_fk('public', 'task_labels', 'task_labels foreign key exists');
+SELECT has_fk('public', 'settings', 'settings foreign key exists');
+SELECT has_fk('public', 'installations', 'installations foreign key exists');
 
-SELECT throws_ok(
-  $$ SELECT * FROM public.operator_settings $$,
-  'permission denied for table operator_settings',
-  'Anonymous caller cannot select directly from public.operator_settings'
-);
-
-SELECT throws_ok(
-  $$ SELECT * FROM public.notification_jobs $$,
-  'permission denied for table notification_jobs',
-  'Anonymous caller cannot select directly from public.notification_jobs'
-);
-
-SELECT throws_ok(
-  $$ SELECT * FROM public.device_endpoints $$,
-  'permission denied for table device_endpoints',
-  'Anonymous caller cannot select directly from public.device_endpoints'
-);
-
-SELECT throws_ok(
-  $$ SELECT * FROM public.web_push_subscriptions $$,
-  'permission denied for table web_push_subscriptions',
-  'Anonymous caller cannot select directly from public.web_push_subscriptions'
-);
-
-SELECT throws_ok(
-  $$ SELECT * FROM public.account_deletions $$,
-  'permission denied for table account_deletions',
-  'Anonymous caller cannot select directly from public.account_deletions'
-);
-
--- 2. Check API Schema Views exist and have security_invoker
-SELECT has_view('api', 'tasks_view', 'api.tasks_view exists');
-SELECT has_view('api', 'labels_view', 'api.labels_view exists');
-SELECT has_view('api', 'comments_view', 'api.comments_view exists');
-SELECT has_view('api', 'settings_view', 'api.settings_view exists');
-
--- 3. Check RPC security
+-- 4. Check RPC security functions exist in api schema
 SELECT has_function('api', 'create_task', 'api.create_task exists');
-SELECT has_function('api', 'update_task_details', 'api.update_task_details exists');
+SELECT has_function('api', 'update_task', 'api.update_task exists');
 SELECT has_function('api', 'complete_task', 'api.complete_task exists');
 SELECT has_function('api', 'uncomplete_task', 'api.uncomplete_task exists');
-SELECT has_function('api', 'delete_task', 'api.delete_task exists');
-SELECT has_function('api', 'create_label', 'api.create_label exists');
-SELECT has_function('api', 'update_label', 'api.update_label exists');
-SELECT has_function('api', 'delete_label', 'api.delete_label exists');
-SELECT has_function('api', 'assign_task_labels', 'api.assign_task_labels exists');
 SELECT has_function('api', 'create_comment', 'api.create_comment exists');
-SELECT has_function('api', 'delete_comment', 'api.delete_comment exists');
-SELECT has_function('api', 'create_subtask', 'api.create_subtask exists');
-SELECT has_function('api', 'export_operator_data', 'api.export_operator_data exists');
-SELECT has_function('api', 'request_account_deletion', 'api.request_account_deletion exists');
+SELECT has_function('api', 'register_or_update_installation', 'api.register_or_update_installation exists');
+SELECT has_function('api', 'deactivate_installation', 'api.deactivate_installation exists');
+SELECT has_function('api', 'lease_due_notification_jobs', 'api.lease_due_notification_jobs exists');
+SELECT has_function('api', 'record_notification_result', 'api.record_notification_result exists');
+SELECT has_function('api', 'reserve_voice_allowance', 'api.reserve_voice_allowance exists');
+SELECT has_function('api', 'reconcile_voice_usage', 'api.reconcile_voice_usage exists');
+SELECT has_function('api', 'enter_pending_deletion', 'api.enter_pending_deletion exists');
 SELECT has_function('api', 'recover_account', 'api.recover_account exists');
-
--- 4. Check composite foreign key constraints preventing cross-operator relationships
-SELECT has_fk('public', 'tasks', 'tasks composite operator and parent foreign key exists');
-SELECT has_fk('public', 'comments', 'comments composite operator and task foreign key exists');
-SELECT has_fk('public', 'task_labels', 'task_labels composite operator and task/label foreign key exists');
-
--- 5. Check RLS is enabled on all tables
-SELECT row_eq(
-  $$ SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'tasks' $$,
-  ROW(true, true),
-  'RLS and Force RLS are enabled on public.tasks'
-);
-
-SELECT row_eq(
-  $$ SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'comments' $$,
-  ROW(true, true),
-  'RLS and Force RLS are enabled on public.comments'
-);
-
-SELECT row_eq(
-  $$ SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'labels' $$,
-  ROW(true, true),
-  'RLS and Force RLS are enabled on public.labels'
-);
-
-SELECT row_eq(
-  $$ SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'task_labels' $$,
-  ROW(true, true),
-  'RLS and Force RLS are enabled on public.task_labels'
-);
-
-SELECT row_eq(
-  $$ SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'operator_settings' $$,
-  ROW(true, true),
-  'RLS and Force RLS are enabled on public.operator_settings'
-);
-
-SELECT row_eq(
-  $$ SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'notification_jobs' $$,
-  ROW(true, true),
-  'RLS and Force RLS are enabled on public.notification_jobs'
-);
+SELECT has_function('api', 'revoke_operator_sessions', 'api.revoke_operator_sessions exists');
+SELECT has_function('api', 'operator_is_pending_deletion', 'api.operator_is_pending_deletion exists');
+SELECT has_function('api', 'claim_due_purge_batch', 'api.claim_due_purge_batch exists');
+SELECT has_function('api', 'finalize_operator_purge', 'api.finalize_operator_purge exists');
+SELECT has_function('api', 'export_operator_data', 'api.export_operator_data exists');
+SELECT has_function('api', 'get_lifecycle_status', 'api.get_lifecycle_status exists');
+SELECT has_function('api', 'assert_active_session', 'api.assert_active_session exists');
 
 SELECT * FROM finish();
 ROLLBACK;

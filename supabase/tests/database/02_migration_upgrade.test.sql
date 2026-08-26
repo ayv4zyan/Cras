@@ -1,17 +1,19 @@
 BEGIN;
-SELECT plan(15);
+SELECT plan(17);
 
 -- 1. Verify schema tables present after full migration run
 SELECT has_table('public', 'tasks', 'public.tasks table is present');
 SELECT has_table('public', 'labels', 'public.labels table is present');
 SELECT has_table('public', 'task_labels', 'public.task_labels table is present');
 SELECT has_table('public', 'comments', 'public.comments table is present');
-SELECT has_table('public', 'operator_settings', 'public.operator_settings table is present');
-SELECT has_table('public', 'device_endpoints', 'public.device_endpoints table is present');
-SELECT has_table('public', 'web_push_subscriptions', 'public.web_push_subscriptions table is present');
+SELECT has_table('public', 'settings', 'public.settings table is present');
+SELECT has_table('public', 'installations', 'public.installations table is present');
 SELECT has_table('public', 'notification_jobs', 'public.notification_jobs table is present');
-SELECT has_table('public', 'account_deletions', 'public.account_deletions table is present');
+SELECT has_table('public', 'operator_account_state', 'public.operator_account_state table is present');
+SELECT has_table('public', 'voice_reservations', 'public.voice_reservations table is present');
 SELECT has_table('public', 'usage_security_records', 'public.usage_security_records table is present');
+SELECT has_table('public', 'deployment_config', 'public.deployment_config table is present');
+SELECT has_table('public', 'voice_model_catalog', 'public.voice_model_catalog table is present');
 
 -- 2. Verify domain constraints and columns
 SELECT col_type_is('public', 'tasks', 'version', 'integer', 'tasks.version is integer');

@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   web-and-contracts:
-    name: Web & Shared Contracts
+    name: Web, Shared Contracts & Isolation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -36,7 +36,7 @@ jobs:
       - name: Typecheck web client & contracts
         run: bun run --cwd web typecheck
 
-      - name: Run web & contract tests
+      - name: Run web, contract, isolation & accessibility tests
         run: bun run --cwd web test
 
       - name: Build web production bundle
@@ -64,7 +64,7 @@ jobs:
         working-directory: android
         run: ./gradlew lint
 
-      - name: Run Android JVM Unit & Contract Tests
+      - name: Run Android JVM Unit, Contract & Security Tests
         working-directory: android
         run: ./gradlew test
 
@@ -73,7 +73,7 @@ jobs:
         run: ./gradlew assembleDebug
 
   supabase-migrations:
-    name: Supabase Local Stack
+    name: Supabase Local Stack & pgTAP
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -86,8 +86,9 @@ jobs:
         with:
           version: 2.15.5
 
-      - name: Start Supabase stack and test migrations
+      - name: Start Supabase stack, test migrations, and run pgTAP security tests
         run: |
           supabase start -x studio,logflare,vector
           supabase db reset
+          supabase test db
           supabase stop

@@ -30,10 +30,11 @@ class TaskContractTest {
     private val invalidExamplesDir: File = File(examplesDir, "invalid")
 
     private fun isCommentFixture(file: File): Boolean =
-        file.name == "comment.json" || file.name.startsWith("invalid-comment-")
+        file.name == "comment.json" || file.name.startsWith("invalid-comment-") || file.name.startsWith("comment-")
 
     private fun isLabelFixture(file: File): Boolean =
-        file.name == "label.json" || file.name.startsWith("invalid-label-")
+        file.name == "label.json" || file.name.startsWith("invalid-label-") || file.name.startsWith("label-")
+
 
     private fun decodeFixture(file: File): Any {
         val content = file.readText()
@@ -220,5 +221,27 @@ class TaskContractTest {
         assertTrue("Expected DateOnly plan", task.plan is Plan.DateOnly)
         assertEquals("2026-08-20", (task.plan as Plan.DateOnly).date)
     }
+
+    @Test
+    fun `client compatibility fixtures decode successfully in android`() {
+        val compatDir = listOf(
+            "../../../contracts/compatibility/v1-preceding-client",
+            "../../contracts/compatibility/v1-preceding-client",
+            "../contracts/compatibility/v1-preceding-client",
+            "contracts/compatibility/v1-preceding-client"
+        ).map { File(it).canonicalFile }
+            .firstOrNull { it.exists() }
+
+        assertNotNull("Compatibility directory should exist", compatDir)
+        val files = compatDir!!.listFiles { _, name -> name.endsWith(".json") }
+        assertNotNull("Compatibility fixtures should exist", files)
+        assertTrue("Expected at least 3 compatibility fixtures", files!!.size >= 3)
+
+        for (file in files) {
+            val decoded = decodeFixture(file)
+            assertNotNull("Fixture ${file.name} must decode successfully", decoded)
+        }
+    }
 }
+
 

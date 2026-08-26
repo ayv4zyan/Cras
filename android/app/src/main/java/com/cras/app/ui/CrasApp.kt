@@ -63,7 +63,7 @@ import com.cras.app.ui.voice.VoiceCaptureDialog
 import com.cras.app.ui.voice.VoiceViewModel
 import kotlinx.coroutines.launch
 
-private enum class AppView(
+internal enum class AppView(
     val title: String,
     val icon: ImageVector
 ) {

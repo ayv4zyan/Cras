@@ -14,6 +14,9 @@
     "test": "bun --filter @cras/web test",
     "lint": "bun --filter @cras/web lint",
     "format:check": "bun --filter @cras/web format:check",
-    "typecheck": "bun --filter @cras/web typecheck"
+    "typecheck": "bun --filter @cras/web typecheck",
+    "smoke:test": "bun run scripts/smoke/protected-smoke-tests.ts",
+    "migration:verify": "bun test web/src/test/migration-lifecycle.test.ts",
+    "release:verify": "bash scripts/release-verify.sh"
   }
 }

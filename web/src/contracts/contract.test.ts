@@ -119,4 +119,38 @@ describe("Shared Contract Suite - Web", () => {
       });
     }
   });
+
+  describe("Client Compatibility Suite", () => {
+    const compatDir = path.resolve(
+      __dirname,
+      "../../../contracts/compatibility/v1-preceding-client",
+    );
+    const compatFiles = fs.existsSync(compatDir)
+      ? fs.readdirSync(compatDir).filter((f) => f.endsWith(".json"))
+      : [];
+
+    it("has preceding client compatibility fixtures", () => {
+      expect(compatFiles.length).toBeGreaterThanOrEqual(3);
+    });
+
+    for (const file of compatFiles) {
+      const isComment = file.startsWith("comment");
+      const isLabel = file.startsWith("label");
+      const validate = isLabel
+        ? validateLabel
+        : isComment
+          ? validateComment
+          : validateTask;
+      const parse = isLabel ? parseLabel : isComment ? parseComment : parseTask;
+
+      it(`verifies backward compatibility for preceding client fixture ${file}`, () => {
+        const filePath = path.join(compatDir, file);
+        const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const valid = validate(raw);
+        expect(valid).toBe(true);
+        const parsed = parse(raw);
+        expect(parsed.id).toBe(raw.id);
+      });
+    }
+  });
 });

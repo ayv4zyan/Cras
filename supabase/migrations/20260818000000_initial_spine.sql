@@ -25,6 +25,10 @@ CREATE POLICY "Allow authenticated read deployment configuration"
     TO authenticated
     USING (true);
 
+INSERT INTO public.deployment_config (id, default_timed_plan_type, voice_enabled)
+VALUES (1, 'instant', true)
+ON CONFLICT (id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS public.voice_model_catalog (
     key TEXT PRIMARY KEY,
     type TEXT NOT NULL CHECK (type IN ('stt', 'extractor')),

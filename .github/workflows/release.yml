@@ -1,0 +1,240 @@
+name: Release Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version tag (e.g., v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+      target_environment:
+        description: 'Target Deployment Environment'
+        required: true
+        default: 'production'
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  change-gate-prerequisite:
+    name: Verify Commit Integrity
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.validate.outputs.commit_sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_version || github.ref }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate Git Commit and Release Version
+        id: validate
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_version || github.ref_name }}
+        run: |
+          CHECKED_OUT_COMMIT="$(git rev-parse HEAD)"
+          echo "commit_sha=${CHECKED_OUT_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "Verifying commit ${CHECKED_OUT_COMMIT} for target release ${RELEASE_TAG}"
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "Error: release version/tag is not set."
+            exit 1
+          fi
+          if git rev-parse --verify --quiet "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            TAG_COMMIT="$(git rev-parse -q --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+            if [ -n "$TAG_COMMIT" ] && [ "$TAG_COMMIT" != "$CHECKED_OUT_COMMIT" ]; then
+              echo "Error: Tag refs/tags/${RELEASE_TAG} (${TAG_COMMIT}) does not match checked-out commit (${CHECKED_OUT_COMMIT})."
+              exit 1
+            fi
+            echo "Verified tag refs/tags/${RELEASE_TAG} resolves to commit ${CHECKED_OUT_COMMIT}"
+          fi
+
+  release-web:
+    name: Web Release Matrix & Accessibility
+    needs: [change-gate-prerequisite]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.change-gate-prerequisite.outputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify code style & types
+        run: |
+          bun run --cwd web format:check
+          bun run --cwd web lint
+          bun run --cwd web typecheck
+
+      - name: Run Web test suite (Browser matrix, Accessibility, Contracts, Security, Migrations)
+        run: bun run --cwd web test
+
+      - name: Build Web Production Bundle
+        run: bun run --cwd web build
+
+      - name: Upload Web Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-release-dist
+          path: web/dist
+          retention-days: 30
+
+  release-android:
+    name: Android Release Matrix (minSdk 26 - targetSdk 35)
+    needs: [change-gate-prerequisite]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.change-gate-prerequisite.outputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Android Lint
+        working-directory: android
+        run: ./gradlew lintRelease || ./gradlew lint
+
+      - name: Run Android Unit & Security Tests
+        working-directory: android
+        run: ./gradlew test
+
+      - name: Assemble Release APK
+        working-directory: android
+        run: ./gradlew assembleRelease
+
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-apk
+          path: android/app/build/outputs/apk
+          retention-days: 30
+
+  release-supabase-security:
+    name: Supabase pgTAP & Security Gate
+    needs: [change-gate-prerequisite]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.change-gate-prerequisite.outputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.15.5
+
+      - name: Start Supabase stack and run pgTAP security and migration verification
+        run: |
+          supabase start -x studio,logflare,vector
+          supabase db reset
+          supabase test db
+          supabase stop
+
+  protected-smoke-tests:
+    name: Protected Real-Service Smoke Tests
+    needs: [change-gate-prerequisite, release-web, release-android, release-supabase-security]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.change-gate-prerequisite.outputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run Protected Smoke Tests
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          HOSTED_APP_URL: ${{ secrets.HOSTED_APP_URL }}
+          STRICT_SMOKE_MODE: "true"
+        run: |
+          bun run scripts/smoke/protected-smoke-tests.ts --strict
+
+  publish-release-provenance:
+    name: Publish Release Manifest & Provenance
+    needs: [change-gate-prerequisite, protected-smoke-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.change-gate-prerequisite.outputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded-artifacts
+
+      - name: Generate Traceability SHA-256 Checksums
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_version || github.ref_name }}
+          ACTOR_NAME: ${{ github.actor }}
+          COMMIT_SHA: ${{ needs.change-gate-prerequisite.outputs.commit_sha }}
+        run: |
+          mkdir -p release-manifest
+          find downloaded-artifacts -type f -exec sha256sum {} + | sort > release-manifest/checksums.txt
+          jq -n \
+            --arg project "cras" \
+            --arg release "$RELEASE_TAG" \
+            --arg commit "$COMMIT_SHA" \
+            --arg actor "$ACTOR_NAME" \
+            --arg createdAt "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            '{
+              project: $project,
+              release: $release,
+              commit: $commit,
+              actor: $actor,
+              createdAt: $createdAt,
+              changeGatePassed: true,
+              releaseGatePassed: true
+            }' > release-manifest/manifest.json
+
+      - name: Upload Provenance Manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-provenance-manifest
+          path: release-manifest
+          retention-days: 90

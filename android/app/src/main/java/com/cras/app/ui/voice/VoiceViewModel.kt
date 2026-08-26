@@ -409,15 +409,19 @@ suspend fun collectAuthStateAndClearRecordingsOnOperatorChange(
     onClearRecordings: () -> Boolean,
 ) {
     var lastAuthenticatedOperatorId: String? = initialOperatorId
+    var hasPendingCleanup = false
     authState.collect { state ->
         when (state) {
             is AuthUiState.Authenticated -> {
                 val currentOperatorId = state.session.operatorId
-                if (lastAuthenticatedOperatorId != currentOperatorId) {
+                if (lastAuthenticatedOperatorId != currentOperatorId || hasPendingCleanup) {
                     val cleanupSuccess = onClearRecordings()
                     if (cleanupSuccess) {
                         lastAuthenticatedOperatorId = currentOperatorId
+                        hasPendingCleanup = false
                         onOperatorChanged(currentOperatorId)
+                    } else {
+                        hasPendingCleanup = true
                     }
                 }
             }
@@ -425,7 +429,10 @@ suspend fun collectAuthStateAndClearRecordingsOnOperatorChange(
                 val cleanupSuccess = onClearRecordings()
                 if (cleanupSuccess) {
                     lastAuthenticatedOperatorId = null
+                    hasPendingCleanup = false
                     onOperatorChanged(null)
+                } else {
+                    hasPendingCleanup = true
                 }
             }
             is AuthUiState.Loading -> {

@@ -2506,6 +2506,59 @@ class InboxViewModelAccountLifecycleTest {
     }
 
     @Test
+    fun `auth lifecycle collector retries cleanup when same operator authenticates after failed sign-out cleanup`() = runTest {
+        val authStateFlow = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
+        var clearCount = 0
+        var recordedOwner: String? = null
+        var clearResult = true
+
+        val job = launch {
+            collectAuthStateAndClearRecordingsOnOperatorChange(
+                authState = authStateFlow,
+                initialOperatorId = null,
+                onOperatorChanged = { recordedOwner = it },
+                onClearRecordings = { clearCount++; clearResult },
+            )
+        }
+        advanceUntilIdle()
+        assertEquals(0, clearCount)
+        assertNull(recordedOwner)
+
+        // 1. Operator A logs in initially (cleanup succeeds)
+        authStateFlow.value = AuthUiState.Authenticated(session)
+        advanceUntilIdle()
+        assertEquals(1, clearCount)
+        assertEquals(session.operatorId, recordedOwner)
+
+        // 2. Operator A signs out, but cleanup fails
+        clearResult = false
+        authStateFlow.value = AuthUiState.Unauthenticated()
+        advanceUntilIdle()
+        assertEquals(2, clearCount)
+        // Owner was not cleared because cleanup failed
+        assertEquals(session.operatorId, recordedOwner)
+
+        // 3. Operator A signs in again -> must retry cleanup even though operatorId matches
+        clearResult = true
+        authStateFlow.value = AuthUiState.Authenticated(session)
+        advanceUntilIdle()
+        assertEquals(3, clearCount)
+        assertEquals(session.operatorId, recordedOwner)
+
+        // 4. Token refresh for Operator A should now be preserved without extra cleanup
+        val refreshedSession = OperatorSession(
+            operatorId = session.operatorId,
+            email = session.email,
+            accessToken = "refreshed-token"
+        )
+        authStateFlow.value = AuthUiState.Authenticated(refreshedSession)
+        advanceUntilIdle()
+        assertEquals(3, clearCount)
+
+        job.cancel()
+    }
+
+    @Test
     fun `reauthentication flow fails and does not restore stale session if auth state changed while picker was open`() = runTest {
         authService = FakeAuthService(session)
         viewModel = createViewModel()

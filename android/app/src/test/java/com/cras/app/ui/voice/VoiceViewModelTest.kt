@@ -1013,6 +1013,71 @@ class VoiceViewModelTest {
 
         job.cancel()
     }
+
+    @Test
+    fun `same operator re-authenticating after failed sign out cleanup forces recording wipe`() = runTest {
+        var clearAttempts = 0
+        var allowClear = false
+        val rec = RetainedRecording("rec-1", "rec-1.wav", 100L, 1_000L)
+        val recordings = mutableListOf(rec)
+        var storeOwner: String? = "operator-A"
+
+        val customStore = object : VoiceRecordingStore {
+            override fun save(wav: ByteArray, createdAtEpochMs: Long): RetainedRecording = rec
+            override fun list(): List<RetainedRecording> = recordings.toList()
+            override fun latest(): RetainedRecording? = recordings.firstOrNull()
+            override fun readBytes(id: String): ByteArray? = byteArrayOf(1, 2)
+            override fun delete(id: String): Boolean = false
+            override fun clearAll(): Boolean {
+                clearAttempts++
+                if (allowClear) {
+                    recordings.clear()
+                    return true
+                }
+                return false
+            }
+            override fun getRecordingOwner(): String? = storeOwner
+            override fun setRecordingOwner(operatorId: String?) {
+                storeOwner = operatorId
+            }
+        }
+
+        val opA = OperatorSession(operatorId = "operator-A", email = "opA@example.com", accessToken = "tokenA")
+        val viewModel = VoiceViewModel(
+            authService = FakeAuthService(opA),
+            voiceCaptureApi = FakeVoiceCaptureApi(),
+            recordingStore = customStore,
+            micRecorderProvider = { FakeMicRecorder(recordingClock.value) },
+            nowProvider = { recordingClock.value },
+            elapsedTickerIntervalMs = 0L,
+        )
+
+        val authFlow = MutableStateFlow<AuthUiState>(AuthUiState.Authenticated(opA))
+        val job = launch { viewModel.collectAuthStateAndPruneRecordings(authFlow) }
+        advanceUntilIdle()
+
+        // 1. Initial login for opA: owner matches initialOperatorId ("operator-A"), no cleanup yet
+        assertEquals(0, clearAttempts)
+        assertEquals("operator-A", customStore.getRecordingOwner())
+
+        // 2. Sign out -> unauthenticated cleanup is attempted but fails (allowClear is false, 4 attempts made in retry loop)
+        authFlow.value = AuthUiState.Unauthenticated()
+        advanceUntilIdle()
+        assertEquals(4, clearAttempts)
+        assertEquals(1, customStore.list().size)
+        // Store owner was preserved
+        assertEquals("operator-A", customStore.getRecordingOwner())
+
+        // 3. Same operator (opA) signs in again -> pending cleanup forces retry
+        allowClear = true
+        authFlow.value = AuthUiState.Authenticated(opA)
+        advanceUntilIdle()
+        assertEquals(5, clearAttempts)
+        assertTrue(customStore.list().isEmpty())
+        assertEquals("operator-A", customStore.getRecordingOwner())
+
+        job.cancel()
+    }
 }
 
 private fun createDraftTaskFromExtractedForTest(
